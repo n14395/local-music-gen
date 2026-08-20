@@ -1,0 +1,97 @@
+#!/bin/bash
+# Put LocalMusic back to a first-run install — without re-downloading anything.
+#
+# The point is to be able to exercise onboarding (and every other "first time
+# you see this" affordance) on a machine that already has hundreds of gigabytes
+# of weights on it. Everything expensive to fetch lives OUTSIDE the app's data
+# directory, so all of it survives:
+#
+#   ~/.cache/huggingface          model weights
+#   ~/.cache/torch                Demucs checkpoints fetched by its own tooling
+#   ~/.cache/localmusic-soundfonts  the MuseScore SoundFont
+#   …/LocalMusic/engine-src       the adapter venvs (torch and friends)
+#   …/LocalMusic/uv-cache         the wheel cache
+#   …/LocalMusic/python           the bundled interpreter
+#   Keychain                      the Hugging Face token
+#
+# What goes is the app's own state: preferences (which is what makes the
+# welcome sheet reappear), the library and its audio, scratch outputs, logs,
+# and the engine's install markers.
+#
+# The markers are the subtle one. Install state is a marker file per model
+# (registry.py), NOT bytes on disk — so deleting them makes the app show every
+# model as "not installed" while the weights stay exactly where they are.
+# That is the only way onboarding has anything to offer, and re-installing is
+# close to instant: the download finds every blob already in the HF cache.
+#
+# Usage: scripts/reset_app.sh [--yes]     (or LOCALMUSIC_RESET_YES=1)
+set -euo pipefail
+
+ROOT="$HOME/Library/Application Support/LocalMusic"
+DOMAIN="dev.nwf.LocalMusic"
+ASSUME_YES="${LOCALMUSIC_RESET_YES:-0}"
+[[ "${1:-}" == "--yes" ]] && ASSUME_YES=1
+
+bold() { printf '\033[1m%s\033[0m\n' "$1"; }
+
+# A running app would undo this: macOS caches preferences in cfprefsd and the
+# app rewrites them as it quits, so a `defaults delete` underneath a live
+# process buys nothing. A live engine is worse — it owns the directories we are
+# about to remove.
+for pattern in "LocalMusic.app" "local-music-engine"; do
+    if pgrep -f "$pattern" >/dev/null 2>&1; then
+        echo "LocalMusic is still running ($pattern). Quit it first — a reset" >&2
+        echo "underneath a live process is silently undone." >&2
+        exit 1
+    fi
+done
+
+if [[ ! -d "$ROOT" ]]; then
+    echo "Nothing to reset: $ROOT does not exist."
+    exit 0
+fi
+
+# Order matters only for the report; the removals are independent.
+REMOVE=(Database Library Outputs installed uploads Backend Logs)
+KEEP=(engine-src uv-cache python)
+
+size_of() { du -sh "$1" 2>/dev/null | cut -f1; }
+
+bold "Reset LocalMusic to a first-run install"
+echo
+echo "  REMOVES"
+printf '    %-14s %s\n' "preferences" "defaults domain $DOMAIN"
+for dir in "${REMOVE[@]}"; do
+    [[ -e "$ROOT/$dir" ]] || continue
+    printf '    %-14s %s\n' "$dir" "$(size_of "$ROOT/$dir")"
+done
+echo
+echo "  KEEPS"
+printf '    %-14s %s\n' "hugging face" "$(size_of "$HOME/.cache/huggingface") of model weights"
+for dir in "${KEEP[@]}"; do
+    [[ -e "$ROOT/$dir" ]] || continue
+    printf '    %-14s %s\n' "$dir" "$(size_of "$ROOT/$dir")"
+done
+echo
+echo "  Your models stay on disk. They will read as \"not installed\" until you"
+echo "  install them again, which re-uses the cache and costs almost nothing."
+echo
+
+if [[ "$ASSUME_YES" != "1" ]]; then
+    if [[ ! -t 0 ]]; then
+        echo "Refusing to reset without a terminal to confirm at." >&2
+        echo "Pass --yes (or set LOCALMUSIC_RESET_YES=1) if you meant it." >&2
+        exit 1
+    fi
+    # The library is the one thing here that cannot be re-fetched.
+    read -r -p "This deletes generated songs and parts permanently. Continue? [y/N] " reply
+    [[ "$reply" == "y" || "$reply" == "Y" ]] || { echo "Cancelled."; exit 1; }
+fi
+
+for dir in "${REMOVE[@]}"; do
+    rm -rf "${ROOT:?}/$dir"
+done
+# Absent domain is not an error — a machine that has never run the app.
+defaults delete "$DOMAIN" >/dev/null 2>&1 || true
+
+bold "✓ reset — next launch starts at onboarding"

@@ -1,0 +1,289 @@
+import SwiftUI
+
+/// The Actions destination: a gallery of everything the app can do to audio,
+/// and — one level down, on a page rather than in a sheet — the configuration
+/// for whichever one you picked.
+///
+/// `route` is live navigation state, not a mailbox: `nil` is the gallery and a
+/// non-nil value is the page currently open. The shell holds it so a jump from
+/// elsewhere ("Split this song", "Find matches") lands directly on a configured
+/// page, and so leaving Actions and coming back does not lose your place.
+struct ActionsScreen: View {
+    let catalog: ModelCatalogStore
+    let library: LibraryStore
+    let parts: PartsStore
+    let jobs: JobsStore
+    let playback: PlaybackController
+    let workbench: WorkbenchModel
+    @Binding var route: Route?
+    let onOpenModels: (ModelRequirement?) -> Void
+    /// Switches the shell to the Workbench destination, carrying the one-off
+    /// notes `WorkbenchScreen` shows above the bench ("12 sections placed back
+    /// to back…"). Pass `[]` when there is nothing to say.
+    let onOpenWorkbench: ([String]) -> Void
+    /// Switches the shell to the Style Transfer destination with a preset
+    /// applied. The same escape hatch `.workbench` already uses: some cards are
+    /// doors into a place rather than pages of their own.
+    let onOpenStyleTransfer: (StylePreset?, String?) -> Void
+
+    /// `sourceId` is a song or part id to preselect; the page resolves it.
+    enum Route: Equatable {
+        case action(recipeId: String, sourceId: String?)
+    }
+
+    @State private var query = ""
+    @State private var category: RecipeCategory?
+    @AppStorage("actions.onlyRunnable") private var onlyRunnable = false
+    @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The Models screen's own disclosure. Written here only when routing to a
+    /// model that would otherwise be hidden — see `featuredCanSatisfy`.
+
+    var body: some View {
+        if case .action(let recipeId, let sourceId) = route,
+           let recipe = RecipeCatalog.recipe(id: recipeId) {
+            // Several recipes share one page type (every preset split is a
+            // SplitActionView), so without an identity keyed to the route the
+            // second one would inherit the first one's chosen source and model.
+            page(for: recipe, sourceId: sourceId)
+                .id("\(recipeId)|\(sourceId ?? "")")
+        } else {
+            gallery
+        }
+    }
+
+    // MARK: - Gallery
+
+    private var gallery: some View {
+        ActionGallery(recipes: RecipeCatalog.all,
+                      states: cardStates,
+                      recent: recentRecipes,
+                      query: $query,
+                      category: $category,
+                      onlyRunnable: $onlyRunnable,
+                      onOpen: open,
+                      onDropAudio: importDropped,
+                      onOpenModels: { onOpenModels(nil) })
+    }
+
+    private var recentRecipes: [Recipe] {
+        ActionRunLog.decoded(runsJSON).recentRecipeIds
+            .compactMap { RecipeCatalog.recipe(id: $0) }
+    }
+
+    // MARK: - Availability
+
+    /// Why a card cannot run right now. Gated states still open — they route to
+    /// Models, which is the only place the problem can be fixed.
+    enum CardState {
+        case active
+        case comingSoon
+        case needsMixModel
+        case needsStyleModel(mode: StyleTransferMode, hint: String)
+        case needsRenderModel
+        case needsSpliceModel
+        /// A split-family card — separate, transcribe or analyze — with no
+        /// model installed for its task. These used to have no gate at all, so
+        /// four cards read as runnable on a fresh install and only admitted
+        /// the problem once you were on the page.
+        case needsTaskModel(String)
+
+        var footnote: String? {
+            switch self {
+            case .active: nil
+            case .comingSoon: "Coming soon"
+            case .needsMixModel: "Get Mixdown & Align — free"
+            case .needsStyleModel(_, let hint): hint
+            case .needsRenderModel: "Get the SoundFont renderer — free"
+            case .needsSpliceModel: "Get Token Splice — 76 MB"
+            case .needsTaskModel(let task):
+                switch task {
+                case "separate": "Get a separation model — 84 MB"
+                case "transcribe": "Get a transcription model — free"
+                case "analyze": "Get Musical analysis — 81 MB"
+                default: "Get a model for this"
+                }
+            }
+        }
+    }
+
+    private var mixInstalled: Bool {
+        MixModels.mixdown(in: catalog.models) != nil
+    }
+
+    private var spliceInstalled: Bool {
+        MixModels.splicer(in: catalog.models) != nil
+    }
+
+    private var renderModel: ModelInfo? {
+        catalog.models.first {
+            $0.installState == .installed
+                && $0.capabilities.supportedTasks.contains("render")
+        }
+    }
+
+    private var cardStates: [String: CardState] {
+        Dictionary(uniqueKeysWithValues:
+            RecipeCatalog.all.map { ($0.id, cardState($0)) })
+    }
+
+    /// Whether a style mode can actually run, not merely be configured.
+    ///
+    /// The stem chain is three jobs, and the middle one is the only part a
+    /// model-eligibility check would notice: without a separator and a mixdown
+    /// the card reads as runnable and then admits, on the page, that it cannot
+    /// separate anything. Gating four cards on the model they *say* they need
+    /// and one on the models it actually needs is the same lesson
+    /// `.needsTaskModel` was added for.
+    private func styleReady(_ mode: StyleTransferMode) -> Bool {
+        guard !mode.eligible(catalog.models).isEmpty else { return false }
+        guard mode.isChain else { return true }
+        return installed(task: "separate")
+            && MixModels.mixdown(in: catalog.models) != nil
+    }
+
+    private func installed(task: String) -> Bool {
+        catalog.models.contains {
+            $0.installState == .installed
+                && $0.capabilities.supportedTasks.contains(task)
+        }
+    }
+
+    private func cardState(_ recipe: Recipe) -> CardState {
+        guard recipe.isAvailable else { return .comingSoon }
+        switch recipe.engine {
+        case .mix where !mixInstalled, .arrange where !mixInstalled:
+            return .needsMixModel
+        case .styleTransfer(let preset) where !styleReady(preset.mode):
+            return .needsStyleModel(
+                mode: preset.mode,
+                hint: preset.mode.candidates(catalog.models).first.map {
+                    "Get \($0.displayName)"
+                } ?? "No model can do this yet")
+        case .render where renderModel == nil:
+            return .needsRenderModel
+        case .tokenSplice where !spliceInstalled:
+            return .needsSpliceModel
+        case .split(let task, _) where !installed(task: task):
+            return .needsTaskModel(task)
+        default:
+            return .active
+        }
+    }
+
+    /// What a recipe needs installed, read off the recipe rather than off its
+    /// current state: the same answer whether the model is missing now (route
+    /// to the filtered list) or the user simply wants a different one later.
+    private func requirement(for recipe: Recipe) -> ModelRequirement? {
+        switch recipe.engine {
+        case .mix, .arrange: .mixdown
+        case .tokenSplice: .splicer
+        case .render: .task("render")
+        case .split(let task, _): .task(task)
+        case .styleTransfer(let preset): .style(preset.mode)
+        // Neither runs a model: the bench is a surface, and matching is
+        // ranking maths over analysis the library already holds.
+        case .workbench, .match: nil
+        }
+    }
+
+    // MARK: - Opening
+
+    private func open(_ recipe: Recipe) {
+        switch cardState(recipe) {
+        case .comingSoon:
+            return
+        case .active:
+            break
+        case let state:
+            // Deliberate: a gated card is the shortest path to the model that
+            // ungates it, so it stays clickable and lands you in Models —
+            // carrying what it needs, so the list there narrows to the models
+            // that would actually ungate it. Arriving at a 64-row catalog with
+            // no sign of which row you were sent for is barely better than not
+            // routing at all.
+            onOpenModels(requirement(for: recipe))
+            return
+        }
+        if case .workbench = recipe.engine {
+            onOpenWorkbench([])
+            return
+        }
+        // Style Transfer is a destination, not a page: the card carries a
+        // preset into it rather than opening a one-shot form that forgets
+        // everything the moment you leave.
+        if case .styleTransfer(let preset) = recipe.engine {
+            onOpenStyleTransfer(preset, nil)
+            return
+        }
+        route = .action(recipeId: recipe.id, sourceId: nil)
+    }
+
+    /// A file dropped on the gallery is imported and then handed to the action
+    /// it suits. A whole song's first move is almost always separation, so that
+    /// is where a single file lands; extra files stay in the Library, where the
+    /// source picker on any page can reach them.
+    private func importDropped(_ urls: [URL]) {
+        Task {
+            let imported = await library.importSongs(urls: urls)
+            guard let first = imported.first else { return }
+            route = .action(recipeId: "split-instruments", sourceId: first.id)
+        }
+    }
+
+    // MARK: - Pages
+
+    @ViewBuilder
+    private func page(for recipe: Recipe, sourceId: String?) -> some View {
+        let back = { route = nil }
+        switch recipe.engine {
+        case .split(let task, let note):
+            SplitActionView(recipe: recipe, task: task, note: note,
+                            sourceId: sourceId, catalog: catalog,
+                            library: library, parts: parts, jobs: jobs,
+                            playback: playback, onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                            onBack: back)
+        case .mix:
+            MixActionView(recipe: recipe, sourceId: sourceId,
+                          catalog: catalog, library: library, parts: parts,
+                          jobs: jobs, playback: playback,
+                          onOpenModels: { onOpenModels(requirement(for: recipe)) }, onBack: back)
+        case .styleTransfer:
+            // `open(_:)` never routes here; the shell switches destination.
+            // A deep link that arrives as a route anyway is bounced the same
+            // way rather than rendering a page that no longer exists.
+            gallery
+                .onAppear {
+                    if case .styleTransfer(let preset) = recipe.engine {
+                        route = nil
+                        onOpenStyleTransfer(preset, sourceId)
+                    }
+                }
+        case .render:
+            RenderActionView(recipe: recipe, sourceId: sourceId,
+                             catalog: catalog, library: library, parts: parts,
+                             jobs: jobs, playback: playback,
+                             onOpenModels: { onOpenModels(requirement(for: recipe)) }, onBack: back)
+        case .arrange:
+            ArrangeActionView(recipe: recipe, sourceId: sourceId,
+                              catalog: catalog, library: library, parts: parts,
+                              jobs: jobs, playback: playback,
+                              workbench: workbench,
+                              onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                              onOpenWorkbench: onOpenWorkbench, onBack: back)
+        case .match:
+            MatchActionView(recipe: recipe, sourceId: sourceId,
+                            catalog: catalog, library: library, parts: parts,
+                            jobs: jobs, playback: playback,
+                            workbench: workbench, onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                            onOpenWorkbench: onOpenWorkbench, onBack: back)
+        case .tokenSplice:
+            SpliceActionView(recipe: recipe, sourceId: sourceId,
+                             catalog: catalog, library: library, parts: parts,
+                             jobs: jobs, playback: playback,
+                             onOpenModels: { onOpenModels(requirement(for: recipe)) }, onBack: back)
+        case .workbench:
+            // `open(_:)` never routes here; the shell switches destination.
+            gallery
+        }
+    }
+}

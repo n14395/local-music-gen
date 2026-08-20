@@ -1,0 +1,26 @@
+[project]
+name = "adapter-stableaudio"
+version = "0.1.0"
+description = "Stable Audio Open adapter (stable-audio-tools on MPS) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "stable-audio-tools",
+    "soundfile>=0.12",
+    "numpy<2",
+    "pytorch-lightning",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+stableaudio = "adapter_stableaudio.adapter:StableAudioAdapter"
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+stable-audio-tools = { git = "https://github.com/Stability-AI/stable-audio-tools", rev = "3241adba4fc2a85cf5b29d9eb68d42f40a28e820" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_stableaudio"]

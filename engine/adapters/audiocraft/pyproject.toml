@@ -1,0 +1,40 @@
+[project]
+name = "adapter-audiocraft"
+version = "0.1.0"
+description = "audiocraft adapter (MAGNeT + audiocraft-format MusicGen/Style) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "audiocraft",
+    "soundfile>=0.12",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+audiocraft = "adapter_audiocraft.adapter:AudiocraftAdapter"
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+audiocraft = { git = "https://github.com/facebookresearch/audiocraft", rev = "896ec7c47f5e5d1e5aa1e4b260c4405328bf009d" }
+
+[tool.uv]
+# xformers has no macOS wheels and audiocraft never calls it with the default
+# 'torch' attention backend; the adapter ships an import stub instead.
+# av 11 predates arm64 cp311 wheels and fails to build; av 12.3 is the newest
+# with a macosx_11_0 wheel tag (uv's managed CPython advertises 11.0) and
+# keeps the av.open API surface audiocraft uses.
+override-dependencies = [
+    "xformers; sys_platform == 'never'",
+    "av==12.3.0",
+]
+# audiocraft pins torch==2.1.0; transformers must predate the torch>=2.2
+# pytree API (4.40+) and the 5.x torch>=2.5 floor.
+constraint-dependencies = [
+    "transformers<4.40",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_audiocraft"]

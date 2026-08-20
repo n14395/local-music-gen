@@ -1,0 +1,63 @@
+name: LocalMusic
+options:
+  bundleIdPrefix: dev.nwf
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "7.0.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ARCHS: arm64
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    # A stable signing identity (not ad-hoc "-"): keychain "Always Allow" grants
+    # are tied to the code signature, and ad-hoc signatures change every build,
+    # re-prompting for the HF token forever. Hash of the newest
+    # "Apple Development: Nicholas Fay (4WXBKBCQ42)" cert (expires 2026-12-13);
+    # update via `security find-identity -v -p codesigning` when it rotates.
+    CODE_SIGN_IDENTITY: F67DC1F6A8F864CD087F247CC9F624EE441898A4
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  LocalMusic:
+    type: application
+    platform: macOS
+    sources: [LocalMusic]
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - package: GRDB
+        product: GRDB
+    info:
+      path: LocalMusic/Info.plist
+      properties:
+        CFBundleDisplayName: LocalMusic
+        NSHumanReadableCopyright: ""
+        NSUserNotificationsUsageDescription: Notifies you when a generation finishes.
+  LocalMusicTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [LocalMusicTests]
+    dependencies:
+      - target: LocalMusic
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/LocalMusic.app/Contents/MacOS/LocalMusic
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  LocalMusic:
+    build:
+      targets:
+        LocalMusic: all
+        LocalMusicTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [LocalMusicTests]

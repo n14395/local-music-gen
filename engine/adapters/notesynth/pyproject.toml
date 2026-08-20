@@ -1,0 +1,31 @@
+[project]
+name = "adapter-notesynth"
+version = "0.1.0"
+description = "MIDI → audio rendering via TinySoundFont (offline, no audio device) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "tinysoundfont==0.3.7",
+    "pretty-midi>=0.2.10",
+    "soundfile>=0.12",
+    "numpy",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+notesynth = "adapter_notesynth.adapter:NoteSynthAdapter"
+
+[tool.uv]
+# tinysoundfont hard-depends on pyaudio, which has no macOS wheels and is only
+# needed for live playback (Synth.start()); offline generate() never imports
+# it. The never-matching marker drops it from resolution entirely.
+override-dependencies = ["pyaudio; sys_platform == 'never'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_notesynth"]

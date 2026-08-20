@@ -1,0 +1,80 @@
+import Foundation
+
+/// What the queue counters count.
+///
+/// A submission with **Takes: 3** is *one* job that renders three takes one
+/// after another. Counting jobs is therefore true and useless: every readout
+/// said "1 job" while three tracks were being made, which is not the unit the
+/// user chose when they typed 3 into the Takes card.
+///
+/// So the counters speak in takes, and name jobs only when there is more than
+/// one of them. Pure and value-typed so the arithmetic can be tested without a
+/// store or a running engine.
+struct QueueLoad: Equatable {
+    /// Non-terminal jobs.
+    var jobs: Int = 0
+    /// Takes those jobs will produce in total.
+    var takes: Int = 0
+    /// Takes not finished yet, including the one rendering now. Falls back to
+    /// the whole job wherever the engine has not said which take it is on —
+    /// a job that has not started, or an engine too old to report it.
+    var takesLeft: Int = 0
+    /// Transfers in flight or waiting.
+    var downloads: Int = 0
+
+    var isEmpty: Bool { jobs == 0 && downloads == 0 }
+
+    static func of(jobs: [JobsStore.ActiveJob], downloads: Int = 0) -> QueueLoad {
+        var load = QueueLoad(downloads: downloads)
+        for job in jobs where !job.status.isTerminal {
+            // `count` is 1 on anything that predates multi-take and on every
+            // task job, so this is the same number as before for them.
+            let count = max(1, job.info.count)
+            load.jobs += 1
+            load.takes += count
+            // `take` is 0-based, so a job reporting take 1 of 4 has 3 left.
+            load.takesLeft += count - (job.progress?.take ?? 0)
+        }
+        return load
+    }
+
+    /// "Rendering 3 takes" / "Rendering 2 jobs · 5 takes".
+    ///
+    /// One job is described by its takes alone: saying "1 job · 3 takes" makes
+    /// the reader do arithmetic to learn nothing, and the job is not the thing
+    /// they asked for.
+    var renderingLabel: String {
+        guard jobs > 0 else { return "Rendering" }
+        if jobs == 1 {
+            return takes == 1 ? "Rendering 1 take" : "Rendering \(takes) takes"
+        }
+        return "Rendering \(jobs) jobs · \(takes) takes"
+    }
+
+    /// The queue rail's header count, which spans renders and transfers.
+    /// `3 TAKES · 1 DOWNLOAD`, either half dropped when it is zero.
+    var headerLabel: String {
+        var parts: [String] = []
+        if takes > 0 { parts.append("\(takes) TAKE\(takes == 1 ? "" : "S")") }
+        if downloads > 0 {
+            parts.append("\(downloads) DOWNLOAD\(downloads == 1 ? "" : "S")")
+        }
+        return parts.isEmpty ? "EMPTY" : parts.joined(separator: " · ")
+    }
+}
+
+extension JobsStore.ActiveJob {
+    /// "Take 2 of 4" while a multi-take job renders.
+    ///
+    /// nil for a single take, and nil until the engine says which take it is
+    /// on — during a cold load nothing is rendering yet, and guessing from
+    /// `fraction` would be inventing a position (it is null for exactly the
+    /// adapters that cannot count).
+    var takeLabel: String? {
+        let count = max(1, info.count)
+        guard count > 1, let take = progress?.take else { return nil }
+        // Clamped rather than trusted: a take index past the end would print
+        // "take 5 of 4", and a readout is not worth a crash or a lie.
+        return "Take \(min(max(take, 0), count - 1) + 1) of \(count)"
+    }
+}

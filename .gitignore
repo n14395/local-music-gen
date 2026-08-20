@@ -1,0 +1,59 @@
+# macOS
+.DS_Store
+
+# Xcode / Swift build output
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcactivitylog
+.swiftpm/
+
+# The Xcode project is generated from app/project.yml by xcodegen (build.sh
+# regenerates it). It stays tracked so a fresh clone can run `make app-test`
+# without generating first; add `app/LocalMusic.xcodeproj/` here if you'd
+# rather treat it as pure build output.
+
+# Distribution output — everything under dist/ is produced by
+# scripts/package_app.sh + scripts/make_dmg.sh
+dist/
+
+# Python environments and caches (each adapter family has its own venv,
+# provisioned by uv from the committed lockfiles)
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv.lock files are deliberately COMMITTED: they pin every adapter's deps and
+# ship inside the .app, so first-run provisioning is reproducible. Don't ignore.
+
+# acestep.cpp: vendored upstream clone + locally compiled Metal binaries,
+# rebuilt by scripts/build_acestep_cpp.sh
+engine/adapters/acestepcpp/build-src/
+engine/adapters/acestepcpp/bin/
+engine/adapters/acestepcpp/.revision
+
+# Model weights / engine runtime state never belong in the repo (they live in
+# ~/Library/Application Support/LocalMusic and the shared HF cache), but guard
+# against a stray dev-mode data dir
+hf-cache/
+envs/
+Outputs/
+*.ckpt
+*.safetensors
+*.sf2
+*.sf3
+
+# Secrets — tokens live in the Keychain and ~/.cache/huggingface, never here
+*token*.txt
+.env
+.env.*
+
+# Scratch
+*.log
+tmp/
+scratch/

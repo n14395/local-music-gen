@@ -1,0 +1,34 @@
+[project]
+name = "adapter-yue"
+version = "0.1.0"
+description = "YuE adapter (experimental, subprocess infer.py) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch",
+    "torchaudio",
+    "omegaconf",
+    "einops",
+    "numpy",
+    "transformers>=4.44,<5",
+    "sentencepiece",
+    "tqdm",
+    "descript-audiotools>=0.7.2",
+    "descript-audio-codec",
+    "scipy",
+    "accelerate>=0.26.0",
+    "soundfile>=0.12",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+yue = "adapter_yue.adapter:YuEAdapter"
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_yue"]

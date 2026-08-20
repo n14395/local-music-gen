@@ -1,0 +1,41 @@
+[project]
+name = "adapter-transcription"
+version = "0.1.0"
+description = "Audio → MIDI transcription (Basic Pitch, MT3 family, Transkun, SwiftF0) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "basic-pitch==0.4.0",
+    "numpy<2.3",
+    "mt3-infer==0.2.0",
+    # YourMT3's vendored code imports transformers.utils.model_parallel_utils,
+    # removed in transformers 5.x; 4.4x satisfies both MT3 backends
+    "transformers>=4.35,<4.50",
+    "transkun==2.0.1",
+    "swift-f0==0.1.2",
+    "pretty-midi>=0.2.10",
+    "soundfile>=0.12",
+    "soxr>=0.4",
+    "tinysoundfont==0.3.7",
+    # resampy (via basic-pitch) imports pkg_resources at runtime; setuptools
+    # 81+ removed it, so pin below
+    "setuptools<81",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+transcription = "adapter_transcription.adapter:TranscriptionAdapter"
+
+[tool.uv]
+# tinysoundfont's pyaudio dep is playback-only (no macOS wheels); offline
+# generate() never imports it — the never-matching marker drops it.
+override-dependencies = ["pyaudio; sys_platform == 'never'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_transcription"]

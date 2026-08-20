@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import secrets
+import socket
+import sys
+
+import uvicorn
+
+from . import CONTRACT, VERSION
+from .api import build_app
+from .config import Settings
+from .events import EventBus
+from .state import EngineState
+from .watchdog import watch_parent
+
+
+async def telemetry_loop(state: EngineState, bus: EventBus) -> None:
+    """Push resource usage to the app so its sidebar readout is live without a
+    poll. Fast while a worker is alive, slow when idle, and silent when nothing
+    is listening — the probes are cheap but not free, and an engine nobody is
+    connected to should not be sampling the GPU at all."""
+    while True:
+        await asyncio.sleep(2.0 if state.queue.telemetry_worker() else 10.0)
+        if bus.subscribers:
+            bus.emit("system.telemetry", state.usage())
+
+
+async def run(settings: Settings) -> None:
+    settings.ensure_dirs()
+
+    bus = EventBus(asyncio.get_running_loop())
+    state = EngineState(settings, bus)
+    app = build_app(state)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+
+    # Bounded graceful shutdown: open SSE streams never close on their own, and the
+    # contract requires exit within 10 s of SIGTERM.
+    config = uvicorn.Config(app, log_level=settings.log_level, access_log=False,
+                            lifespan="on", timeout_graceful_shutdown=3)
+    server = uvicorn.Server(config)
+
+    def kill_workers() -> None:
+        state.queue.kill_all()
+
+    # The event loop only holds weak references to tasks: without a strong ref
+    # the watchdog task can be garbage-collected and silently stop, leaving the
+    # engine to outlive its parent (observed as a multi-hour orphan).
+    background_tasks = []
+    if settings.parent_pid:
+        background_tasks.append(
+            asyncio.create_task(watch_parent(settings.parent_pid, kill_workers)))
+    background_tasks.append(asyncio.create_task(telemetry_loop(state, bus)))
+
+    async def write_handshake() -> None:
+        while not server.started:
+            await asyncio.sleep(0.05)
+        tmp = settings.handshake_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"port": port, "pid": os.getpid(), "version": VERSION,
+                       "contract": CONTRACT}, f)
+        os.replace(tmp, settings.handshake_file)
+        print(f"supervisor ready on 127.0.0.1:{port}", file=sys.stderr)
+
+    background_tasks.append(asyncio.create_task(write_handshake()))
+    await server.serve(sockets=[sock])  # uvicorn installs SIGTERM/SIGINT handlers
+
+
+def cli() -> None:
+    ap = argparse.ArgumentParser(prog="local-music-engine")
+    ap.add_argument("--handshake-file", required=True)
+    ap.add_argument("--parent-pid", type=int, default=None)
+    ap.add_argument("--data-dir", required=True)
+    ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--log-level", default="info")
+    args = ap.parse_args()
+
+    token = os.environ.get("LOCALMUSIC_AUTH_TOKEN") or ""
+    if not token:
+        token = secrets.token_hex(16)
+        print(f"LOCALMUSIC_AUTH_TOKEN not set; using {token}", file=sys.stderr)
+
+    settings = Settings(data_dir=args.data_dir, output_dir=args.output_dir,
+                        handshake_file=args.handshake_file,
+                        parent_pid=args.parent_pid, auth_token=token,
+                        log_level=args.log_level)
+    asyncio.run(run(settings))
+
+
+if __name__ == "__main__":
+    cli()

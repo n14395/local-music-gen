@@ -1,0 +1,25 @@
+[project]
+name = "adapter-mlxaudio"
+version = "0.1.0"
+description = "mlx-audio adapter (native MLX music models — MiniMax Music 3 quants) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "mlx-audio",
+    "soundfile>=0.12",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+mlxaudio = "adapter_mlxaudio.adapter:MLXAudioAdapter"
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+# The music module (MiniMax Music 3) postdates the 0.4.8 PyPI release.
+mlx-audio = { git = "https://github.com/Blaizzy/mlx-audio", rev = "6546e953908800219454d4483592c1db9d8871a8" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_mlxaudio"]
