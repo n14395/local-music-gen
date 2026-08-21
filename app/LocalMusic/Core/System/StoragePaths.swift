@@ -23,6 +23,25 @@ enum StoragePaths {
     static var enginePidFile: URL { root.appendingPathComponent("Backend/backend.pid") }
     static var engineHandshake: URL { root.appendingPathComponent("Backend/handshake.json") }
 
+    /// The backup file name for a track that has none recorded yet — the
+    /// pre-v6 derivation, kept so old rows still resolve.
+    static func backupName(id: String, fileName: String) -> String {
+        let ext = (fileName as NSString).pathExtension
+        return id + "." + (ext.isEmpty ? "wav" : ext)
+    }
+
+    /// Every stashed original belonging to this id, whatever it is called.
+    /// Deletion matches on the id prefix rather than on a recomputed name,
+    /// so a rename can never leave one behind.
+    static func backups(forId id: String) -> [URL] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: libraryBackups, includingPropertiesForKeys: nil)) ?? []
+        return files.filter {
+            $0.lastPathComponent == id
+                || $0.lastPathComponent.hasPrefix(id + ".")
+        }
+    }
+
     static func ensureDirectories() throws {
         let dirs = [database.deletingLastPathComponent(), libraryAudio,
                     libraryParts, libraryWaveforms, libraryBackups, appLogs,

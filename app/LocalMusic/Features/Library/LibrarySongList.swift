@@ -68,6 +68,26 @@ struct LibrarySongList: View {
     private func menu(for song: SongRecord) -> some View {
         Button("Play") { onPlay(song) }
         Divider()
+        Button("Edit…") { actions.edit(song) }
+            .keyboardShortcut("e", modifiers: .command)
+        if let count = LibrarySongRow.editCount(of: song), count > 0 {
+            Button("Reopen the \(count) "
+                   + (count == 1 ? "edit" : "edits")) { actions.edit(song) }
+            Divider()
+            Button("Play original") { actions.playOriginal(song) }
+                .disabled(!FileManager.default
+                    .fileExists(atPath: song.backupURL.path))
+            Button("Reveal backup in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([song.backupURL])
+            }
+            .disabled(!FileManager.default
+                .fileExists(atPath: song.backupURL.path))
+            Divider()
+            Button("Revert to original…", role: .destructive) {
+                actions.revertEdits(song)
+            }
+        }
+        Divider()
         Button("Reuse prompt") { actions.reusePrompt(song) }
             .disabled(song.originKind != .generated)
         Button("Restyle…") { actions.restyle(song) }
@@ -157,6 +177,9 @@ struct LibrarySongRow: View {
                 }
                 .fixedSize()
             }
+            if let count = LibrarySongRow.editCount(of: song), count > 0 {
+                EditsBadge(count: count, isCurrent: isCurrent)
+            }
             RatingStars(rating: song.rating, size: 12)
                 .frame(width: 70, alignment: .trailing)
             FavouriteHeart(isFavourite: song.favorite)
@@ -191,7 +214,46 @@ struct LibrarySongRow: View {
         if partCount > 0 {
             fields.append("\(partCount) PART" + (partCount == 1 ? "" : "S"))
         }
-        fields.append(LibraryFormat.when(song.createdAt))
+        // An edited row leads its date with the edit rather than the
+        // generation: what you are looking for in this list is the change.
+        if let editedAt = song.editedAt {
+            fields.append("EDITED " + LibraryFormat.when(editedAt))
+        } else {
+            fields.append(LibraryFormat.when(song.createdAt))
+        }
         return fields.joined(separator: " · ")
+    }
+
+    /// How many steps a track's applied program has, or nil when it has
+    /// none. Reads `editedAt` first: a pending program is not something the
+    /// file carries yet, and a row must not claim edits it cannot play.
+    static func editCount(of song: SongRecord) -> Int? {
+        guard song.editedAt != nil, let json = song.editsJSON,
+              let document = try? JSONDecoder().decode(
+                EditDocument.self, from: Data(json.utf8)) else { return nil }
+        return document.editCount
+    }
+}
+
+/// The scissors badge an edited row carries, with its step count.
+struct EditsBadge: View {
+    let count: Int
+    var isCurrent = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "scissors")
+                .font(.system(size: 9, weight: .semibold))
+            Text(count == 1 ? "1 EDIT" : "\(count) EDITS")
+                .font(Bench.Typo.mono(9, .semibold))
+                .tracking(0.9)
+        }
+        .foregroundStyle(isCurrent ? Bench.Palette.accent
+                                   : Bench.Palette.textTertiary)
+        .padding(.horizontal, 7).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(isCurrent ? Bench.Palette.accent.opacity(0.12)
+                            : Bench.Palette.raised))
+        .fixedSize()
     }
 }

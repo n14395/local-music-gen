@@ -58,6 +58,7 @@ final class PartsStore {
             try? FileManager.default.removeItem(at: preview)
         }
         try? FileManager.default.removeItem(at: part.waveformURL)
+        LibraryStore.removeEditorLeftovers(id: part.id)
         do {
             try repo.delete(id: part.id)
         } catch {

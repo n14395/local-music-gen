@@ -12,6 +12,12 @@ struct SongActions {
     /// Open the Style Transfer workspace on this track. Every member here has a
     /// default, so adding one is source-compatible with every construction.
     var restyle: (SongRecord) -> Void = { _ in }
+    /// Open this track in the Editor.
+    var edit: (SongRecord) -> Void = { _ in }
+    /// Audition the stashed pre-edit original.
+    var playOriginal: (SongRecord) -> Void = { _ in }
+    /// Put the original back and clear the program.
+    var revertEdits: (SongRecord) -> Void = { _ in }
 }
 
 /// Everything about one track: its waveform, metadata, and the fields that
@@ -31,6 +37,10 @@ struct SongDetailView: View {
 
     @State private var editor = SongEditor()
     @State private var confirmDelete = false
+    @State private var confirmRevert = false
+    /// True while the stashed original is what the transport is playing —
+    /// the pane's own A/B, distinct from the library's two-row compare.
+    @State private var playingOriginal = false
 
     private var isCurrent: Bool { playback.currentSongId == song.id }
 
@@ -48,6 +58,8 @@ struct SongDetailView: View {
 
                     metadata
                         .padding(.horizontal, 20)
+
+                    editsBlock
 
                     ingredients
 
@@ -74,6 +86,15 @@ struct SongDetailView: View {
         // The pane can go away without a field ever losing focus — a popover
         // dismissed, a tab switched — so buffered edits are written on the way out.
         .onDisappear { editor.flush(in: library) }
+        .confirmationDialog("Revert “\(song.title)” to the original?",
+                            isPresented: $confirmRevert) {
+            Button("Revert — discard the edits", role: .destructive) {
+                actions.revertEdits(song)
+            }
+        } message: {
+            Text("The file goes back to the untouched original and the edit "
+                 + "list is cleared.")
+        }
         .confirmationDialog("Delete “\(song.title)”?", isPresented: $confirmDelete) {
             Button("Delete song and audio file", role: .destructive) {
                 playback.stop(songId: song.id)
@@ -132,12 +153,35 @@ struct SongDetailView: View {
     /// the second way to reach it, not the only one.
     private var overflowMenu: some View {
         Menu {
+            Button("Edit…") { actions.edit(song) }
+                .keyboardShortcut("e", modifiers: .command)
+            if appliedDocument != nil {
+                Button("Play original") {
+                    playingOriginal = true
+                    playback.play(url: song.backupURL,
+                                  songId: song.id + ".original",
+                                  title: song.title,
+                                  duration: originalDuration ?? song.durationS,
+                                  subtitle: "ORIGINAL · "
+                                      + song.sourceLabel.uppercased())
+                }
+                .disabled(!hasBackup)
+                Button("Reveal backup in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting(
+                        [song.backupURL])
+                }
+                .disabled(!hasBackup)
+                Button("Revert to original…", role: .destructive) {
+                    confirmRevert = true
+                }
+            }
             if song.originKind == .recombined {
                 // Every clip's placement was recorded when this was rendered,
                 // so the arrangement can be reopened and edited rather than
                 // rebuilt from memory.
                 Button("Edit in Workbench") { actions.openMix(song) }
             }
+            Divider()
             Button("Export…") { exportSong() }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([song.fileURL])
@@ -231,10 +275,16 @@ struct SongDetailView: View {
                     }
                 }
             }
-            BenchInfoRow("Length",
-                         "\(LibraryFormat.seconds(song.durationS)) s · "
-                            + "\(song.sampleRate.formatted(.number)) Hz",
-                         mono: true)
+            BenchInfoRow(label: "Length") {
+                Text("\(LibraryFormat.seconds(song.durationS)) s · "
+                     + "\(song.sampleRate.formatted(.number)) Hz")
+                    .font(Bench.Typo.mono(12))
+                + Text(originalDuration.map {
+                    "  was \(LibraryFormat.seconds($0)) s"
+                } ?? "")
+                    .font(Bench.Typo.mono(12))
+                    .foregroundColor(Bench.Palette.textMuted)
+            }
             if song.originKind == .generated, let seed = song.seedUsed {
                 BenchInfoRow(label: "Seed") {
                     Text(seed.formatted(.number))
@@ -248,6 +298,180 @@ struct SongDetailView: View {
             if let size = LibraryFormat.fileSize(of: song.fileURL) {
                 BenchInfoRow("Size", size, mono: true)
             }
+        }
+    }
+
+    // MARK: edits
+
+    /// What an edited track carries: the steps that were applied, an A/B
+    /// against the stashed original, and the reassurance that the original
+    /// is still there. Absent entirely on a track nobody has edited.
+    @ViewBuilder
+    private var editsBlock: some View {
+        if let document = appliedDocument {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    Text("EDITS").eyebrow()
+                    if let appliedAt = song.editedAt {
+                        Text("APPLIED \(LibraryFormat.when(appliedAt))")
+                            .font(Bench.Typo.mono(10))
+                            .foregroundStyle(Bench.Palette.textFaintest)
+                    }
+                    Spacer()
+                    Button("Reopen in Editor") { actions.edit(song) }
+                        .buttonStyle(.plain)
+                        .font(Bench.Typo.small.weight(.semibold))
+                        .foregroundStyle(Bench.Palette.accent)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(document.ops) { op in
+                        HStack(spacing: 9) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(op.kind.tint)
+                                .frame(width: 3, height: 14)
+                            Text(appliedLine(op.kind))
+                                .font(Bench.Typo.secondary)
+                                .foregroundStyle(Bench.Palette.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if !document.enabledEffects.isEmpty {
+                        HStack(spacing: 9) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Bench.Palette.violet)
+                                .frame(width: 3, height: 14)
+                            Text(document.enabledEffects
+                                .map(\.kind.label).joined(separator: " → "))
+                                .font(Bench.Typo.secondary)
+                                .foregroundStyle(Bench.Palette.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                if hasBackup {
+                    abRow
+                    HStack(spacing: 9) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Bench.Palette.ok)
+                        Text("Original kept"
+                             + (backupSize.map { " · \($0)" } ?? "")
+                             + " · revert works forever")
+                            .font(Bench.Typo.small)
+                            .foregroundStyle(Bench.Palette.textQuaternary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 11).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .benchCard(fill: Bench.Palette.card,
+                               stroke: Bench.Palette.cardStrokeSoft, radius: 9)
+                }
+            }
+            .padding(.horizontal, 20).padding(.top, 18)
+        }
+    }
+
+    /// The A/B switch. Both sides play from the same transport, so the pane
+    /// says which one is loaded rather than leaving two play buttons to
+    /// disagree with the bar.
+    private var abRow: some View {
+        HStack(spacing: 4) {
+            abKey("EDITED", active: !playingOriginal) {
+                playingOriginal = false
+                playback.play(url: song.fileURL, songId: song.id,
+                              title: song.title, duration: song.durationS,
+                              subtitle: SongDetailView.subtitle(for: song))
+            }
+            abKey("ORIGINAL", active: playingOriginal) {
+                playingOriginal = true
+                // A distinct songId, or the transport treats this as the
+                // same track and just toggles pause.
+                playback.play(url: song.backupURL,
+                              songId: song.id + ".original",
+                              title: song.title,
+                              duration: originalDuration ?? song.durationS,
+                              subtitle: "ORIGINAL · "
+                                  + song.sourceLabel.uppercased())
+            }
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
+                                     style: .continuous)
+            .fill(Bench.Palette.raised))
+        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
+                                  style: .continuous)
+            .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
+        .fixedSize()
+    }
+
+    private func abKey(_ label: String, active: Bool,
+                       action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(Bench.Typo.mono(10, .bold))
+                .foregroundStyle(active ? Bench.Palette.onAccent
+                                        : Bench.Palette.textQuaternary)
+                .padding(.horizontal, 9).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 5,
+                                             style: .continuous)
+                    .fill(active ? Bench.Palette.accent : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var appliedDocument: EditDocument? {
+        guard song.editedAt != nil, let json = song.editsJSON,
+              let document = try? JSONDecoder().decode(
+                EditDocument.self, from: Data(json.utf8)),
+              !document.isEmpty else { return nil }
+        return document
+    }
+
+    private var hasBackup: Bool {
+        FileManager.default.fileExists(atPath: song.backupURL.path)
+    }
+
+    private var backupSize: String? {
+        LibraryFormat.fileSize(of: song.backupURL)
+    }
+
+    private var originalDuration: Double? {
+        appliedDocument?.originalDurationS
+    }
+
+    /// Past tense, because these already happened: "Deleted 0:38 → 0:52".
+    private func appliedLine(_ kind: EditOp.Kind) -> String {
+        switch kind {
+        case .delete(let range):
+            "Deleted \(EditorClock.full(range.start)) → "
+                + EditorClock.full(range.end)
+        case .trim(let range):
+            "Trimmed to \(EditorClock.full(range.start)) → "
+                + EditorClock.full(range.end)
+        case .silence(let range):
+            "Silenced \(EditorClock.full(range.start)) → "
+                + EditorClock.full(range.end)
+        case .insertGap(let at, let seconds):
+            String(format: "Inserted %.1f s of silence at ", seconds)
+                + EditorClock.full(at)
+        case .splitAt(let at): "Split at \(EditorClock.full(at))"
+        case .paste: "Pasted a region"
+        case .reverse(let range):
+            "Reversed \(EditorClock.full(range.start)) → "
+                + EditorClock.full(range.end)
+        case .amplify(_, let db): String(format: "Amplified %+.1f dB", db)
+        case .fadeIn(let seconds, _):
+            String(format: "Fade in %.2f s", seconds)
+        case .fadeOut(let seconds, _):
+            String(format: "Fade out %.2f s", seconds)
+        case .normalize(let lufs):
+            String(format: "Normalised to %.0f LUFS", lufs)
+        case .speed(let rate):
+            String(format: "Speed %d%%", Int((rate * 100).rounded()))
+        case .pitch(let semitones):
+            String(format: "Pitch %+.0f st", semitones)
+        case .resample(let hz): "Resampled to \(hz.formatted(.number)) Hz"
         }
     }
 
@@ -310,6 +534,10 @@ struct SongDetailView: View {
                         ? "Start a new generation from this track's prompt"
                         : "Only generated tracks carry a prompt to reuse"
                 ) { actions.reusePrompt(song) }
+                LibraryActionTile(
+                    title: "Edit…",
+                    help: "Trim, cut, fade and level this track"
+                ) { actions.edit(song) }
                 LibraryActionTile(
                     title: "Restyle…",
                     help: "Open this track in Style Transfer"

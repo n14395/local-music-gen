@@ -954,6 +954,83 @@ def main() -> int:
         check("mix job completes (dsp venv provisioned on demand)",
               finished is not None)
 
+        # The Editor's shape, against the real adapter: reverse, a per-track
+        # effect chain, per-ramp fade curves, loudness left alone and a
+        # different container. The filter cutoffs here sit ABOVE Nyquist for
+        # a low-rate source on purpose — unbounded they make the biquads
+        # degenerate and the render comes back as noise from a job that
+        # reports success, which is exactly the failure this pins.
+        edit_spec = json.dumps({
+            "target": {"sample_rate": out["sample_rate"]},
+            "tracks": [{"source": upload_id, "role": "edit", "gain_db": 0.0,
+                        "offset_s": 0.0, "reverse": True,
+                        "fade_in_s": 0.05, "fade_in_curve": "scurve",
+                        "fade_out_s": 0.05, "fade_out_curve": "log",
+                        "effects": [
+                            {"type": "highpass", "cutoff_hz": 80.0},
+                            {"type": "lowpass", "cutoff_hz": 18000.0},
+                            {"type": "eq3", "low_db": 2.5, "mid_db": 0.0,
+                             "high_db": 1.5},
+                            {"type": "compressor", "threshold_db": -18.0,
+                             "ratio": 3.0, "attack_ms": 8.0,
+                             "release_ms": 120.0},
+                            {"type": "gate", "threshold_db": -54.0}],
+                        "stretch": {"mode": "none"},
+                        "pitch_shift_st": 0.0}]})
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["test-split"], "task": "mix",
+            "params": {"mix_spec": edit_spec, "normalize": False,
+                       "limiter": False, "output_format": "flac",
+                       "bit_depth": "pcm24"}})
+        check("editor-shaped mix accepted", status == 202, str(body))
+        edit_job = body["jobs"][0]["job_id"]
+        finished = sse.wait_for("job.completed", 600,
+                                lambda d: d["job_id"] == edit_job)
+        check("editor-shaped mix completes", finished is not None)
+        _, edit_row = c.req("GET", f"/v1/jobs/{edit_job}")
+        edit_result = edit_row.get("result") or {}
+        edit_arts = edit_result.get("artifacts") or []
+        check("output_format reshapes the artifact",
+              len(edit_arts) == 1 and edit_arts[0]["format"] == "flac"
+              and edit_arts[0]["path"].endswith(".flac")
+              and os.path.exists(edit_arts[0]["path"]),
+              json.dumps(edit_arts)[:200])
+        check("normalize=false leaves loudness out of meta",
+              "lufs" not in (edit_result.get("meta") or {}),
+              str(edit_result.get("meta")))
+        # Filters bounded below Nyquist: unbounded, an 18 kHz low-pass on a
+        # sub-36 kHz source renders inf/NaN, which np.clip turns into a
+        # full-scale square wave — and FLAC of a square wave compresses to
+        # almost nothing, where real music does not.
+        if edit_arts:
+            rendered = os.path.getsize(edit_arts[0]["path"])
+            check("the rendered edit is real audio, not clipped noise",
+                  rendered > 4096, f"{rendered} bytes")
+
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["test-split"], "task": "mix",
+            "params": {"mix_spec": edit_spec, "output_format": "flac",
+                       "bit_depth": "float32"}})
+        check("float32 flac accepted then fails", status == 202)
+        f32_job = body["jobs"][0]["job_id"]
+        check("float32 flac fails the job",
+              sse.wait_for("job.failed", 600,
+                           lambda d: d["job_id"] == f32_job) is not None)
+
+        bad_effect = json.dumps({
+            "target": {"sample_rate": out["sample_rate"]},
+            "tracks": [{"source": upload_id, "role": "edit",
+                        "effects": [{"type": "flanger"}],
+                        "stretch": {"mode": "none"}}]})
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["test-split"], "task": "mix",
+            "params": {"mix_spec": bad_effect}})
+        check("unknown effect type accepted then fails", status == 202)
+        bad_job = body["jobs"][0]["job_id"]
+        check("unknown effect type fails the job",
+              sse.wait_for("job.failed", 600,
+                           lambda d: d["job_id"] == bad_job) is not None)
+
         # The whole point: the small job neither evicted the resident model nor
         # claimed the titlebar, and left nothing of its own behind.
         evicted = sse.wait_for("worker.state", 0.5,

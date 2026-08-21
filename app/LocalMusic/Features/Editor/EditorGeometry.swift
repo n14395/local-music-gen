@@ -138,8 +138,22 @@ struct EditorGrid: Equatable {
                 grid.barTicks.append(BarTick(number: index + 1, timelineS: t))
             }
         }
-        grid.beats.sort()
+        grid.beats = collapse(grid.beats.sorted())
+        // A cut lands two downbeats on the same instant: the one that was
+        // deleted (the last kept moment) and the one that now plays there.
+        // What you hear from that instant is the later bar, so it is the one
+        // the ruler keeps — otherwise the numbers claim material that is gone.
         grid.barTicks.sort { $0.timelineS < $1.timelineS }
+        var deduped: [BarTick] = []
+        for tick in grid.barTicks {
+            if let last = deduped.last,
+               abs(last.timelineS - tick.timelineS) < 1e-6 {
+                deduped[deduped.count - 1] = tick
+            } else {
+                deduped.append(tick)
+            }
+        }
+        grid.barTicks = deduped
         let duration = EditProgram.timelineDuration(segments)
         for section in analysis.sections ?? [] {
             // A section survives as the mapped extent of whatever part of it
@@ -166,6 +180,16 @@ struct EditorGrid: Equatable {
             }
         }
         return grid
+    }
+
+    /// Beats that landed on the same instant through a cut collapse to one.
+    private static func collapse(_ values: [Double]) -> [Double] {
+        var out: [Double] = []
+        for value in values {
+            if let last = out.last, abs(last - value) < 1e-6 { continue }
+            out.append(value)
+        }
+        return out
     }
 
     /// What the snap control snaps to in each mode. Section edges include

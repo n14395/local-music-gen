@@ -336,6 +336,7 @@ struct BenchSliderRow: View {
     var isEnabled = true
     var help: String?
     var onEditingBegan: (() -> Void)?
+    var onEditingEnded: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -344,7 +345,8 @@ struct BenchSliderRow: View {
                 .foregroundStyle(Bench.Palette.textSecondary)
                 .frame(width: labelWidth, alignment: .leading)
             BenchSlider(value: $value, range: range, step: step, tint: tint,
-                        isEnabled: isEnabled, onEditingBegan: onEditingBegan)
+                        isEnabled: isEnabled, onEditingBegan: onEditingBegan,
+                        onEditingEnded: onEditingEnded)
             BenchValueField(text: format(value), width: valueWidth)
         }
         .opacity(isEnabled ? 1 : 0.45)

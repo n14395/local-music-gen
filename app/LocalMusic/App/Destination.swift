@@ -22,6 +22,9 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
     /// destination already written to defaults.
     case styleTransfer
     case workbench
+    /// One file in detail — the Workbench arranges many. Declared after it
+    /// so the sidebar reads make-then-refine top to bottom.
+    case editor
     case library
     case models
 
@@ -33,6 +36,7 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
         case .styleTransfer: "Style Transfer"
         case .actions: "Actions"
         case .workbench: "AI Workbench"
+        case .editor: "Editor"
         case .library: "Library"
         case .models: "Models"
         }
@@ -46,7 +50,7 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
 
     var section: Section {
         switch self {
-        case .studio, .styleTransfer, .actions, .workbench: .make
+        case .studio, .styleTransfer, .actions, .workbench, .editor: .make
         case .library, .models: .browse
         }
     }

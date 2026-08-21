@@ -34,6 +34,9 @@ struct PartInspector: View {
     let onUseMelody: (URL) -> Void
     var onRenderNotes: ((PartRecord) -> Void)?
     let onFindMatches: (String) -> Void
+    /// Open this stem in the Editor. Optional so the popover construction
+    /// elsewhere stays source-compatible; a nil closure dims the tile.
+    var onEdit: ((PartRecord) -> Void)?
     let onSelectSibling: (String) -> Void
     let onDeleted: () -> Void
 
@@ -291,20 +294,30 @@ struct PartInspector: View {
             }
             HStack(spacing: 8) {
                 secondaryGenerativeTile
+                // Stems are editable too: topping and tailing them, and
+                // levelling them against each other, is what you do before
+                // a mix.
+                LibraryActionTile(
+                    title: "Edit…",
+                    isEnabled: part.format == "wav" && onEdit != nil,
+                    help: part.format == "wav"
+                        ? "Trim, cut, fade and level this stem"
+                        : "Only audio parts can be edited"
+                ) { onEdit?(part) }
+            }
+            HStack(spacing: 8) {
                 LibraryActionTile(title: "Export…",
                                   help: "Save a copy of this part's file") {
                     exportPart()
                 }
-            }
-            HStack(spacing: 8) {
                 LibraryActionTile(title: "Reveal in Finder",
                                   help: "Show this part's file in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([part.fileURL])
                 }
-                LibraryActionTile(title: "Delete…", tone: .destructive,
-                                  help: "Delete this part and its files") {
-                    confirmDelete = true
-                }
+            }
+            LibraryActionTile(title: "Delete…", tone: .destructive,
+                              help: "Delete this part and its files") {
+                confirmDelete = true
             }
         }
     }

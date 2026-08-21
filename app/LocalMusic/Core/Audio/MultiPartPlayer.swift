@@ -115,6 +115,9 @@ final class MultiPartPlayer {
         frozenPosition = currentPosition()
         disarm()
         state = .paused
+        // A meter that keeps showing the last level of a stopped signal is
+        // reporting something that is not happening.
+        meterDb = nil
     }
 
     func resume() {
@@ -344,6 +347,7 @@ final class MultiPartPlayer {
         frozenPosition = durationS
         positionS = durationS
         state = .paused
+        meterDb = nil
     }
 
     /// True while any node still reports playing (used by tests).

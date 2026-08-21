@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Bench shell: a 230 pt sidebar, a content column that supplies its own
@@ -27,6 +28,8 @@ struct MainWindow: View {
     /// in the Library because the transport bar — which is where you switch
     /// sides — sits outside the screen.
     @State private var libraryCompare = LibraryCompare()
+    /// A track the user asked to revert, held until they confirm.
+    @State private var pendingRevert: SongRecord?
     /// What a gated feature sent the user to Models to find, so the list there
     /// can narrow to the models that would ungate it. Held by the shell
     /// because it is set on one screen and read on another.
@@ -81,6 +84,7 @@ struct MainWindow: View {
             TransportBar(playback: env.playback, slot: transportSlot,
                          queue: transportQueue,
                          engine: env.engineStatus,
+                         editor: destination == .editor ? env.editor : nil,
                          isQueueOpen: queuePanel.isOpen,
                          onToggleQueue: {
                              withAnimation(Self.panelMotion) { queuePanel.toggle() }
@@ -116,7 +120,22 @@ struct MainWindow: View {
             }
         }
         .task { await env.pollTelemetry() }
-        .onAppear(perform: offerOnboarding)
+        .onAppear {
+            offerOnboarding()
+            wireEditorRouting()
+        }
+        .confirmationDialog(
+            "Revert “\(pendingRevert?.title ?? "")” to the original?",
+            isPresented: Binding(get: { pendingRevert != nil },
+                                 set: { if !$0 { pendingRevert = nil } })) {
+            Button("Revert — discard the edits", role: .destructive) {
+                if let song = pendingRevert { revert(song) }
+                pendingRevert = nil
+            }
+        } message: {
+            Text("The file goes back to the untouched original and the edit "
+                 + "list is cleared. This cannot be undone.")
+        }
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
         // Stamped on the way *out* rather than by the sheet's own buttons, so
         // every route closes it for good — including an Escape press, which
@@ -200,6 +219,7 @@ struct MainWindow: View {
                                     scope: scope, title: scope.title,
                                     symbol: scope.symbol,
                                     showsSelection: destination == .library,
+                                    count: subRowCount(scope),
                                     selection: Binding(
                                         get: { libraryScope },
                                         set: {
@@ -225,12 +245,21 @@ struct MainWindow: View {
         }
     }
 
+    /// The one scope whose size is what it is for: how many tracks carry
+    /// applied edits. The others are read by name.
+    private func subRowCount(_ scope: LibraryScope) -> String? {
+        guard scope == .edited else { return nil }
+        let count = (try? env.library.repository.editedCount()) ?? 0
+        return count > 0 ? "\(count)" : nil
+    }
+
     private func glyph(for destination: Destination) -> BenchNavGlyph.Kind {
         switch destination {
         case .studio: .studio
         case .styleTransfer: .styleTransfer
         case .actions: .actions
         case .workbench: .workbench
+        case .editor: .editor
         case .library: .library
         case .models: .models
         }
@@ -248,7 +277,8 @@ struct MainWindow: View {
             // Favourites is one view over two tables, so its count is both.
             case .favourites: total = env.library.results.count
                 + env.partsStore.favorites().count
-            case .songs, .imported, .renders: total = env.library.results.count
+            case .songs, .imported, .renders, .edited:
+                total = env.library.results.count
             }
             return total > 0 ? "\(total)" : nil
         case .models:
@@ -277,9 +307,13 @@ struct MainWindow: View {
                     && !styleTransferJobs.contains($0.info.jobId)
             }
         case .actions:
+            // Task jobs, minus the two destinations that own their own:
+            // Style Transfer reports the ids it started, and an Editor
+            // render is a `mix` job that belongs to the Editor row.
             return env.jobsStore.active.values.contains {
                 !$0.status.isTerminal && $0.info.task != nil
                     && !styleTransferJobs.contains($0.info.jobId)
+                    && !env.jobsStore.isEditorJob($0.info.jobId)
             }
         case .styleTransfer:
             // Style Transfer's jobs are ordinary generate/separate/mix jobs, so
@@ -289,6 +323,8 @@ struct MainWindow: View {
             return env.styleTransfer.isWaitingOnWork
         case .models:
             return !env.downloadsStore.downloads.isEmpty
+        case .editor:
+            return env.editor.applyStage.isBusy
         default:
             return false
         }
@@ -410,6 +446,9 @@ struct MainWindow: View {
                           onFindMatches: { materialId in
                               env.studio.pending = .findMatches(materialId: materialId)
                           },
+                          onEditPart: { part in
+                              env.studio.pending = .edit(materialId: part.id)
+                          },
                           compare: libraryCompare)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
@@ -440,6 +479,10 @@ struct MainWindow: View {
                                 openStyleTransfer(preset: preset,
                                                   sourceId: sourceId)
                             })
+        case .editor:
+            EditorScreen(store: env.editor, library: env.library,
+                         parts: env.partsStore, playback: env.playback,
+                         onOpenLibrary: { destination = .library })
         case .models:
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,
                          telemetry: env.telemetry,
@@ -479,6 +522,23 @@ struct MainWindow: View {
             restyle: { song in
                 env.studio.pending = .styleTransfer(materialId: song.id,
                                                     presetId: nil)
+            },
+            edit: { song in
+                env.studio.pending = .edit(materialId: song.id)
+            },
+            playOriginal: { song in
+                env.playback.play(url: song.backupURL,
+                                  songId: song.id + ".original",
+                                  title: song.title,
+                                  duration: song.durationS,
+                                  subtitle: "ORIGINAL · "
+                                      + song.sourceLabel.uppercased())
+            },
+            revertEdits: { song in
+                // Confirmed here rather than at each call site: this is the
+                // one action in the app that discards audio the user cannot
+                // get back, and the row menu used to fire it on one click.
+                pendingRevert = song
             })
     }
 
@@ -509,6 +569,8 @@ struct MainWindow: View {
             openStyleTransfer(
                 preset: presetId.flatMap(StylePreset.preset(forRecipeId:)),
                 sourceId: materialId)
+        case .edit(let materialId):
+            openEditor(materialId: materialId)
         }
         env.studio.pending = nil
     }
@@ -543,6 +605,42 @@ struct MainWindow: View {
             return PickedMaterial(song: song)
         }
         return nil
+    }
+
+    /// Reverting goes through the Editor's own path: it owns the file swap,
+    /// the record rewrite and the peak invalidation, and a second copy here
+    /// would drift. It refuses while a render is in flight rather than
+    /// resetting a session that is mid-apply.
+    private func revert(_ song: SongRecord) {
+        guard !env.editor.applyStage.isBusy else { return }
+        env.editor.open(songId: song.id)
+        env.editor.revertToOriginal()
+    }
+
+    /// Open the Editor on a song or a part — the id may be either, exactly
+    /// as the other material intents accept.
+    private func openEditor(materialId: String) {
+        if ((try? env.partsStore.repository.part(id: materialId)) ?? nil) != nil {
+            env.editor.open(partId: materialId)
+        } else {
+            env.editor.open(songId: materialId)
+        }
+        destination = .editor
+    }
+
+    /// A rendered selection snippet landed in the library: route it where
+    /// the send-onward panel promised (Tier 3.1).
+    private func wireEditorRouting() {
+        env.editor.onSnippetReady = { song, intent in
+            switch intent {
+            case .continueFrom:
+                useMelody(song.fileURL)
+            case .splitRegion:
+                env.studio.pending = .split(songId: song.id)
+            case .findMatches:
+                env.studio.pending = .findMatches(materialId: song.id)
+            }
+        }
     }
 
     /// Take the shell to the Style Transfer workspace, seeding it from a
@@ -586,7 +684,7 @@ struct MainWindow: View {
 enum LibraryScope: String, CaseIterable, Identifiable, Codable {
     // Declaration order is sidebar order: the two kinds of whole track first,
     // then their parts, then what was built from them.
-    case songs, imported, parts, renders, favourites
+    case songs, imported, parts, renders, edited, favourites
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -596,6 +694,7 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
         case .imported: "Imported"
         case .parts: "Parts"
         case .renders: "Renders"
+        case .edited: "Edited"
         case .favourites: "Favourites"
         }
     }
@@ -608,7 +707,9 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
         case .songs: .generated
         case .imported: .imported
         case .renders: .recombined
-        case .parts, .favourites: nil
+        // Edited spans every origin — a generated take, an import and a
+        // render are all editable, and all land here once applied.
+        case .parts, .edited, .favourites: nil
         }
     }
 
@@ -628,6 +729,7 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
         case .imported: "tray.and.arrow.down"
         case .parts: "rectangle.split.3x1"
         case .renders: "waveform"
+        case .edited: "scissors"
         case .favourites: "heart.fill"
         }
     }
@@ -648,7 +750,9 @@ private struct SidebarFooterCard: View {
 
     var body: some View {
         switch destination {
-        case .studio, .library where libraryScope != .parts:
+        case .library where libraryScope == .edited:
+            backupsCard
+        case .studio, .editor, .library where libraryScope != .parts:
             engineCard
         case .library:
             stemColoursCard
@@ -725,6 +829,35 @@ private struct SidebarFooterCard: View {
             lines.append(usage)
         }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    // MARK: backups
+
+    /// What the originals are costing, and the one honest warning about
+    /// deleting them: the backup file's existence is what makes Revert
+    /// offerable, so removing one ends that track's revert forever.
+    private var backupsCard: some View {
+        let usage = LibraryRepository.backupUsage()
+        return BenchSidebarCard {
+            Text("BACKUPS").eyebrow()
+            Text(TelemetryStore.gigabytes(usage.bytes) + " GB")
+                .font(Bench.Typo.valueLarge)
+                .foregroundStyle(Bench.Palette.textPrimary)
+            Text("\(usage.count) ORIGINAL"
+                 + (usage.count == 1 ? "" : "S") + " KEPT\n"
+                 + "DELETING ONE DROPS REVERT")
+                .font(Bench.Typo.mono(11))
+                .lineSpacing(3)
+                .foregroundStyle(Bench.Palette.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Manage backups…") {
+                NSWorkspace.shared.activateFileViewerSelecting(
+                    [StoragePaths.libraryBackups])
+            }
+            .buttonStyle(.bench(.quiet))
+            .frame(maxWidth: .infinity)
+            .help("Show the stashed originals in Finder")
+        }
     }
 
     // MARK: legend

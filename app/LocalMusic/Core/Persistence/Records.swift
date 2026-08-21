@@ -58,6 +58,10 @@ struct SongRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     /// When that program was last applied to the file. nil while the program
     /// is only pending — the Library badge reads this, not `editsJSON`.
     var editedAt: Date?
+    /// The stashed pristine original's file name, written when the backup is
+    /// stashed (v6). Optional, and the getter below falls back to the old
+    /// derivation, so rows written before it still resolve.
+    var backupFileName: String?
 
     /// The typed `origin`. An unrecognised value reads as `.generated` rather
     /// than crashing or vanishing from every scope — a row is always somewhere.
@@ -77,12 +81,13 @@ struct SongRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     var waveformURL: URL {
         StoragePaths.libraryWaveforms.appendingPathComponent(id + ".peaks")
     }
-    /// Where the pristine pre-edit original is stashed. Keyed by id (titles
-    /// rename; ids don't) and keeping the source's real extension.
+    /// Where the pristine pre-edit original is stashed. The stored name wins:
+    /// the live file is renamed by an apply (mp3 → wav) and the backup is
+    /// not, so deriving the path from `fileName` loses it.
     var backupURL: URL {
         StoragePaths.libraryBackups.appendingPathComponent(
-            id + "." + ((fileName as NSString).pathExtension.isEmpty
-                        ? "wav" : (fileName as NSString).pathExtension))
+            backupFileName ?? StoragePaths.backupName(id: id,
+                                                      fileName: fileName))
     }
 
     /// Default name for the nth generated track: `track007`. Padded to three
@@ -178,13 +183,15 @@ struct PartRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     /// The Editor's edit program — stems are editable too (v5).
     var editsJSON: String?
     var editedAt: Date?
+    /// The stashed pristine stem's file name (v6).
+    var backupFileName: String?
 
     var fileURL: URL { StoragePaths.libraryParts.appendingPathComponent(fileName) }
-    /// Same convention as a song's: the pristine pre-edit stem, keyed by id.
+    /// Same convention as a song's: the stored name wins over the derivation.
     var backupURL: URL {
         StoragePaths.libraryBackups.appendingPathComponent(
-            id + "." + ((fileName as NSString).pathExtension.isEmpty
-                        ? "wav" : (fileName as NSString).pathExtension))
+            backupFileName ?? StoragePaths.backupName(id: id,
+                                                      fileName: fileName))
     }
     var previewURL: URL? {
         previewFileName.map { StoragePaths.libraryParts.appendingPathComponent($0) }

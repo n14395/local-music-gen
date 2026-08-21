@@ -24,6 +24,8 @@ struct LibraryScreen: View {
     let onRenderNotes: ((PartRecord) -> Void)?
     let onUseMelody: (URL) -> Void
     let onFindMatches: (String) -> Void
+    /// Open a stem in the Editor.
+    var onEditPart: ((PartRecord) -> Void)?
     /// Held by the shell when it wants the transport bar's `A|B` switch, since
     /// that bar lives outside this screen. Left nil the comparison still works,
     /// it just has no representation down there.
@@ -57,6 +59,7 @@ struct LibraryScreen: View {
         var imported = 0
         var parts = 0
         var renders = 0
+        var edited = 0
         var favourites = 0
     }
 
@@ -95,6 +98,10 @@ struct LibraryScreen: View {
         .onDisappear {
             library.filters.origin = .any
             library.filters.favoritesOnly = false
+            library.filters.hasEdits = false
+            if library.filters.sort == .recentlyEdited {
+                library.filters.sort = .newest
+            }
             library.filters.artist = nil
             parts.filters.favoritesOnly = false
         }
@@ -212,6 +219,11 @@ struct LibraryScreen: View {
         }
         BenchFilterChip(label: "Has parts", isSelected: library.filters.hasParts) {
             library.filters.hasParts.toggle()
+        }
+        // Offered everywhere, not only in the Edited scope: "which of my
+        // imports did I top and tail?" is asked from the list you are in.
+        BenchFilterChip(label: "Has edits", isSelected: library.filters.hasEdits) {
+            library.filters.hasEdits.toggle()
         }
         BenchFilterChip(label: "♥ Favourites",
                         isSelected: library.filters.favoritesOnly) {
@@ -478,6 +490,7 @@ struct LibraryScreen: View {
         switch scope {
         case .renders: return "No renders yet"
         case .imported: return "Nothing imported yet"
+        case .edited: return "Nothing edited yet"
         default: return "No songs yet"
         }
     }
@@ -491,6 +504,9 @@ struct LibraryScreen: View {
             return "Combine parts in the Workbench and the mix lands here."
         case .imported:
             return "Import audio files, or drag them onto this list."
+        case .edited:
+            return "Trim, cut or level a track in the Editor and it "
+                + "lands here once you apply."
         default:
             return "Generate something and it will land here."
         }
@@ -512,6 +528,7 @@ struct LibraryScreen: View {
                     onUseMelody: onUseMelody,
                     onRenderNotes: onRenderNotes,
                     onFindMatches: onFindMatches,
+                    onEdit: onEditPart,
                     onSelectSibling: { selectedPartId = $0 },
                     onDeleted: { selectedPartId = nil })
             } else {
@@ -607,6 +624,18 @@ struct LibraryScreen: View {
     private func applyScope() {
         library.filters.origin = scope.origin.map { .only($0.rawValue) } ?? .any
         library.filters.favoritesOnly = scope == .favourites
+        library.filters.hasEdits = scope == .edited
+        // The Edited scope is a list of edits, so it leads with the newest
+        // one — but only as its own default; a sort you chose survives. It
+        // is put back on the way out, or every other scope would sit on a
+        // sort that only means anything here.
+        if scope == .edited {
+            if library.filters.sort == .newest {
+                library.filters.sort = .recentlyEdited
+            }
+        } else if library.filters.sort == .recentlyEdited {
+            library.filters.sort = .newest
+        }
         if scope != .imported { library.filters.artist = nil }
         parts.filters.favoritesOnly = scope == .favourites
         // A selection names a row that the new scope does not contain. Ticks go
@@ -619,7 +648,7 @@ struct LibraryScreen: View {
         // Favourites can hold either kind, so it starts with neither picked
         // rather than inheriting a row the new list may not contain.
         case .favourites: selectedSongId = nil; selectedPartId = nil
-        case .songs, .imported, .renders: selectedPartId = nil
+        case .songs, .imported, .renders, .edited: selectedPartId = nil
         }
     }
 
@@ -630,6 +659,8 @@ struct LibraryScreen: View {
         var baseline = LibraryRepository.Filters()
         baseline.origin = scope.origin.map { .only($0.rawValue) } ?? .any
         baseline.favoritesOnly = scope == .favourites
+        baseline.hasEdits = scope == .edited
+        if scope == .edited { baseline.sort = .recentlyEdited }
         return baseline
     }
 
@@ -653,6 +684,7 @@ struct LibraryScreen: View {
                              imported: byOrigin[SongOrigin.imported.rawValue] ?? 0,
                              parts: partCounts.values.reduce(0, +),
                              renders: byOrigin[SongOrigin.recombined.rawValue] ?? 0,
+                             edited: (try? library.repository.editedCount()) ?? 0,
                              favourites: favouriteSongs + favouriteParts)
         rebuildGroups()
         refreshSiblings()
@@ -777,6 +809,7 @@ struct LibraryScreen: View {
         case .rating: "rating"
         case .title: "name"
         case .longest: "longest"
+        case .recentlyEdited: "recently edited"
         }
     }
 

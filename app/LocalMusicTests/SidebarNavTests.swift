@@ -11,7 +11,8 @@ final class SidebarNavTests: XCTestCase {
     /// the thing it resembles — cannot quietly reshuffle the nav.
     func testMakeSectionOrder() {
         XCTAssertEqual(Destination.inSection(.make),
-                       [.studio, .actions, .styleTransfer, .workbench])
+                       [.studio, .actions, .styleTransfer, .workbench,
+                        .editor])
         XCTAssertEqual(Destination.inSection(.browse), [.library, .models])
     }
 

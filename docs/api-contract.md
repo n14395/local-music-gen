@@ -707,6 +707,13 @@ silently skipping a stage of the sound the caller asked for:
 | `compressor` | `threshold_db`, `ratio`, `attack_ms`, `release_ms` | feed-forward compressor |
 | `gate` | `threshold_db` | noise gate |
 
+Every filter frequency is **bounded below Nyquist** by the worker
+(`min(f, 0.98 × sample_rate/2)`), including `eq3`'s three fixed band centres.
+A cutoff above Nyquist has no filtering left to do; left unbounded it makes
+the biquad coefficients degenerate and the render comes back as noise or
+silence from a job that reports success. A non-positive frequency fails the
+job.
+
 Dynamics state (compressor envelopes, gate state) starts fresh per track. A
 caller that cuts one source into several tracks of a single timeline should
 crossfade the joins (as above), which also covers the reset.
@@ -723,6 +730,11 @@ what its model declares):
 | `keep_tracks` | bool | false | also emit each aligned track as a `stem` artifact |
 | `output_format` | enum `wav` \| `aiff` \| `flac` \| `mp3` | `wav` | container of the `audio` (mixdown) artifact; `stem` artifacts stay 16-bit WAV |
 | `bit_depth` | enum `pcm16` \| `pcm24` \| `float32` | `pcm16` | sample format of the mixdown artifact; `float32` is invalid for `flac` and the job fails; ignored for `mp3` |
+
+The mixdown is hard-clipped to ±1.0 before writing **unless** the container can
+carry out-of-range floats — i.e. only `wav`/`aiff` at `float32` keep overshoot.
+`mp3` is always clipped, which is what "ignored for `mp3`" above means in
+practice.
 
 ### 5.5 Staged progress
 

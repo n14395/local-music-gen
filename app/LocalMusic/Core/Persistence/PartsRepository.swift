@@ -32,6 +32,18 @@ struct PartsRepository: Sendable {
         try db.queue.read { try PartRecord.fetchOne($0, key: id) }
     }
 
+    /// Narrow write for the Editor's columns — see
+    /// `LibraryRepository.setEdits`.
+    func setEdits(id: String, editsJSON: String?, editedAt: Date?,
+                  backupFileName: String?) throws {
+        try db.queue.write { database in
+            try database.execute(sql: """
+                UPDATE part SET editsJSON = ?, editedAt = ?,
+                                backupFileName = ? WHERE id = ?
+                """, arguments: [editsJSON, editedAt, backupFileName, id])
+        }
+    }
+
     func update(_ part: PartRecord) throws {
         try db.queue.write { try part.update($0) }
     }

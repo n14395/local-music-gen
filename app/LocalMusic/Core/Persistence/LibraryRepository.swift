@@ -17,6 +17,10 @@ struct LibraryRepository: Sendable {
         /// Songs that have been split at least once. Cheap: one indexed
         /// `SELECT DISTINCT songId FROM part`.
         var hasParts = false
+        /// Songs whose file has had an edit program applied. `editedAt` is
+        /// the mark, not `editsJSON` — a pending program is not an edit the
+        /// track carries yet.
+        var hasEdits = false
         /// Songs and Renders are the same table read two ways — see `Origin`.
         var origin: Origin = .any
         var sort: Sort = .newest
@@ -33,7 +37,7 @@ struct LibraryRepository: Sendable {
     }
 
     enum Sort: String, CaseIterable, Equatable, Sendable {
-        case newest, oldest, rating, title, longest
+        case newest, oldest, rating, title, longest, recentlyEdited
     }
 
     func insert(_ song: SongRecord) throws {
@@ -109,6 +113,9 @@ struct LibraryRepository: Sendable {
             case .excluding(let origin):
                 request = request.filter(Column("origin") != origin)
             }
+            if filters.hasEdits {
+                request = request.filter(Column("editedAt") != nil)
+            }
             if filters.hasParts {
                 let ids = try String.fetchAll(
                     database, sql: "SELECT DISTINCT songId FROM part")
@@ -123,6 +130,11 @@ struct LibraryRepository: Sendable {
                                                   Column("createdAt").desc)
             case .title: request = request.order(Column("title").asc)
             case .longest: request = request.order(Column("durationS").desc)
+            // Unedited rows have no `editedAt` at all, so they sort last
+            // rather than leading the list as "oldest edit".
+            case .recentlyEdited:
+                request = request.order(
+                    sql: "editedAt IS NULL, editedAt DESC, createdAt DESC")
             }
             return try request.fetchAll(database)
         }
@@ -172,6 +184,48 @@ struct LibraryRepository: Sendable {
                     + "WHERE title = ? COLLATE NOCASE AND id <> ?)",
                 arguments: [title, songId]) ?? false
         }
+    }
+
+    /// Write just the Editor's columns. The Editor stores its program as it
+    /// is typed, and routing that through a full row update re-indexes the
+    /// track through the FTS triggers and re-queries the whole library —
+    /// several times a second while a slider moves.
+    func setEdits(id: String, editsJSON: String?, editedAt: Date?,
+                  backupFileName: String?) throws {
+        try db.queue.write { database in
+            try database.execute(sql: """
+                UPDATE song SET editsJSON = ?, editedAt = ?,
+                                backupFileName = ? WHERE id = ?
+                """, arguments: [editsJSON, editedAt, backupFileName, id])
+        }
+    }
+
+    /// How many tracks carry applied edits — the sidebar's Edited count.
+    func editedCount() throws -> Int {
+        try db.queue.read { database in
+            try Int.fetchOne(
+                database,
+                sql: "SELECT COUNT(*) FROM song WHERE editedAt IS NOT NULL")
+                ?? 0
+        }
+    }
+
+    /// Total bytes of the stashed originals, and how many there are — the
+    /// Backups card. Read from disk rather than a column: the file's
+    /// existence is what makes Revert offerable, so it is also the truth
+    /// about what is being kept.
+    static func backupUsage() -> (count: Int, bytes: Int64) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: StoragePaths.libraryBackups,
+            includingPropertiesForKeys: [.fileSizeKey]) else { return (0, 0) }
+        var bytes: Int64 = 0
+        for file in files {
+            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?
+                .fileSize ?? 0
+            bytes += Int64(size)
+        }
+        return (files.count, bytes)
     }
 
     /// Hearted songs of any origin — the song half of the Favourites scope.

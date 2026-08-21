@@ -84,7 +84,10 @@ class DSPAdapter(ModelAdapter):
         if use_limiter:
             from pedalboard import Limiter, Pedalboard
             mix = Pedalboard([Limiter(threshold_db=-1.0)])(mix.T, sr).T
-        if bit_depth != "float32":
+        # Clip unless the CONTAINER can carry out-of-range floats. Gating on
+        # bit_depth alone let "float32 + mp3" through unclipped, and the
+        # contract says bit_depth is ignored for mp3.
+        if not (out_format in ("wav", "aiff") and bit_depth == "float32"):
             np.clip(mix, -1.0, 1.0, out=mix)
 
         artifacts = [self._write(out_dir, "mixdown", mix, sr, kind="audio",
@@ -198,16 +201,37 @@ def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
     """The per-track processor chain (contract 5.4): applied in the order
     given, after stretching and before fades/gain. Unknown or malformed
     processors fail the job — silently skipping a stage of the sound the
-    caller asked for is worse than refusing."""
+    caller asked for is worse than refusing.
+
+    Every filter frequency is bounded below Nyquist. A cutoff at or above it
+    makes the biquad coefficients degenerate: measured output has been inf,
+    NaN or silence depending on the rate, and since the mixdown is clipped
+    and written as a completed job, an out-of-range cutoff would replace the
+    user's audio with noise while reporting success. The app's stock low-pass
+    sits at 18 kHz and 22 of the catalog's models render at 32 kHz, so this
+    is the ordinary case, not an exotic one."""
     from pedalboard import (Compressor, HighpassFilter, HighShelfFilter,
                             LowpassFilter, LowShelfFilter, NoiseGate,
                             Pedalboard, PeakFilter)
+
+    nyquist = sr / 2.0
 
     def need(fx: dict, key: str) -> float:
         value = _maybe_float(fx.get(key))
         if value is None:
             raise ValueError(f"effect '{fx.get('type')}' is missing '{key}'")
         return value
+
+    def frequency(fx: dict, key: str) -> float:
+        value = need(fx, key)
+        if value <= 0:
+            raise ValueError(f"effect '{fx.get('type')}' needs a positive "
+                             f"'{key}' (got {value})")
+        # Bounded rather than rejected: an 18 kHz low-pass on a 32 kHz render
+        # means "keep everything", and failing the job over it would be
+        # useless pedantry. A frequency ABOVE Nyquist simply has no filtering
+        # left to do.
+        return min(value, nyquist * 0.98)
 
     plugins = []
     for fx in effects:
@@ -216,20 +240,24 @@ def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
             # pedalboard's filters are 6 dB/oct; two in series make the
             # 12 dB/oct slope the contract promises. Distinct instances —
             # pedalboard refuses the same plugin object twice in one chain.
-            cutoff = need(fx, "cutoff_hz")
+            cutoff = frequency(fx, "cutoff_hz")
             plugins += [HighpassFilter(cutoff_frequency_hz=cutoff)
                         for _ in range(2)]
         elif kind == "lowpass":
-            cutoff = need(fx, "cutoff_hz")
+            cutoff = frequency(fx, "cutoff_hz")
             plugins += [LowpassFilter(cutoff_frequency_hz=cutoff)
                         for _ in range(2)]
         elif kind == "eq3":
+            # The three band centres are fixed by the contract, and bounded
+            # for the same reason: 8 kHz is above Nyquist at 16 kHz, and two
+            # catalog models render there.
             plugins += [
-                LowShelfFilter(cutoff_frequency_hz=120.0,
+                LowShelfFilter(cutoff_frequency_hz=min(120.0, nyquist * 0.98),
                                gain_db=need(fx, "low_db")),
-                PeakFilter(cutoff_frequency_hz=1200.0,
+                PeakFilter(cutoff_frequency_hz=min(1200.0, nyquist * 0.98),
                            gain_db=need(fx, "mid_db")),
-                HighShelfFilter(cutoff_frequency_hz=8000.0,
+                HighShelfFilter(cutoff_frequency_hz=min(8000.0,
+                                                        nyquist * 0.98),
                                 gain_db=need(fx, "high_db")),
             ]
         elif kind == "compressor":
@@ -294,11 +322,12 @@ def _apply_fades(audio: np.ndarray, sr: int, fade_in_s: float,
     routinely carries a curved head fade and a linear crossfade tail
     (contract 5.4).
     """
+    # Validated before anything else, and for BOTH ramps: a typo'd curve on
+    # the ramp that happens to be zero-length is still a typo, and the
+    # contract says an unknown value fails the job.
+    for curve in (in_curve, out_curve):
+        _fade_shape(np.zeros(1, dtype=np.float32), curve)
     if fade_in_s <= 0 and fade_out_s <= 0:
-        # Still refuse a bad curve name on a zero-length fade: a typo should
-        # not go unreported just because the fade was dialled to nothing.
-        for curve in (in_curve, out_curve):
-            _fade_shape(np.zeros(1, dtype=np.float32), curve)
         return audio
     n = len(audio)
     if n == 0:

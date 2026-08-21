@@ -59,6 +59,9 @@ final class EditorStore {
     // Internal, not private: EditorStoreRender is the same store's other
     // half, and Swift's `private` is per-file.
     let library: LibraryStore
+    /// The narrow write path for the Editor's own columns — see
+    /// `persistPending`.
+    var repo: LibraryRepository { library.repository }
     let partsRepo: PartsRepository
     let jobs: JobsStore
     let catalog: ModelCatalogStore
@@ -103,10 +106,15 @@ final class EditorStore {
     /// Viewport of the main well; width is supplied by the view's geometry.
     var visibleStartS: Double = 0
     var pxPerSecond: CGFloat = 0    // 0 = fit on first layout
+    /// The well's last laid-out width, so zoom math outside the view (the
+    /// slider, the overview strip) shares the same geometry.
+    var wellWidth: CGFloat = 0
 
     private(set) var clipboard: [EditSegment] = []
     var applyStage: ApplyStage = .idle
     var exportStage: ApplyStage = .idle
+    /// The export dialog (E04) — opened from two places on the rail.
+    var exportSheetOpen = false
     /// True while the user chose "notify me" and left the apply running.
     var notifyWhenApplied = false
 
@@ -115,10 +123,23 @@ final class EditorStore {
     /// Playback bound: stop (or loop) at this timeline second.
     private var stopAtS: Double?
     private var loopWatcher: Timer?
+    /// A/B: true while the untouched source is playing instead of the edit.
+    private(set) var auditioningOriginal = false
     private var reversedSourceURL: URL?
     private var reversedSourceBuilding = false
     var uploadedSourceId: String?
     private var snippetIntents: [String: SnippetIntent] = [:]
+    /// The gesture whose changes are folding into one undo step.
+    private var interactionKey: String?
+    /// How many undo steps this session has registered. A slider drag must
+    /// add exactly one however many frames it spans — see `perform`.
+    private(set) var undoStepsRegistered = 0
+    private var persistTask: Task<Void, Never>?
+    private var hasPendingWrite = false
+    /// Which material the in-flight apply belongs to. An apply survives
+    /// navigating away and opening something else, so every write it makes
+    /// is checked against this rather than against whatever is loaded now.
+    var applyOwnerId: String?
 
     func noteSnippetIntent(_ intent: SnippetIntent, jobId: String) {
         snippetIntents[jobId] = intent
@@ -183,6 +204,45 @@ final class EditorStore {
 
     var mixdownModel: ModelInfo? { MixModels.mixdown(in: catalog.models) }
 
+    /// Whether the visible apply progress belongs to what is on screen.
+    var applyBelongsToCurrentMaterial: Bool {
+        applyOwnerId == nil || applyOwnerId == material?.id
+    }
+
+    /// Why this program cannot be rendered, in plain language — nil when it
+    /// can. Checked before anything irreversible happens.
+    var renderRefusal: String? {
+        // The program's own problem first: telling someone to install a
+        // model when what they actually did was silence everything is the
+        // wrong advice, however true it also is.
+        if segments.isEmpty || segments.allSatisfy({ $0.silent }) {
+            return "There is nothing left to render — every part of this "
+                + "track has been deleted or silenced."
+        }
+        if mixdownModel == nil {
+            return "The Mixdown & Align (DSP) model is not installed — it "
+                + "renders edits."
+        }
+        return nil
+    }
+
+    /// Where the head and tail fades actually land: the first and last
+    /// AUDIBLE moment. Leading or trailing silence is not faded — the engine
+    /// attaches the ramps to the tracks, and a gap produces no track.
+    var fadeAnchors: (headS: Double, tailS: Double) {
+        var cursor = 0.0
+        var head: Double?
+        var tail = 0.0
+        for segment in segments {
+            let start = cursor
+            cursor += segment.length
+            guard !segment.silent else { continue }
+            if head == nil { head = start }
+            tail = cursor
+        }
+        return (head ?? 0, tail)
+    }
+
     /// Beats within the selection, for the "20 BARS" style readouts.
     func barsInSelection() -> Int? {
         guard let selection else { return nil }
@@ -200,6 +260,7 @@ final class EditorStore {
 
     func open(songId: String) {
         guard let song = library.song(id: songId) else { return }
+        flushPersist()
         stopPreview()
         material = Material(
             id: song.id, ownerType: "song", title: song.title,
@@ -217,6 +278,7 @@ final class EditorStore {
     func open(partId: String) {
         guard let part = ((try? partsRepo.part(id: partId)) ?? nil),
               part.format == "wav" else { return }
+        flushPersist()
         stopPreview()
         let song = library.song(id: part.songId)
         material = Material(
@@ -235,6 +297,7 @@ final class EditorStore {
     }
 
     func close() {
+        flushPersist()
         stopPreview()
         material = nil
         document = EditDocument()
@@ -245,10 +308,13 @@ final class EditorStore {
         selection = nil
         cursorS = 0
         clipboard = []
-        applyStage = .idle
+        // An apply in flight belongs to the material it was started for, not
+        // to the screen: leaving the Editor must not make it look finished.
+        if applyOwnerId == nil { applyStage = .idle }
         exportStage = .idle
         reversedSourceURL = nil
         uploadedSourceId = nil
+        interactionKey = nil
         undoManager?.removeAllActions()
     }
 
@@ -282,11 +348,15 @@ final class EditorStore {
         visibleStartS = 0
         pxPerSecond = 0
         clipboard = []
-        applyStage = .idle
+        // A render started for another track keeps its stage — it is still
+        // running, and clearing it here made the progress card describe
+        // whatever was opened next.
+        if applyOwnerId == nil { applyStage = .idle }
         exportStage = .idle
         reversedSourceURL = nil
         reversedSourceBuilding = false
         uploadedSourceId = nil
+        interactionKey = nil
         undoManager?.removeAllActions()
         rebuild()
     }
@@ -327,7 +397,16 @@ final class EditorStore {
     /// Every document change goes through here: snapshot, mutate, rebuild,
     /// persist — and the snapshot registered so ⌘Z swaps it straight back
     /// (the timeline's pattern; the model is value types, so undo is a swap).
-    func perform(_ name: String, _ change: (inout EditDocument) -> Void) {
+    ///
+    /// `coalescing` names a continuous gesture. A slider drag calls this
+    /// dozens of times; only the first registers an undo, so ⌘Z steps back
+    /// over the whole drag rather than one step per pixel. Deliberately NOT
+    /// `UndoManager.beginUndoGrouping` — with `groupsByEvent` on (the
+    /// default) a manual group nests inside the per-event one, and the
+    /// unbalanced level makes the next undo raise "too many nested undo
+    /// groups" and terminate the app.
+    func perform(_ name: String, coalescing key: String? = nil,
+                 _ change: (inout EditDocument) -> Void) {
         let before = document
         let selectionBefore = selection
         var updated = document
@@ -335,21 +414,32 @@ final class EditorStore {
         guard updated != document else { return }
         updated.appliedAt = nil
         document = updated
-        registerUndo(name, before: before, selectionBefore: selectionBefore)
+        if key == nil || key != interactionKey {
+            registerUndo(name, before: before, selectionBefore: selectionBefore)
+        }
+        interactionKey = key
         rebuild()
-        persistPending()
+        schedulePersist()
         refreshPreviewAfterEdit()
+    }
+
+    /// A continuous gesture ended: the next change starts a fresh undo step
+    /// even if it carries the same key.
+    func endInteraction() {
+        interactionKey = nil
     }
 
     private func registerUndo(_ name: String, before: EditDocument,
                               selectionBefore: EditRange?) {
+        undoStepsRegistered += 1
         undoManager?.registerUndo(withTarget: self) { target in
             let after = target.document
             let selectionAfter = target.selection
             target.document = before
             target.selection = selectionBefore
+            target.interactionKey = nil
             target.rebuild()
-            target.persistPending()
+            target.schedulePersist()
             target.refreshPreviewAfterEdit()
             target.registerUndo(name, before: after,
                                 selectionBefore: selectionAfter)
@@ -357,20 +447,61 @@ final class EditorStore {
         undoManager?.setActionName(name)
     }
 
+    /// Store the program soon, not now. `LibraryStore.update` re-queries the
+    /// whole library and re-indexes the row through the FTS triggers, and a
+    /// slider drag calls `perform` dozens of times — so the write trails the
+    /// gesture by a beat and is flushed on the way out (`close`, `applyEdits`,
+    /// leaving the screen).
+    func schedulePersist() {
+        persistTask?.cancel()
+        hasPendingWrite = true
+        persistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.persistPending()
+        }
+    }
+
+    /// Write anything still pending right now. A no-op when nothing is —
+    /// "flush" must not mean "write the in-memory document back", or a path
+    /// that has just cleared the row (revert) would have it restored by the
+    /// next flush.
+    func flushPersist() {
+        guard hasPendingWrite else { return }
+        persistTask?.cancel()
+        persistTask = nil
+        persistPending()
+    }
+
+    /// Drop a scheduled write without performing it — for callers that have
+    /// already written the truth themselves.
+    func discardPendingWrite() {
+        persistTask?.cancel()
+        persistTask = nil
+        hasPendingWrite = false
+    }
+
     /// The pending program is stored as it changes, so "Continue editing"
     /// survives a relaunch — `editedAt` (the applied mark) is not touched.
     func persistPending() {
+        hasPendingWrite = false
         guard let material else { return }
         let json = (try? JSONEncoder().encode(document))
             .map { String(decoding: $0, as: UTF8.self) }
+        // A narrow column write: the pending program changes as fast as a
+        // slider moves, and a whole-row update would re-index the track and
+        // re-query the library on every step. `editedAt` is carried through
+        // unchanged — this is the pending program, not an applied one.
         if material.isPart {
-            if var part = ((try? partsRepo.part(id: material.id)) ?? nil) {
-                part.editsJSON = json
-                try? partsRepo.update(part)
-            }
-        } else if var song = library.song(id: material.id) {
-            song.editsJSON = json
-            library.update(song)
+            let part = (try? partsRepo.part(id: material.id)) ?? nil
+            try? partsRepo.setEdits(id: material.id, editsJSON: json,
+                                    editedAt: part?.editedAt,
+                                    backupFileName: part?.backupFileName)
+        } else {
+            let song = library.song(id: material.id)
+            try? repo.setEdits(id: material.id, editsJSON: json,
+                               editedAt: song?.editedAt,
+                               backupFileName: song?.backupFileName)
         }
     }
 
@@ -474,24 +605,38 @@ final class EditorStore {
     }
 
     func setNormalize(lufs: Double?) {
+        let selection = selection
         replaceWholeTrack("Normalise", matches: { kind in
             if case .normalize = kind { return true }
             return false
-        }, with: lufs.map { .normalize(lufs: $0) })
+        }, with: lufs.map { .normalize(lufs: $0) }, then: { doc in
+            // The other half of the radio pair — see `setAmplify`. Only the
+            // current selection's amplify goes: a level set on some other
+            // region is not what this control is about.
+            guard lufs != nil, let selection else { return }
+            doc.ops.removeAll { op in
+                if case .amplify(let range, _) = op.kind {
+                    return range == selection
+                }
+                return false
+            }
+        })
     }
 
     func setSpeed(rate: Double) {
         replaceWholeTrack("Speed", matches: { kind in
             if case .speed = kind { return true }
             return false
-        }, with: abs(rate - 1) > 1e-6 ? .speed(rate: rate) : nil)
+        }, with: abs(rate - 1) > 1e-6 ? .speed(rate: rate) : nil,
+           coalescing: "speed")
     }
 
     func setPitch(semitones: Double) {
         replaceWholeTrack("Pitch", matches: { kind in
             if case .pitch = kind { return true }
             return false
-        }, with: abs(semitones) > 1e-6 ? .pitch(semitones: semitones) : nil)
+        }, with: abs(semitones) > 1e-6 ? .pitch(semitones: semitones) : nil,
+           coalescing: "pitch")
     }
 
     func setResample(hz: Int?) {
@@ -524,41 +669,63 @@ final class EditorStore {
         setFadeOut(seconds: seconds, curve: document.fadeOut?.curve ?? .linear)
     }
 
-    /// Amplify the current selection, updating the last amplify row while it
-    /// targets the same range (a slider drag is one edit, not sixty).
+    /// Amplify the current selection, updating the row that already targets
+    /// this exact range rather than stacking a second one.
+    ///
+    /// Matched by range, not by "is it the last op": `EditProgram` SUMS
+    /// overlapping amplifies, so appending a second +6 dB over the same
+    /// region silently renders +12 while the slider still reads +6. Any
+    /// whole-track row appended in between — a fade, normalise, speed —
+    /// used to be enough to trigger that.
     func setAmplify(db: Double) {
         guard let selection else { return }
-        if case .amplify(let range, _)? = document.ops.last?.kind,
-           range == selection {
-            if abs(db) < 0.05 {
-                perform("Amplify") { $0.ops.removeLast() }
-            } else {
-                perform("Amplify") {
-                    $0.ops[$0.ops.count - 1].kind = .amplify(selection, db: db)
+        let existing = amplifyIndex(for: selection)
+        perform("Amplify", coalescing: "amplify") { doc in
+            if let existing {
+                if abs(db) < 0.05 {
+                    doc.ops.remove(at: existing)
+                } else {
+                    doc.ops[existing].kind = .amplify(selection, db: db)
                 }
+            } else if abs(db) >= 0.05 {
+                doc.ops.append(EditOp(kind: .amplify(selection, db: db)))
             }
-        } else if abs(db) >= 0.05 {
-            perform("Amplify") {
-                $0.ops.append(EditOp(kind: .amplify(selection, db: db)))
+            // Levelling is one decision, which is why the design draws these
+            // two as a radio pair: normalising the whole track re-levels
+            // everything the amplify just set. Taking one drops the other,
+            // and ⌘Z brings it back.
+            if abs(db) >= 0.05 {
+                doc.ops.removeAll { op in
+                    if case .normalize = op.kind { return true }
+                    return false
+                }
             }
         }
     }
 
-    /// What the last amplify row says about this selection, for the slider.
+    /// What this selection is already amplified by, for the slider.
     var amplifyDbForSelection: Double {
-        guard let selection else { return 0 }
-        if case .amplify(let range, let db)? = document.ops.last?.kind,
-           range == selection {
-            return db
+        guard let selection, let index = amplifyIndex(for: selection),
+              case .amplify(_, let db) = document.ops[index].kind else {
+            return 0
         }
-        return 0
+        return db
+    }
+
+    private func amplifyIndex(for selection: EditRange) -> Int? {
+        document.ops.lastIndex { op in
+            if case .amplify(let range, _) = op.kind { return range == selection }
+            return false
+        }
     }
 
     private func replaceWholeTrack(_ name: String,
                                    matches: (EditOp.Kind) -> Bool,
-                                   with kind: EditOp.Kind?) {
+                                   with kind: EditOp.Kind?,
+                                   coalescing key: String? = nil,
+                                   then: ((inout EditDocument) -> Void)? = nil) {
         let existingIndex = document.ops.lastIndex { matches($0.kind) }
-        perform(name) { doc in
+        perform(name, coalescing: key) { doc in
             if let existingIndex {
                 if let kind {
                     doc.ops[existingIndex].kind = kind
@@ -568,6 +735,7 @@ final class EditorStore {
             } else if let kind {
                 doc.ops.append(EditOp(kind: kind))
             }
+            then?(&doc)
         }
     }
 
@@ -770,7 +938,33 @@ final class EditorStore {
         loopWatcher?.invalidate()
         loopWatcher = nil
         stopAtS = nil
+        auditioningOriginal = false
         player.stop()
+    }
+
+    /// A/B against the untouched source, holding the musical position: the
+    /// same moment keeps playing, from whichever version is switched in.
+    func toggleOriginalAudition() {
+        guard let sourceURL, material != nil else { return }
+        pauseGlobalPlayback()
+        if auditioningOriginal {
+            let sourcePosition = player.currentPosition()
+            let editPosition = EditProgram.sourceToTimeline(
+                sourcePosition, in: segments) ?? 0
+            auditioningOriginal = false
+            player.play(items: previewItems(), from: editPosition)
+        } else {
+            let editPosition = player.state == .stopped
+                ? cursorS : player.currentPosition()
+            let sourcePosition = EditProgram.timelineToSource(
+                editPosition, in: segments) ?? 0
+            auditioningOriginal = true
+            stopAtS = nil
+            player.play(items: [MultiPartPlayer.Item(
+                id: "original", url: sourceURL, offsetS: 0, gainDb: 0,
+                muted: false)], from: sourcePosition)
+        }
+        startLoopWatcher()
     }
 
     func pausePreview() {
@@ -811,7 +1005,7 @@ final class EditorStore {
     /// A structural edit rebuilds the schedule; keep playing from the same
     /// timeline moment so tweaking a cut mid-listen does not restart it.
     private func refreshPreviewAfterEdit() {
-        guard player.state == .playing else { return }
+        guard player.state == .playing, !auditioningOriginal else { return }
         let position = min(player.currentPosition(),
                            max(0, timelineDurationS - 0.01))
         player.play(items: previewItems(), from: position)

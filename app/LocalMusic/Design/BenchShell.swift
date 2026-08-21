@@ -17,7 +17,9 @@ struct BenchNavGlyph: View {
     var color: Color
     var size: CGFloat = 13
 
-    enum Kind { case studio, styleTransfer, actions, workbench, library, models }
+    enum Kind {
+        case studio, styleTransfer, actions, workbench, editor, library, models
+    }
 
     var body: some View {
         Group {
@@ -26,6 +28,7 @@ struct BenchNavGlyph: View {
             case .styleTransfer: transfer
             case .actions: grid
             case .workbench: rules(heights: [3, 3, 3], widths: [1, 0.69, 1], spacing: 2)
+            case .editor: razor
             case .library: rules(heights: [2, 2, 2, 2], widths: [1, 1, 1, 0.62],
                                  spacing: 2.5)
             case .models: chip
@@ -109,6 +112,21 @@ struct BenchNavGlyph: View {
             }
             return path
         }
+    }
+
+    /// The Editor's mark: one rule, two cut marks of different depths —
+    /// a waveform and the razor that goes through it.
+    private var razor: some View {
+        ZStack {
+            Rectangle().fill(color).frame(width: size, height: 2)
+            Rectangle().fill(color)
+                .frame(width: 2, height: size * 11 / 13)
+                .offset(x: -size * 4.5 / 13)
+            Rectangle().fill(color)
+                .frame(width: 2, height: size * 7 / 13)
+                .offset(x: size * 4.5 / 13, y: size * 1 / 13)
+        }
+        .frame(width: size, height: size)
     }
 
     private var grid: some View {
@@ -223,6 +241,9 @@ struct BenchSidebarSubRow<Scope: Hashable>: View {
     /// screen from every destination, but "selected" means *this is what you
     /// are looking at* — which is only true on the screen the scopes belong to.
     var showsSelection = true
+    /// A trailing count, for a scope whose size is the point of it. Optional
+    /// because most scopes are read by name alone.
+    var count: String?
     @Binding var selection: Scope
 
     private var isSelected: Bool { showsSelection && scope == selection }
@@ -247,6 +268,12 @@ struct BenchSidebarSubRow<Scope: Hashable>: View {
                     .foregroundStyle(isSelected ? Bench.Palette.textPrimary
                                                 : Bench.Palette.textSecondary)
                 Spacer(minLength: 4)
+                if let count {
+                    Text(count)
+                        .font(Bench.Typo.counter)
+                        .foregroundStyle(isSelected ? Bench.Palette.textMuted
+                                                    : Bench.Palette.textFaintest)
+                }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,

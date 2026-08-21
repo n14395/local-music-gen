@@ -35,6 +35,8 @@ final class StudioBox {
         /// Open the Style Transfer workspace on this song or part, optionally
         /// with an Actions preset already applied.
         case styleTransfer(materialId: String, presetId: String?)
+        /// Open the Editor on this song or part.
+        case edit(materialId: String)
     }
     var pending: StudioIntent?
 }
@@ -64,6 +66,9 @@ final class AppEnvironment {
     /// track in the Library and coming back to an empty form is precisely the
     /// failure the destination exists to remove.
     let styleTransfer = StyleTransferModel()
+    /// The Editor is a workspace too: leaving mid-edit and coming back keeps
+    /// the file, the selection and the pending program.
+    private(set) var editor: EditorStore!
     private(set) var backendManager: BackendProcessManager!
 
     /// What the engine status label opens. Assembled here because this is the
@@ -101,6 +106,8 @@ final class AppEnvironment {
         self.partsStore = PartsStore(repo: partsRepo)
         self.jobsStore = JobsStore(repo: repo, partsRepo: partsRepo)
         self.playback = PlaybackController()
+        self.editor = EditorStore(library: library, partsRepo: partsRepo,
+                                  jobs: jobsStore, catalog: catalog)
 
         self.backendManager = BackendProcessManager(status: status, onEvent: { [weak self] item in
             Task { @MainActor in
@@ -129,6 +136,23 @@ final class AppEnvironment {
         }
         library.onSongsImported = { [weak self] songs in
             for song in songs { self?.autoAnalyze(song: song) }
+        }
+        jobsStore.onEditorArtifact = { [weak self] job, result, purpose in
+            self?.editor.handleArtifact(job: job, result: result,
+                                        purpose: purpose)
+            self?.library.refreshRecent()
+            self?.partsStore.refresh()
+        }
+        editor.pauseGlobalPlayback = { [weak self] in
+            guard let playback = self?.playback, playback.isPlaying else {
+                return
+            }
+            playback.toggle()
+        }
+        editor.notifyApplied = { [weak self] title in
+            self?.notifications.notifyIfInactive(
+                title: "Edits applied",
+                body: "“\(title)” now plays the edited version.")
         }
     }
 
@@ -256,6 +280,10 @@ final class AppEnvironment {
         case .jobQueued:
             notifications.requestAuthorizationIfNeeded()
         case .jobCompleted(let jobId):
+            // The Editor announces its own renders — an apply that lands
+            // says "Edits applied", and "Your track is ready" beside it
+            // would be the same event claimed twice.
+            guard !jobsStore.isEditorJob(jobId) else { break }
             let title = jobsStore.active[jobId].map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""

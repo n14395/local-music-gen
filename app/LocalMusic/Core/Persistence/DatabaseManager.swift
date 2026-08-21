@@ -157,6 +157,19 @@ final class DatabaseManager: Sendable {
                 t.add(column: "editedAt", .datetime)
             }
         }
+        // Where the Editor stashed a track's pristine original. Recorded
+        // rather than derived: applying always renders WAV, so an imported
+        // mp3's `fileName` changes at the first apply — and a backup path
+        // computed from the *current* name stopped finding the file the
+        // moment it did, stranding the only untouched copy the user had.
+        migrator.registerMigration("v6") { db in
+            try db.alter(table: "song") { t in
+                t.add(column: "backupFileName", .text)
+            }
+            try db.alter(table: "part") { t in
+                t.add(column: "backupFileName", .text)
+            }
+        }
         return migrator
     }
 }

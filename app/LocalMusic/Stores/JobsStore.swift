@@ -31,7 +31,11 @@ enum JobContext {
 /// knows where the audio goes and the queue rail knows what to call it.
 enum EditorRenderPurpose {
     /// Replace `ownerId`'s file with the render (ownerType "song" | "part").
-    case apply(ownerId: String, ownerType: String, title: String)
+    /// The submitted program travels with the job: the user can open another
+    /// track while this renders, and what lands must be recorded against the
+    /// document that was actually sent.
+    case apply(ownerId: String, ownerType: String, title: String,
+               documentJSON: String?)
     /// Save the render at a destination the user already chose.
     case export(destination: URL, title: String)
     /// Import the render as a new library song named `title`; the Editor
@@ -40,7 +44,7 @@ enum EditorRenderPurpose {
 
     var title: String {
         switch self {
-        case .apply(_, _, let title): title
+        case .apply(_, _, let title, _): title
         case .export(_, let title): title
         case .snippet(let title): title
         }
@@ -660,6 +664,15 @@ final class JobsStore {
             if task == "generate" { return info.prompt }
             return task.prefix(1).uppercased() + task.dropFirst()
         }
+    }
+
+    /// Whether this job was submitted by the Editor. The Actions sidebar row
+    /// spins for "any task job", which an edit render otherwise satisfies —
+    /// and the queue's generic completion banner would double up with the
+    /// Editor's own.
+    func isEditorJob(_ jobId: String) -> Bool {
+        if case .editor = pendingContext[jobId] { return true }
+        return false
     }
 
     func cancel(_ jobId: String) async {

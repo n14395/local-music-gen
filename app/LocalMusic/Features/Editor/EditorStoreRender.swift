@@ -15,12 +15,27 @@ extension EditorStore {
     func applyEdits() async {
         guard let material, !document.isEmpty || appliedDocument != nil,
               applyStage.isBusy == false else { return }
-        guard let model = mixdownModel else {
-            applyStage = .failed("The Mixdown & Align (DSP) model is not "
-                                 + "installed — it renders edits.")
+        // Everything that could refuse is checked BEFORE anything
+        // irreversible happens — no backup is stashed and nothing is
+        // uploaded for a render that cannot succeed.
+        if let refusal = renderRefusal {
+            applyStage = .failed(refusal)
             return
         }
+        guard let model = mixdownModel else { return }
+        flushPersist()
         stopPreview()
+        let plan = EditMixPlan.plan(
+            document: document, source: "PENDING",
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        guard plan.isRenderable else {
+            applyStage = .failed("There is nothing left to render — every "
+                                 + "part of this track has been deleted or "
+                                 + "silenced.")
+            return
+        }
+        applyOwnerId = material.id
         applyStage = .stashingBackup
         if !hasBackup {
             do {
@@ -32,31 +47,52 @@ extension EditorStore {
             } catch {
                 applyStage = .failed("Could not stash the backup: "
                                      + error.localizedDescription)
+                applyOwnerId = nil
                 return
             }
             var updated = document
             updated.originalDurationS = material.fileDurationS
             updated.originalFileName = material.fileName
             document = updated
+            // The backup's own name is recorded, because the live file is
+            // about to be renamed: apply always renders WAV, so an imported
+            // mp3 becomes `<id>.wav` and a path derived from the *current*
+            // name would stop finding the original a moment from now.
+            noteBackupFileName(material.backupURL.lastPathComponent,
+                               ownerId: material.id,
+                               ownerType: material.ownerType)
             persistPending()
         }
         applyStage = .uploading
         guard let sourceId = await uploadSource() else {
             applyStage = .failed(jobs.lastError ?? "Upload failed")
+            applyOwnerId = nil
             return
         }
-        let plan = EditMixPlan.plan(
-            document: document, source: sourceId,
-            sourceDuration: sourceDurationS,
-            sampleRate: material.sampleRate, sourceBpm: bpm)
+        var submitted = plan.spec
+        for index in submitted.tracks.indices {
+            submitted.tracks[index].source = sourceId
+        }
+        // The document travels WITH the job: the user may open another track
+        // while this renders, and what lands must be recorded against the
+        // program that was actually submitted.
+        let documentJSON = (try? JSONEncoder().encode(document))
+            .map { String(decoding: $0, as: UTF8.self) }
         guard let created = await jobs.submitEditorRender(
-            modelId: model.id, spec: plan.spec, normalize: plan.normalize,
+            modelId: model.id, spec: submitted, normalize: plan.normalize,
             limiter: plan.limiter, targetLufs: plan.targetLufs,
+            // Match the original's depth. Imports of wav/flac/aiff are
+            // copied as they are, so a 24-bit master stays 24-bit — and
+            // rendering it back at the default 16 would quietly flatten the
+            // user's own file the first time they trimmed it.
+            bitDepth: sourceURL.flatMap(Self.bitDepth(of:)),
             purpose: .apply(ownerId: material.id,
                             ownerType: material.ownerType,
-                            title: material.title)),
+                            title: material.title,
+                            documentJSON: documentJSON)),
             let jobId = created.jobs.first?.jobId else {
             applyStage = .failed(jobs.lastError ?? "Submit failed")
+            applyOwnerId = nil
             return
         }
         applyStage = .queued(jobId: jobId)
@@ -82,9 +118,20 @@ extension EditorStore {
                 doc.effects.removeAll()
             }
             selection = nil
+            flushPersist()
+            return
+        }
+        guard !applyStage.isBusy else {
+            applyStage = .failed("Wait for the render to finish before "
+                                 + "reverting.")
             return
         }
         stopPreview()
+        uploadedSourceId = nil
+        // The rows below are the truth from here on; a write still queued
+        // from the last keystroke would put the cleared program straight
+        // back (the reopen at the end of this method flushes).
+        discardPendingWrite()
         let fm = FileManager.default
         let restoredName = document.originalFileName ?? material.fileName
         let restoredURL = material.isPart
@@ -107,6 +154,7 @@ extension EditorStore {
                 part.sampleRate = shape.sampleRate
                 part.editsJSON = nil
                 part.editedAt = nil
+                part.backupFileName = nil
                 try? partsRepo.update(part)
             }
         } else if var song = library.song(id: material.id) {
@@ -115,9 +163,12 @@ extension EditorStore {
             song.sampleRate = shape.sampleRate ?? song.sampleRate
             song.editsJSON = nil
             song.editedAt = nil
+            song.backupFileName = nil
             library.update(song)
         }
-        try? fm.removeItem(at: material.backupURL)
+        for backup in StoragePaths.backups(forId: material.id) {
+            try? fm.removeItem(at: backup)
+        }
         WaveformExtractor.invalidateCache(material.isPart
             ? StoragePaths.libraryWaveforms
                 .appendingPathComponent(material.id + ".peaks")
@@ -202,7 +253,10 @@ extension EditorStore {
     /// The name the save panel offers: `Drums — test01 (1_12–1_21).wav`.
     /// Colons are path separators to AppKit, so the clock's dots stay and
     /// its colon becomes an underscore.
-    static func exportName(title: String, songTitle: String?,
+    ///
+    /// `nonisolated` because it is pure string work: the file-name rule is
+    /// the sort of thing a test should reach without an actor hop.
+    nonisolated static func exportName(title: String, songTitle: String?,
                            selection: EditRange?, format: String) -> String {
         var base = title.replacingOccurrences(of: "/", with: "-")
         if let songTitle {
@@ -263,9 +317,9 @@ extension EditorStore {
         guard let artifact = (result.artifacts ?? [])
             .first(where: { $0.kind == "audio" }) else { return }
         switch purpose {
-        case .apply(let ownerId, let ownerType, _):
+        case .apply(let ownerId, let ownerType, _, let documentJSON):
             finishApply(artifact: artifact, ownerId: ownerId,
-                        ownerType: ownerType)
+                        ownerType: ownerType, documentJSON: documentJSON)
         case .export(let destination, _):
             let fm = FileManager.default
             try? fm.removeItem(at: destination)
@@ -283,28 +337,39 @@ extension EditorStore {
     }
 
     private func finishApply(artifact: JobArtifact, ownerId: String,
-                             ownerType: String) {
-        applyStage = .replacing
+                             ownerType: String, documentJSON: String?) {
+        let isCurrent = material?.id == ownerId
+        if isCurrent || applyOwnerId == ownerId { applyStage = .replacing }
         let fm = FileManager.default
         let newFileName = "\(ownerId).\(artifact.format)"
         let directory = ownerType == "part" ? StoragePaths.libraryParts
                                             : StoragePaths.libraryAudio
         let newURL = directory.appendingPathComponent(newFileName)
+        // The row is the authority on what the live file is called: the
+        // apply may have finished while the user was looking at another
+        // track, so this must not read the loaded material.
+        let oldURL: URL? = ownerType == "part"
+            ? ((try? partsRepo.part(id: ownerId)) ?? nil)?.fileURL
+            : library.song(id: ownerId)?.fileURL
         do {
             // The old file may have a different extension (an imported mp3
             // becomes wav on first apply) — both names come off.
-            if let material, material.id == ownerId {
-                try? fm.removeItem(at: material.fileURL)
-            }
+            if let oldURL, oldURL != newURL { try? fm.removeItem(at: oldURL) }
             try? fm.removeItem(at: newURL)
             try fm.moveItem(at: URL(fileURLWithPath: artifact.path),
                             to: newURL)
         } catch {
-            applyStage = .failed("Could not replace the file: "
-                                 + error.localizedDescription)
+            if isCurrent || applyOwnerId == ownerId {
+                applyStage = .failed("Could not replace the file: "
+                                     + error.localizedDescription)
+            }
+            applyOwnerId = nil
             return
         }
-        var appliedDoc = document
+        // The program that was SUBMITTED, not whatever is loaded now.
+        var appliedDoc = (documentJSON.flatMap {
+            try? JSONDecoder().decode(EditDocument.self, from: Data($0.utf8))
+        }) ?? document
         appliedDoc.appliedAt = Date()
         let json = (try? JSONEncoder().encode(appliedDoc))
             .map { String(decoding: $0, as: UTF8.self) }
@@ -325,23 +390,33 @@ extension EditorStore {
             song.editedAt = Date()
             library.update(song)
         }
-        document = appliedDoc
-        appliedDocument = appliedDoc
         let peaksURL = StoragePaths.libraryWaveforms
             .appendingPathComponent(ownerId + ".peaks")
         WaveformExtractor.invalidateCache(peaksURL)
-        // Refresh the loaded material's facts without resetting the session.
-        if var current = material, current.id == ownerId {
-            current.fileURL = newURL
-            current.fileName = newFileName
-            current.fileDurationS = artifact.durationS ?? current.fileDurationS
-            current.sampleRate = artifact.sampleRate ?? current.sampleRate
-            material = current
+        if isCurrent {
+            document = appliedDoc
+            appliedDocument = appliedDoc
+            // The live file moved, so the cached upload id names the wrong
+            // audio; the next render must upload again. (It still renders
+            // from the backup — but only after this is dropped.)
+            uploadedSourceId = nil
+            // Refresh the loaded material's facts without resetting the
+            // session.
+            if var current = material {
+                current.fileURL = newURL
+                current.fileName = newFileName
+                current.fileDurationS = artifact.durationS
+                    ?? current.fileDurationS
+                current.sampleRate = artifact.sampleRate ?? current.sampleRate
+                material = current
+            }
         }
-        applyStage = .rebuildingPeaks
         if notifyWhenApplied {
-            notifyApplied(material?.title ?? "Edited track")
+            notifyApplied(titleOf(ownerId: ownerId, ownerType: ownerType))
             notifyWhenApplied = false
+        }
+        if isCurrent || applyOwnerId == ownerId {
+            applyStage = .rebuildingPeaks
         }
         Task {
             _ = try? await WaveformExtractor.shared.peaks(for: newURL,
@@ -349,7 +424,16 @@ extension EditorStore {
             if case .rebuildingPeaks = self.applyStage {
                 self.applyStage = .idle
             }
+            if self.applyOwnerId == ownerId { self.applyOwnerId = nil }
         }
+    }
+
+    private func titleOf(ownerId: String, ownerType: String) -> String {
+        if ownerType == "part" {
+            return ((try? partsRepo.part(id: ownerId)) ?? nil)?.name
+                ?? "Edited stem"
+        }
+        return library.song(id: ownerId)?.title ?? "Edited track"
     }
 
     private func finishSnippet(job: JobInfo, artifact: JobArtifact,
@@ -385,6 +469,26 @@ extension EditorStore {
     }
 
     // MARK: shared plumbing
+
+    /// Record where the backup went, so the path survives the file being
+    /// renamed by this very apply.
+    func noteBackupFileName(_ name: String, ownerId: String,
+                            ownerType: String) {
+        if ownerType == "part" {
+            if var part = ((try? partsRepo.part(id: ownerId)) ?? nil) {
+                part.backupFileName = name
+                try? partsRepo.update(part)
+            }
+        } else if var song = library.song(id: ownerId) {
+            song.backupFileName = name
+            library.update(song)
+        }
+        if var current = material, current.id == ownerId {
+            current.backupURL = StoragePaths.libraryBackups
+                .appendingPathComponent(name)
+            material = current
+        }
+    }
 
     private func uploadSource() async -> String? {
         if let uploadedSourceId { return uploadedSourceId }
@@ -442,6 +546,21 @@ extension EditorStore {
                     }
                 }
             }
+        }
+    }
+
+    /// The engine's `bit_depth` word for a file's own sample format, or nil
+    /// when it is the default (16-bit) or cannot be read.
+    nonisolated static func bitDepth(of url: URL) -> String? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let format = file.fileFormat.streamDescription.pointee
+        if format.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            return "float32"
+        }
+        switch format.mBitsPerChannel {
+        case 24, 32: return "pcm24"     // 32-bit int has no wire word; 24 is
+                                        // the closest honest one
+        default: return nil             // 16 and below: the default
         }
     }
 

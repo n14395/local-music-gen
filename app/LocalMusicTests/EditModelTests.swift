@@ -227,15 +227,130 @@ final class EditMixPlanTests: XCTestCase {
         XCTAssertFalse(plan.limiter)
     }
 
-    func testCrossfadeOffCutsButt() {
+    /// Crossfade "off" is the shortest honest join, not none: the engine
+    /// applies a 2 ms de-click to every section trim whatever the caller
+    /// asks for, so butt-joining two sections puts their two ramps in
+    /// disjoint windows and the sum dips to digital silence. The floor makes
+    /// them overlap so they sum back to unity.
+    func testCrossfadeOffStillLapsTheEngineDeclick() {
         var document = doc([.delete(EditRange(start: 30, end: 40))])
         document.joinCrossfadeMs = 0
         let plan = makePlan(document)
         let a = plan.spec.tracks[0], b = plan.spec.tracks[1]
-        XCTAssertEqual(a.section?.endS ?? -1, 30, accuracy: 1e-9)
-        XCTAssertEqual(b.offsetS, 30, accuracy: 1e-9)
-        XCTAssertNil(a.fadeOutS)
-        XCTAssertNil(b.fadeInS)
+        let floor = EditMixPlan.engineEdgeFadeS * 2
+        XCTAssertEqual(a.fadeOutS ?? 0, floor, accuracy: 1e-9)
+        XCTAssertEqual(b.fadeInS ?? 0, floor, accuracy: 1e-9)
+        XCTAssertEqual(a.section?.endS ?? -1, 30 + floor / 2, accuracy: 1e-9)
+        XCTAssertEqual(b.offsetS, 30 - floor / 2, accuracy: 1e-9)
+    }
+
+    /// A split is bookkeeping: the source runs straight through it, so it
+    /// must render as ONE track. Two abutting tracks would each get the
+    /// engine's de-click and leave a hole in audio nothing changed.
+    func testSplitCoalescesIntoASingleTrack() {
+        var document = doc([.splitAt(50)])
+        document.joinCrossfadeMs = 8
+        let plan = makePlan(document)
+        XCTAssertEqual(plan.spec.tracks.count, 1)
+        XCTAssertEqual(plan.spec.tracks[0].section?.startS ?? -1, 0,
+                       accuracy: 1e-9)
+        XCTAssertEqual(plan.spec.tracks[0].section?.endS ?? -1, 100,
+                       accuracy: 1e-9)
+        XCTAssertNil(plan.spec.tracks[0].fadeOutS)
+    }
+
+    /// The same holds for a delete whose two sides are then rejoined by a
+    /// later trim — only genuine discontinuities become separate tracks.
+    func testAdjacentSameGainRunsCoalesceButCutsDoNot() {
+        var document = doc([
+            .splitAt(20),
+            .splitAt(40),
+            .delete(EditRange(start: 60, end: 70)),
+        ])
+        document.joinCrossfadeMs = 8
+        let plan = makePlan(document)
+        XCTAssertEqual(plan.spec.tracks.count, 2,
+                       "three splits are one run; the delete makes the second")
+        XCTAssertEqual(plan.spec.tracks[0].section?.startS ?? -1, 0,
+                       accuracy: 1e-9)
+        XCTAssertEqual(plan.spec.tracks[1].section?.endS ?? -1, 100,
+                       accuracy: 1e-9)
+    }
+
+    /// A run of REVERSED segments grows downward through the source. The
+    /// merged section must cover everything the run played — growing the
+    /// wrong end drops the material it started from, and the render comes
+    /// back half the length it should be.
+    func testReversedRunsCoalesceOverTheWholeSpan() {
+        var document = doc([
+            .splitAt(50),
+            .reverse(EditRange(start: 0, end: 100)),
+        ])
+        document.joinCrossfadeMs = 8
+        let plan = makePlan(document)
+        XCTAssertEqual(plan.spec.tracks.count, 1,
+                       "the two reversed halves are one unbroken run")
+        let track = plan.spec.tracks[0]
+        XCTAssertEqual(track.reverse, true)
+        XCTAssertEqual(track.section?.startS ?? -1, 0, accuracy: 1e-9)
+        XCTAssertEqual(track.section?.endS ?? -1, 100, accuracy: 1e-9,
+                       "the whole source, not just the half it began on")
+        XCTAssertEqual(plan.spec.target.durationS ?? 0, 100, accuracy: 1e-9)
+    }
+
+    /// Every track's section must be a real slice of the source and cover
+    /// what the timeline says it does — the property that both directions of
+    /// the merge have to preserve.
+    func testEverySectionCoversItsTimelineExtent() {
+        for kinds in [
+            [EditOp.Kind.splitAt(30), .splitAt(60)],
+            [.reverse(EditRange(start: 20, end: 80))],
+            [.splitAt(50), .reverse(EditRange(start: 0, end: 100))],
+            [.delete(EditRange(start: 30, end: 40)), .splitAt(20)],
+            [.reverse(EditRange(start: 0, end: 50)),
+             .reverse(EditRange(start: 50, end: 100))],
+        ] {
+            let document = doc(kinds)
+            let plan = makePlan(document)
+            let timeline = EditProgram.timelineDuration(
+                EditProgram.segments(sourceDuration: 100,
+                                     ops: document.ops))
+            let played = plan.spec.tracks.reduce(0.0) { total, track in
+                total + max(0, (track.section?.endS ?? 0)
+                            - (track.section?.startS ?? 0))
+            }
+            // Sections are lapped by the join crossfades, so the sum is the
+            // timeline plus the overlaps — never less, and never wildly more.
+            XCTAssertGreaterThanOrEqual(played, timeline - 1e-6, "\(kinds)")
+            XCTAssertLessThanOrEqual(played, timeline + 0.5, "\(kinds)")
+            for track in plan.spec.tracks {
+                XCTAssertGreaterThanOrEqual(track.section?.startS ?? 0, 0)
+                XCTAssertLessThanOrEqual(track.section?.endS ?? 0, 100)
+                XCTAssertGreaterThanOrEqual(track.offsetS, 0)
+            }
+        }
+    }
+
+    /// Amplify splits a run by level, so its edges are real joins.
+    func testAmplifiedRegionBecomesItsOwnTrack() {
+        let plan = makePlan(doc([
+            .amplify(EditRange(start: 30, end: 40), db: 3),
+        ]))
+        XCTAssertEqual(plan.spec.tracks.count, 3)
+        XCTAssertEqual(plan.spec.tracks[1].gainDb, 3, accuracy: 1e-9)
+    }
+
+    /// The engine fails a job whose `offset_s` is negative, so lapping the
+    /// second side earlier must never take it below zero.
+    func testCrossfadeNeverProducesANegativeOffset() {
+        var document = doc([.delete(EditRange(start: 0.001, end: 40))])
+        document.joinCrossfadeMs = 200
+        let plan = makePlan(document)
+        for track in plan.spec.tracks {
+            XCTAssertGreaterThanOrEqual(track.offsetS, 0)
+            XCTAssertGreaterThanOrEqual(track.section?.startS ?? 0, 0)
+            XCTAssertLessThanOrEqual(track.section?.endS ?? 0, 100)
+        }
     }
 
     func testGapLeavesAnOffsetHoleAndNoCrossfade() {
@@ -305,9 +420,33 @@ final class EditMixPlanTests: XCTestCase {
         XCTAssertEqual(plan.spec.target.bpm ?? 0, 172, accuracy: 1e-9)
         XCTAssertEqual(plan.spec.tracks[0].stretch.mode, "uniform")
         XCTAssertEqual(plan.spec.tracks[0].sourceBpm ?? 0, 86, accuracy: 1e-9)
-        // The second segment starts at edit-time 30 → target-time 15.
-        XCTAssertEqual(plan.spec.tracks[1].offsetS, 15, accuracy: 1e-9)
+        // The second segment starts at edit-time 30 → target-time 15, less
+        // half the join overlap.
+        XCTAssertEqual(plan.spec.tracks[1].offsetS, 15, accuracy: 0.01)
         XCTAssertEqual(plan.spec.target.durationS ?? 0, 45, accuracy: 1e-9)
+    }
+
+    /// Fades are authored in timeline seconds but the engine applies them
+    /// after stretching, so they go out in target time — a 6 s fade on a
+    /// double-speed track is 3 s of rendered audio.
+    func testFadesAreConvertedToTargetTime() {
+        var document = doc([
+            .fadeOut(seconds: 6, curve: .linear),
+            .speed(rate: 2),
+        ])
+        document.joinCrossfadeMs = 0
+        let plan = makePlan(document, bpm: 100)
+        XCTAssertEqual(plan.spec.tracks[0].fadeOutS ?? 0, 3, accuracy: 1e-9)
+    }
+
+    /// Silencing everything leaves nothing to render; the engine fails such
+    /// a job outright, so the plan says so before anything is submitted.
+    func testAllSilentProgramIsNotRenderable() {
+        let plan = makePlan(doc([.silence(EditRange(start: 0, end: 100))]))
+        XCTAssertTrue(plan.spec.tracks.isEmpty)
+        XCTAssertFalse(plan.isRenderable)
+
+        XCTAssertTrue(makePlan(doc([])).isRenderable)
     }
 
     func testPitchAloneRidesWithoutStretch() {

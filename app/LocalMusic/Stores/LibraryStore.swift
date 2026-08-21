@@ -129,6 +129,19 @@ final class LibraryStore {
         refreshRecent()
     }
 
+    /// The Editor's own files for a track: the stashed original and the
+    /// peak cache drawn from it. Matched on the id prefix rather than a
+    /// recomputed name — an applied track's file has been renamed, and the
+    /// backup that outlives it must still be found.
+    static func removeEditorLeftovers(id: String) {
+        for backup in StoragePaths.backups(forId: id) {
+            try? FileManager.default.removeItem(at: backup)
+        }
+        try? FileManager.default.removeItem(
+            at: StoragePaths.libraryWaveforms
+                .appendingPathComponent(id + ".original.peaks"))
+    }
+
     func delete(_ song: SongRecord) {
         // Parts are derivatives: their rows cascade with the song row, so the
         // files must go first.
@@ -139,12 +152,14 @@ final class LibraryStore {
                     try? FileManager.default.removeItem(at: preview)
                 }
                 try? FileManager.default.removeItem(at: part.waveformURL)
+                LibraryStore.removeEditorLeftovers(id: part.id)
                 try? partsRepo.deleteAnalysis(ownerId: part.id)
             }
             try? partsRepo.deleteAnalysis(ownerId: song.id)
         }
         try? FileManager.default.removeItem(at: song.fileURL)
         try? FileManager.default.removeItem(at: song.waveformURL)
+        LibraryStore.removeEditorLeftovers(id: song.id)
         try? repo.delete(id: song.id)
         refreshRecent()
     }

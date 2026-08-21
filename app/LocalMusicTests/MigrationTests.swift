@@ -166,6 +166,40 @@ final class MigrationTests: XCTestCase {
         XCTAssertEqual(part?.editsJSON, "{}")
     }
 
+    /// v6 records where the backup went. The point is that it survives the
+    /// live file being renamed — which is exactly what the first apply to an
+    /// imported mp3 does.
+    func testV5DataSurvivesV6AndBackupPathSurvivesARename() throws {
+        let queue = try DatabaseQueue()
+        try DatabaseManager.migrator.migrate(queue, upTo: "v5")
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO song (id, title, prompt, modelId, modelName,
+                                  paramsJSON, durationS, sampleRate, fileName,
+                                  createdAt, rating, notes, favorite, origin)
+                VALUES ('s1', 'Import', '', 'imported', 'Imported', '{}', 10,
+                        44100, 's1.mp3', '2026-08-01T00:00:00Z', 0, '', 0,
+                        'imported')
+                """)
+        }
+        try DatabaseManager.migrator.migrate(queue)
+
+        var song = try XCTUnwrap(
+            try queue.read { try SongRecord.fetchOne($0, key: "s1") })
+        XCTAssertNil(song.backupFileName)
+        // With nothing recorded it falls back to the old derivation, so rows
+        // written before v6 still resolve.
+        XCTAssertEqual(song.backupURL.lastPathComponent, "s1.mp3")
+
+        song.backupFileName = "s1.mp3"
+        song.fileName = "s1.wav"
+        try queue.write { [song] in try song.update($0) }
+        let back = try XCTUnwrap(
+            try queue.read { try SongRecord.fetchOne($0, key: "s1") })
+        XCTAssertEqual(back.backupURL.lastPathComponent, "s1.mp3")
+        XCTAssertEqual(back.fileURL.lastPathComponent, "s1.wav")
+    }
+
     func testFTSStillMatchesAfterV2() throws {
         let repo = LibraryRepository(db: try DatabaseManager.inMemory())
         try repo.insert(SongRecord(

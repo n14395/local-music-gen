@@ -254,6 +254,9 @@ struct BenchSlider: View {
     /// Called once when a drag begins, so callers can open an undo group
     /// before the first mutation rather than after it.
     var onEditingBegan: (() -> Void)?
+    /// Called once when it ends. A drag is one edit to undo, and the caller
+    /// cannot know it is over without this.
+    var onEditingEnded: (() -> Void)?
 
     @State private var dragging = false
 
@@ -293,7 +296,10 @@ struct BenchSlider: View {
                         }
                         set(fromX: g.location.x, width: width)
                     }
-                    .onEnded { _ in dragging = false })
+                    .onEnded { _ in
+                        if dragging { onEditingEnded?() }
+                        dragging = false
+                    })
         }
         .frame(height: knobSize)
         .opacity(isEnabled ? 1 : 0.45)
