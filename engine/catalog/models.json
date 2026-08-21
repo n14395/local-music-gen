@@ -7683,6 +7683,49 @@
             "default": false,
             "nullable": false,
             "help": "Also save each aligned track as a part of the result."
+          },
+          {
+            "key": "normalize",
+            "type": "bool",
+            "label": "Normalize loudness",
+            "default": true,
+            "nullable": false,
+            "help": "Off renders at the summed level of the tracks themselves — an edit that only cuts must not change how loud the audio is."
+          },
+          {
+            "key": "limiter",
+            "type": "bool",
+            "label": "True-peak limiter",
+            "default": true,
+            "nullable": false,
+            "help": "\u22121 dBTP limiter after normalization."
+          },
+          {
+            "key": "output_format",
+            "type": "enum",
+            "label": "Output format",
+            "default": "wav",
+            "nullable": false,
+            "choices": [
+              {"value": "wav", "label": "WAV"},
+              {"value": "aiff", "label": "AIFF"},
+              {"value": "flac", "label": "FLAC"},
+              {"value": "mp3", "label": "MP3"}
+            ],
+            "help": "Container of the rendered mixdown. Stems stay 16-bit WAV."
+          },
+          {
+            "key": "bit_depth",
+            "type": "enum",
+            "label": "Bit depth",
+            "default": "pcm16",
+            "nullable": false,
+            "choices": [
+              {"value": "pcm16", "label": "16-bit"},
+              {"value": "pcm24", "label": "24-bit"},
+              {"value": "float32", "label": "32-bit float"}
+            ],
+            "help": "Sample format of the mixdown. 32-bit float is not valid for FLAC; ignored for MP3."
           }
         ],
         "est_realtime_factor": 0.3

@@ -87,8 +87,7 @@ class StableAudioAdapter(ModelAdapter):
 
         sample_rate = int(self.config["sample_rate"])
         sample_size = int(self.config["sample_size"])
-        conditioning = [{"prompt": prompt,
-                         "seconds_total": duration_s}]
+        conditioning = [self._conditioning(prompt, duration_s)]
 
         # off unless the job asked: each preview is a full autoencoder decode
         preview_every = preview_stride(steps) if params.get("preview") else 0
@@ -146,6 +145,38 @@ class StableAudioAdapter(ModelAdapter):
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
                               seed_used=seed if seed >= 0 else None)
+
+    def _conditioning(self, prompt: str, duration_s: float) -> dict:
+        """What the model is told about the take it is about to make.
+
+        `seconds_start` is where the excerpt sits inside the piece it was cut
+        from, and 0 asks for the beginning of one. It is not optional, and the
+        family does not agree on it: Open 1.0 conditions on prompt +
+        seconds_start + seconds_total, Open Small on prompt + seconds_total
+        alone. `MultiConditioner` raises "Conditioner key <k> not found in
+        batch metadata" for anything it wants and cannot find, so omitting
+        seconds_start failed every Open 1.0 render while Small kept working.
+
+        Everything is sent to everything: the conditioner reads only the keys
+        it has conditioners for, so a spare one costs Small nothing. The check
+        below is the other half — a future model in this family that asks for a
+        key not in here should say so by name at the first render, rather than
+        from four frames inside the library.
+        """
+        values = {"prompt": prompt,
+                  "seconds_start": 0.0,
+                  "seconds_total": duration_s}
+        wanted = [c.get("id") for c
+                  in self.config.get("model", {})
+                                .get("conditioning", {})
+                                .get("configs", [])]
+        missing = [k for k in wanted if k and k not in values]
+        if missing:
+            raise RuntimeError(
+                "this model conditions on "
+                + ", ".join(missing)
+                + ", which the adapter does not supply")
+        return values
 
     def _preview(self, latent, sample_rate: int, duration_s: float,
                  step: int) -> None:

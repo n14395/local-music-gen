@@ -651,7 +651,16 @@ all beat math is precomputed — the dsp worker performs no analysis):
      "stretch": {"mode": "beat" | "uniform" | "none",
                  "transient_mode": "smooth" | "crisp",
                  "preserve_formants": true},
-     "pitch_shift_st": 2.0}
+     "pitch_shift_st": 2.0,
+     "reverse": false,                    // optional; see below
+     "effects": [                         // optional ordered chain; see below
+       {"type": "highpass", "cutoff_hz": 80.0},
+       {"type": "lowpass", "cutoff_hz": 18000.0},
+       {"type": "eq3", "low_db": 2.5, "mid_db": 0.0, "high_db": 1.5},
+       {"type": "compressor", "threshold_db": -18.0, "ratio": 3.0,
+        "attack_ms": 8.0, "release_ms": 120.0},
+       {"type": "gate", "threshold_db": -54.0}
+     ]}
   ]
 }
 ```
@@ -667,6 +676,43 @@ trim already gets. Ramps longer than the track share it proportionally. A
 crossfade is expressed as two overlapping tracks with complementary fades —
 the worker has no notion of a crossfade itself; linear ramps of the same source
 sum back to the original level, which equal-power ones would not.
+
+`reverse` (optional, default false) plays the track's audio backwards:
+sample-for-sample reversal of the `section` trim (or the whole file without
+one), applied before resampling and stretching, so every later stage sees the
+reversed material exactly as it would forward material.
+
+`effects` (optional) is an **ordered** per-track processor chain, applied after
+stretching and before fades and `gain_db` — a fade shapes the *processed*
+signal, and a gate applied after a fade-out would chop its tail. Five
+processor types exist; every field shown above is required for its type, and
+an unknown `type` (or a malformed processor object) fails the job rather than
+silently skipping a stage of the sound the caller asked for:
+
+| type | fields | meaning |
+|------|--------|---------|
+| `highpass` | `cutoff_hz` | 12 dB/oct high-pass |
+| `lowpass` | `cutoff_hz` | 12 dB/oct low-pass |
+| `eq3` | `low_db`, `mid_db`, `high_db` | three fixed bands: low shelf at 120 Hz, peak at 1.2 kHz, high shelf at 8 kHz |
+| `compressor` | `threshold_db`, `ratio`, `attack_ms`, `release_ms` | feed-forward compressor |
+| `gate` | `threshold_db` | noise gate |
+
+Dynamics state (compressor envelopes, gate state) starts fresh per track. A
+caller that cuts one source into several tracks of a single timeline should
+crossfade the joins (as above), which also covers the reset.
+
+Beside `mix_spec`, the `mix` task reads these declared params (all optional;
+unknown params are dropped at submit, per §5.1 — so a worker only ever sees
+what its model declares):
+
+| param | type | default | meaning |
+|-------|------|---------|---------|
+| `target_lufs` | float | −14.0 | integrated loudness the mix is normalised to |
+| `normalize` | bool | true | false skips loudness normalisation entirely (`target_lufs` is ignored) — an edit render must not change the level of audio the caller only trimmed |
+| `limiter` | bool | true | the −1 dBTP true-peak limiter after normalisation |
+| `keep_tracks` | bool | false | also emit each aligned track as a `stem` artifact |
+| `output_format` | enum `wav` \| `aiff` \| `flac` \| `mp3` | `wav` | container of the `audio` (mixdown) artifact; `stem` artifacts stay 16-bit WAV |
+| `bit_depth` | enum `pcm16` \| `pcm24` \| `float32` | `pcm16` | sample format of the mixdown artifact; `float32` is invalid for `flac` and the job fails; ignored for `mp3` |
 
 ### 5.5 Staged progress
 

@@ -296,6 +296,16 @@ def _catalog() -> dict[str, dict[str, Any]]:
                          internal=True, resolve_uploads=True),
                     spec("target_lufs", "float", "Target loudness (LUFS)", -14.0,
                          min=-30.0, max=-6.0, step=0.5),
+                    spec("keep_tracks", "bool", "Keep tracks", False),
+                    spec("normalize", "bool", "Normalize loudness", True),
+                    spec("limiter", "bool", "True-peak limiter", True),
+                    spec("output_format", "enum", "Output format", "wav",
+                         choices=[{"value": v, "label": v.upper()}
+                                  for v in ("wav", "aiff", "flac", "mp3")]),
+                    spec("bit_depth", "enum", "Bit depth", "pcm16",
+                         choices=[{"value": "pcm16", "label": "16-bit"},
+                                  {"value": "pcm24", "label": "24-bit"},
+                                  {"value": "float32", "label": "32-bit float"}]),
                 ],
             },
             "requirements": {"min_ram_bytes": 2 << 30, "disk_bytes": 0,
@@ -1037,10 +1047,32 @@ async def make_task_artifacts(job: Job, out_dir: str,
                 "camelot": CANNED_ANALYSIS["camelot"]}
         return artifacts, meta
     if job.task == "mix":
-        path = os.path.join(out_dir, "mixdown.wav")
+        # The container/bit-depth choice changes the artifact's declared format
+        # and extension (contract 5.4). The payload stays a WAV sine — the stub
+        # simulates the wire shape, not the codec — but a float32 FLAC is
+        # refused exactly as the real worker refuses it, so clients can test
+        # their validation against the same failure.
+        fmt = str(job.params.get("output_format") or "wav")
+        depth = str(job.params.get("bit_depth") or "pcm16")
+        if fmt == "flac" and depth == "float32":
+            raise RuntimeError("flac cannot hold 32-bit float samples")
+        path = os.path.join(out_dir, f"mixdown.{fmt}")
         await asyncio.to_thread(write_wav, path, dur, sr, 262.0)
-        return [{"kind": "audio", "label": "mixdown", "path": path,
-                 "format": "wav", "sample_rate": sr, "duration_s": dur}], {}
+        artifacts = [{"kind": "audio", "label": "mixdown", "path": path,
+                      "format": fmt, "sample_rate": sr, "duration_s": dur}]
+        if job.params.get("keep_tracks"):
+            spec_tracks = json.loads(job.params["mix_spec"]).get("tracks") or []
+            for i, track in enumerate(spec_tracks):
+                role = str(track.get("role") or f"track-{i}")
+                stem_path = os.path.join(out_dir, f"{role}.wav")
+                await asyncio.to_thread(write_wav, stem_path, dur, sr, 330.0)
+                artifacts.append({"kind": "stem", "label": role,
+                                  "path": stem_path, "format": "wav",
+                                  "sample_rate": sr, "duration_s": dur})
+        meta = {}
+        if job.params.get("normalize", True):
+            meta["lufs"] = float(job.params.get("target_lufs") or -14.0)
+        return artifacts, meta
     if job.task == "transcribe":
         artifacts = []
         counts = {}

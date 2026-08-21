@@ -42,8 +42,12 @@ class DSPAdapter(ModelAdapter):
         sr = int(target.get("sample_rate") or 44100)
         target_bpm = _maybe_float(target.get("bpm"))
         target_lufs = _maybe_float(params.get("target_lufs")) or DEFAULT_LUFS
+        normalize = bool(params.get("normalize", True))
         use_limiter = params.get("limiter", True)
         keep_tracks = bool(params.get("keep_tracks", False))
+        out_format = str(params.get("output_format") or "wav").lower()
+        bit_depth = str(params.get("bit_depth") or "pcm16").lower()
+        _check_output(out_format, bit_depth)
         tracks = [t for t in (spec.get("tracks") or []) if not t.get("mute")]
         if not tracks:
             raise ValueError("mix_spec contains no audible tracks")
@@ -75,20 +79,25 @@ class DSPAdapter(ModelAdapter):
         for _role, off, audio in processed:
             mix[off:off + len(audio)] += _stereo(audio)
 
-        mix = _normalize_loudness(mix, sr, target_lufs)
+        if normalize:
+            mix = _normalize_loudness(mix, sr, target_lufs)
         if use_limiter:
             from pedalboard import Limiter, Pedalboard
             mix = Pedalboard([Limiter(threshold_db=-1.0)])(mix.T, sr).T
-        np.clip(mix, -1.0, 1.0, out=mix)
+        if bit_depth != "float32":
+            np.clip(mix, -1.0, 1.0, out=mix)
 
-        artifacts = [self._write(out_dir, "mixdown", mix, sr, kind="audio")]
+        artifacts = [self._write(out_dir, "mixdown", mix, sr, kind="audio",
+                                 fmt=out_format, bit_depth=bit_depth)]
         if keep_tracks:
             for role, off, audio in processed:
                 placed = np.zeros_like(mix)
                 placed[off:off + len(audio)] = _stereo(audio)[:len(mix) - off]
                 artifacts.append(self._write(out_dir, role, placed, sr,
                                              kind="stem"))
-        meta = {"lufs": target_lufs, "duration_s": round(len(mix) / sr, 3)}
+        meta = {"duration_s": round(len(mix) / sr, 3)}
+        if normalize:
+            meta["lufs"] = target_lufs
         if target_bpm:
             meta["tempo_bpm"] = target_bpm
         return TaskResult(artifacts=artifacts, meta=meta)
@@ -107,6 +116,11 @@ class DSPAdapter(ModelAdapter):
             audio = audio[int(start * in_sr):int(stop * in_sr)]
             audio = _edge_fade(audio, in_sr)
             downbeats = [d - start for d in downbeats if start <= d <= stop]
+        if track.get("reverse"):
+            # Before resample/stretch, so every later stage sees the reversed
+            # material exactly as it would forward material (contract 5.4).
+            audio = np.ascontiguousarray(audio[::-1])
+            downbeats = []
         if in_sr != sr:
             audio = soxr.resample(audio, in_sr, sr)
         if cancel.cancelled:
@@ -130,6 +144,10 @@ class DSPAdapter(ModelAdapter):
         elif abs(shift) > 1e-4:
             audio = _stretch(audio, sr, 1.0, shift, opts)
 
+        effects = track.get("effects") or []
+        if effects:
+            audio = _apply_effects(audio, sr, effects)
+
         # Fades ride on top of the 2 ms de-click, and are applied AFTER
         # stretching so their lengths are target-time seconds — the same time
         # base the caller placed the track in.
@@ -141,16 +159,87 @@ class DSPAdapter(ModelAdapter):
         return (audio * gain).astype(np.float32)
 
     def _write(self, out_dir: str, label: str, audio: np.ndarray, sr: int,
-               kind: str) -> Artifact:
+               kind: str, fmt: str = "wav",
+               bit_depth: str = "pcm16") -> Artifact:
         safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)
-        path = os.path.join(out_dir, f"{safe}.wav")
-        sf.write(path + ".part", audio, sr, subtype="PCM_16", format="WAV")
+        path = os.path.join(out_dir, f"{safe}.{fmt}")
+        if fmt == "mp3":
+            # subtype is implied by the container; bit depth does not apply
+            sf.write(path + ".part", audio, sr, format="MP3")
+        else:
+            subtype = {"pcm16": "PCM_16", "pcm24": "PCM_24",
+                       "float32": "FLOAT"}[bit_depth]
+            sf.write(path + ".part", audio, sr, subtype=subtype,
+                     format=fmt.upper())
         os.replace(path + ".part", path)
-        return Artifact(kind=kind, label=label, path=path, format="wav",
+        return Artifact(kind=kind, label=label, path=path, format=fmt,
                         sample_rate=sr, duration_s=round(len(audio) / sr, 3))
 
 
 # MARK: DSP helpers
+
+
+def _check_output(fmt: str, bit_depth: str) -> None:
+    if fmt not in ("wav", "aiff", "flac", "mp3"):
+        raise ValueError(f"unknown output_format '{fmt}'")
+    if bit_depth not in ("pcm16", "pcm24", "float32"):
+        raise ValueError(f"unknown bit_depth '{bit_depth}'")
+    if fmt == "flac" and bit_depth == "float32":
+        raise ValueError("flac cannot hold 32-bit float samples")
+    if fmt == "mp3":
+        import soundfile as _sf
+        if "MP3" not in _sf.available_formats():
+            raise ValueError("this libsndfile build cannot encode MP3")
+
+
+def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
+    """The per-track processor chain (contract 5.4): applied in the order
+    given, after stretching and before fades/gain. Unknown or malformed
+    processors fail the job — silently skipping a stage of the sound the
+    caller asked for is worse than refusing."""
+    from pedalboard import (Compressor, HighpassFilter, HighShelfFilter,
+                            LowpassFilter, LowShelfFilter, NoiseGate,
+                            Pedalboard, PeakFilter)
+
+    def need(fx: dict, key: str) -> float:
+        value = _maybe_float(fx.get(key))
+        if value is None:
+            raise ValueError(f"effect '{fx.get('type')}' is missing '{key}'")
+        return value
+
+    plugins = []
+    for fx in effects:
+        kind = (fx or {}).get("type")
+        if kind == "highpass":
+            # pedalboard's filters are 6 dB/oct; two in series make the
+            # 12 dB/oct slope the contract promises.
+            cutoff = need(fx, "cutoff_hz")
+            plugins += [HighpassFilter(cutoff_frequency_hz=cutoff)] * 2
+        elif kind == "lowpass":
+            cutoff = need(fx, "cutoff_hz")
+            plugins += [LowpassFilter(cutoff_frequency_hz=cutoff)] * 2
+        elif kind == "eq3":
+            plugins += [
+                LowShelfFilter(cutoff_frequency_hz=120.0,
+                               gain_db=need(fx, "low_db")),
+                PeakFilter(cutoff_frequency_hz=1200.0,
+                           gain_db=need(fx, "mid_db")),
+                HighShelfFilter(cutoff_frequency_hz=8000.0,
+                                gain_db=need(fx, "high_db")),
+            ]
+        elif kind == "compressor":
+            plugins.append(Compressor(threshold_db=need(fx, "threshold_db"),
+                                      ratio=need(fx, "ratio"),
+                                      attack_ms=need(fx, "attack_ms"),
+                                      release_ms=need(fx, "release_ms")))
+        elif kind == "gate":
+            plugins.append(NoiseGate(threshold_db=need(fx, "threshold_db")))
+        else:
+            raise ValueError(f"unknown effect type '{kind}'")
+    if not plugins:
+        return audio
+    out = Pedalboard(plugins)(audio.T.astype(np.float32), sr).T
+    return np.asarray(out, dtype=np.float32)
 
 
 def _maybe_float(v) -> float | None:

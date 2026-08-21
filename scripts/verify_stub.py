@@ -690,6 +690,64 @@ def main() -> int:
               and track.get("source") != upload_id,   # resolved to a path
               json.dumps(track)[:200])
 
+        # Editor-shaped spec: reverse + effects chain survive verbatim, and
+        # the output params reshape the artifact (contract 5.4).
+        edit_spec = json.dumps({
+            "target": {"sample_rate": 44100},
+            "tracks": [{"source": upload_id, "role": "edit",
+                        "gain_db": 0.0, "offset_s": 0.0,
+                        "reverse": True,
+                        "effects": [
+                            {"type": "highpass", "cutoff_hz": 80.0},
+                            {"type": "eq3", "low_db": 2.5, "mid_db": 0.0,
+                             "high_db": 1.5},
+                            {"type": "compressor", "threshold_db": -18.0,
+                             "ratio": 3.0, "attack_ms": 8.0,
+                             "release_ms": 120.0},
+                            {"type": "gate", "threshold_db": -54.0}],
+                        "stretch": {"mode": "none",
+                                    "transient_mode": "smooth",
+                                    "preserve_formants": True},
+                        "pitch_shift_st": 0.0}]})
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["dsp-stub"], "task": "mix",
+            "params": {"mix_spec": edit_spec, "normalize": False,
+                       "limiter": False, "output_format": "flac",
+                       "bit_depth": "pcm24"}})
+        check("editor-shaped mix accepted", status == 202)
+        ed_job = body["jobs"][0]["job_id"]
+        _, ed_info = c.req("GET", f"/v1/jobs/{ed_job}")
+        ed_track = (json.loads(ed_info["params"]["mix_spec"])
+                    .get("tracks") or [{}])[0]
+        check("reverse + effects survive submission verbatim",
+              ed_track.get("reverse") is True
+              and [fx.get("type") for fx in (ed_track.get("effects") or [])]
+              == ["highpass", "eq3", "compressor", "gate"]
+              and ed_info["params"].get("normalize") is False
+              and ed_info["params"].get("limiter") is False,
+              json.dumps(ed_track)[:200])
+        done = sse.wait_for("job.completed", 60,
+                            lambda d: d["job_id"] == ed_job)
+        _, ed_done = c.req("GET", f"/v1/jobs/{ed_job}")
+        ed_arts = (ed_done.get("result") or {}).get("artifacts") or []
+        ed_meta = (ed_done.get("result") or {}).get("meta") or {}
+        check("output_format reshapes the mixdown artifact",
+              done is not None and len(ed_arts) == 1
+              and ed_arts[0]["format"] == "flac"
+              and ed_arts[0]["path"].endswith("mixdown.flac")
+              and os.path.exists(ed_arts[0]["path"]))
+        check("normalize=false drops lufs from meta", "lufs" not in ed_meta)
+        # float32 FLAC is impossible; the job must fail, not emit a lie
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["dsp-stub"], "task": "mix",
+            "params": {"mix_spec": edit_spec, "output_format": "flac",
+                       "bit_depth": "float32"}})
+        check("float32 flac job accepted then fails", status == 202)
+        f32_job = body["jobs"][0]["job_id"]
+        failed = sse.wait_for("job.failed", 60,
+                              lambda d: d["job_id"] == f32_job)
+        check("float32 flac fails the job", failed is not None)
+
         bad_spec = json.dumps({"tracks": [{"source": "up_nope"}]})
         status, body = c.req("POST", "/v1/jobs", {
             "model_ids": ["dsp-stub"], "task": "mix",
