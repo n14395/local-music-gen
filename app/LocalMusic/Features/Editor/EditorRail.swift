@@ -822,18 +822,23 @@ private struct EditOpRow: View {
     private var editorControls: some View {
         switch op.kind {
         case .fadeIn(let seconds, let curve):
-            fadeControls(seconds: seconds, curve: curve) { s, c in
-                store.updateOp(id: op.id, kind: .fadeIn(seconds: s, curve: c))
+            fadeControls(seconds: seconds, curve: curve,
+                         coalescing: "row-\(op.id)-fadein") { s, c in
+                store.updateOp(id: op.id, kind: .fadeIn(seconds: s, curve: c),
+                               coalescing: "row-\(op.id)-fadein")
             }
         case .fadeOut(let seconds, let curve):
-            fadeControls(seconds: seconds, curve: curve) { s, c in
-                store.updateOp(id: op.id, kind: .fadeOut(seconds: s, curve: c))
+            fadeControls(seconds: seconds, curve: curve,
+                         coalescing: "row-\(op.id)-fadeout") { s, c in
+                store.updateOp(id: op.id, kind: .fadeOut(seconds: s, curve: c),
+                               coalescing: "row-\(op.id)-fadeout")
             }
         case .amplify(let range, let db):
             BenchSliderRow(
                 label: "Gain",
                 value: Binding(get: { db }, set: {
-                    store.updateOp(id: op.id, kind: .amplify(range, db: $0))
+                    store.updateOp(id: op.id, kind: .amplify(range, db: $0),
+                                   coalescing: "row-\(op.id)-amp")
                 }),
                 range: -24...24, step: 0.5, labelWidth: 52, valueWidth: 56,
                 format: { String(format: "%+.1f dB", $0) })
@@ -841,7 +846,8 @@ private struct EditOpRow: View {
             BenchSliderRow(
                 label: "Target",
                 value: Binding(get: { lufs }, set: {
-                    store.updateOp(id: op.id, kind: .normalize(lufs: $0))
+                    store.updateOp(id: op.id, kind: .normalize(lufs: $0),
+                                   coalescing: "row-\(op.id)-norm")
                 }),
                 range: -30...(-6), step: 0.5, labelWidth: 52, valueWidth: 56,
                 format: { String(format: "%.1f", $0) })
@@ -849,7 +855,8 @@ private struct EditOpRow: View {
             BenchSliderRow(
                 label: "Rate",
                 value: Binding(get: { rate }, set: {
-                    store.updateOp(id: op.id, kind: .speed(rate: $0))
+                    store.updateOp(id: op.id, kind: .speed(rate: $0),
+                                   coalescing: "row-\(op.id)-speed")
                 }),
                 range: 0.5...2, step: 0.01, labelWidth: 52, valueWidth: 56,
                 format: { String(format: "%d%%", Int(($0 * 100).rounded())) })
@@ -857,7 +864,8 @@ private struct EditOpRow: View {
             BenchSliderRow(
                 label: "Shift",
                 value: Binding(get: { semitones }, set: {
-                    store.updateOp(id: op.id, kind: .pitch(semitones: $0))
+                    store.updateOp(id: op.id, kind: .pitch(semitones: $0),
+                                   coalescing: "row-\(op.id)-pitch")
                 }),
                 range: -12...12, step: 1, labelWidth: 52, valueWidth: 56,
                 format: { String(format: "%+.0f st", $0) })
@@ -866,7 +874,8 @@ private struct EditOpRow: View {
                 label: "Length",
                 value: Binding(get: { seconds }, set: {
                     store.updateOp(id: op.id,
-                                   kind: .insertGap(at: at, seconds: $0))
+                                   kind: .insertGap(at: at, seconds: $0),
+                                   coalescing: "row-\(op.id)-gap")
                 }),
                 range: 0.1...30, step: 0.1, labelWidth: 52, valueWidth: 56,
                 format: { String(format: "%.1f s", $0) })
@@ -876,6 +885,7 @@ private struct EditOpRow: View {
     }
 
     private func fadeControls(seconds: Double, curve: FadeCurve,
+                              coalescing key: String,
                               update: @escaping (Double, FadeCurve) -> Void)
         -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -892,7 +902,11 @@ private struct EditOpRow: View {
                     .frame(width: 52, alignment: .leading)
                 BenchSegmented(
                     selection: Binding(get: { curve },
-                                       set: { update(seconds, $0) }),
+                                       set: {
+                                           store.endInteraction()
+                                           update(seconds, $0)
+                                           store.endInteraction()
+                                       }),
                     options: FadeCurve.allCases.map {
                         .init(value: $0, label: $0.label)
                     })

@@ -30,6 +30,9 @@ struct MainWindow: View {
     @State private var libraryCompare = LibraryCompare()
     /// A track the user asked to revert, held until they confirm.
     @State private var pendingRevert: SongRecord?
+    /// Set when a revert could not run because a render was in flight —
+    /// a confirmed destructive action must never appear to do nothing.
+    @State private var revertBlocked: String?
     /// What a gated feature sent the user to Models to find, so the list there
     /// can narrow to the models that would ungate it. Held by the shell
     /// because it is set on one screen and read on another.
@@ -135,6 +138,14 @@ struct MainWindow: View {
         } message: {
             Text("The file goes back to the untouched original and the edit "
                  + "list is cleared. This cannot be undone.")
+        }
+        .alert("Still rendering",
+               isPresented: Binding(get: { revertBlocked != nil },
+                                    set: { if !$0 { revertBlocked = nil } })) {
+            Button("OK") { revertBlocked = nil }
+        } message: {
+            Text("“\(revertBlocked ?? "")” is being rendered. Reverting has "
+                 + "to wait for it to finish.")
         }
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
         // Stamped on the way *out* rather than by the sheet's own buttons, so
@@ -612,9 +623,12 @@ struct MainWindow: View {
     /// would drift. It refuses while a render is in flight rather than
     /// resetting a session that is mid-apply.
     private func revert(_ song: SongRecord) {
-        guard !env.editor.applyStage.isBusy else { return }
-        env.editor.open(songId: song.id)
-        env.editor.revertToOriginal()
+        // By id: the Editor may be holding a different track mid-edit, and
+        // taking that session over to act on this one is a surprise.
+        if !env.editor.revert(songId: song.id) {
+            revertBlocked = env.editor.renderingTitle
+                ?? "another track"
+        }
     }
 
     /// Open the Editor on a song or a part — the id may be either, exactly

@@ -89,7 +89,8 @@ struct EditorScreen: View {
         }
         .opacity(0)
         .frame(width: 0, height: 0)
-        .disabled(store.material == nil || isFrozen)
+        .disabled(store.material == nil || isFrozen
+                  || isBlockedByAnotherRender)
     }
 
     // MARK: top bar
@@ -141,7 +142,9 @@ struct EditorScreen: View {
                     .frame(width: 1, height: 20)
                 Button("Revert to original") { confirmRevert = true }
                     .buttonStyle(.benchSecondary)
-                    .disabled(!store.hasBackup && store.document.isEmpty)
+                    .disabled((!store.hasBackup && store.document.isEmpty)
+                              || isBlockedByAnotherRender)
+                    .help(isBlockedByAnotherRender ? blockedNote : "")
                 applyButton
             }
             .disabled(isFrozen)
@@ -184,11 +187,18 @@ struct EditorScreen: View {
         .buttonStyle(BenchPrimaryButtonStyle(size: .compact,
                                              glows: store.isDirty))
         .keyboardShortcut(.return, modifiers: .command)
-        .disabled(!store.isDirty || store.mixdownModel == nil)
-        .opacity(store.isDirty ? 1 : 0.5)
-        .help(store.mixdownModel == nil
-              ? "Install Mixdown & Align (DSP) to render edits"
-              : "Render the edits from the original and replace the file")
+        .disabled(!store.isDirty || store.mixdownModel == nil
+                  || isBlockedByAnotherRender)
+        .opacity(store.isDirty && !isBlockedByAnotherRender ? 1 : 0.5)
+        .help(applyHelp)
+    }
+
+    private var applyHelp: String {
+        if isBlockedByAnotherRender { return blockedNote }
+        if store.mixdownModel == nil {
+            return "Install Mixdown & Align (DSP) to render edits"
+        }
+        return "Render the edits from the original and replace the file"
     }
 
     private var applyLabel: String {
@@ -253,7 +263,7 @@ struct EditorScreen: View {
     }
 
     private var isApplyFailed: Bool {
-        if case .failed = store.applyStage { return true }
+        if case .failed = store.currentApplyStage { return true }
         return false
     }
 
@@ -261,12 +271,21 @@ struct EditorScreen: View {
     /// survives navigating elsewhere must not describe whatever is opened
     /// next.
     private var showsApplyCard: Bool {
-        (store.applyStage.isBusy || isApplyFailed)
-            && store.applyBelongsToCurrentMaterial
+        store.currentApplyStage.isBusy || isApplyFailed
     }
 
-    private var isFrozen: Bool {
-        store.applyStage.isBusy && store.applyBelongsToCurrentMaterial
+    private var isFrozen: Bool { store.currentApplyStage.isBusy }
+
+    /// A render is running somewhere — possibly for a track that is not
+    /// open. Only one runs at a time, so Apply and Revert wait for it
+    /// wherever they are offered.
+    private var isBlockedByAnotherRender: Bool {
+        store.isRenderingAnything && !store.applyBelongsToCurrentMaterial
+    }
+
+    private var blockedNote: String {
+        store.renderingTitle.map { "Rendering “\($0)” — one at a time" }
+            ?? "A render is already running"
     }
 
     /// What the preview cannot play (the known trade-off the design bans

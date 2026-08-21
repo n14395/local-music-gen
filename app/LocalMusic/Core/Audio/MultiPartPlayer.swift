@@ -236,6 +236,7 @@ final class MultiPartPlayer {
             positionS = position
             frozenPosition = position
             state = .paused
+            meterDb = nil
             return false
         }
         // Anchor AFTER scheduling: taking it first meant a slow schedule could

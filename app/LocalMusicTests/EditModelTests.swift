@@ -82,17 +82,40 @@ final class EditModelTests: XCTestCase {
                                           reversed: true)])
     }
 
-    func testAmplifySplitsAndAddsGain() {
+    /// Amplify SETS a region's level. Two rows over the same audio mean the
+    /// later one won, not that the two add — the control is a slider
+    /// reading the level the region is at.
+    func testAmplifySetsTheLevelRatherThanAddingToIt() {
         let segments = segs(100, [
             .amplify(EditRange(start: 10, end: 20), db: 2.5),
             .amplify(EditRange(start: 15, end: 25), db: 1.0),
         ])
         XCTAssertEqual(EditProgram.timelineDuration(segments), 100)
-        // 15–20 carries both amplifications.
-        let stacked = segments.first {
+        let overlap = segments.first {
             abs($0.sourceStart - 15) < 1e-9 && abs($0.sourceEnd - 20) < 1e-9
         }
-        XCTAssertEqual(stacked?.gainDb ?? 0, 3.5, accuracy: 1e-9)
+        XCTAssertEqual(overlap?.gainDb ?? -1, 1.0, accuracy: 1e-9)
+        // The part of the first region the second did not cover keeps its.
+        let untouched = segments.first {
+            abs($0.sourceStart - 10) < 1e-9 && abs($0.sourceEnd - 15) < 1e-9
+        }
+        XCTAssertEqual(untouched?.gainDb ?? -1, 2.5, accuracy: 1e-9)
+    }
+
+    /// The case a re-timed ruler used to break: an amplify, then a cut that
+    /// moves the audio, then amplifying that same audio again at its new
+    /// position. It must end at the level asked for, not at twice it.
+    func testAmplifyingTheSameAudioAfterACutDoesNotDouble() {
+        let segments = segs(100, [
+            .amplify(EditRange(start: 30, end: 40), db: 6),
+            .delete(EditRange(start: 0, end: 10)),
+            // The same audio now sits at 20–30 on the ruler.
+            .amplify(EditRange(start: 20, end: 30), db: 6),
+        ])
+        let region = segments.first {
+            abs($0.sourceStart - 30) < 1e-9 && abs($0.sourceEnd - 40) < 1e-9
+        }
+        XCTAssertEqual(region?.gainDb ?? -1, 6, accuracy: 1e-9)
     }
 
     func testPasteInsertsResolvedSlices() {
@@ -403,6 +426,8 @@ final class EditMixPlanTests: XCTestCase {
         XCTAssertTrue(boosted.limiter)   // a raise can clip; the cut cannot
         XCTAssertEqual(boosted.spec.tracks.first?.gainDb ?? 0, 2.5,
                        accuracy: 1e-9)
+        XCTAssertEqual(boosted.spec.tracks.count, 2,
+                       "the amplified region is its own track")
 
         let cut = makePlan(doc([
             .amplify(EditRange(start: 0, end: 10), db: -2.5),
@@ -470,5 +495,112 @@ final class EditMixPlanTests: XCTestCase {
     func testResampleSetsTheTargetRate() {
         let plan = makePlan(doc([.resample(hz: 48000)]))
         XCTAssertEqual(plan.spec.target.sampleRate, 48000)
+    }
+}
+
+/// The join-crossfade floor, which exists so two of the engine's de-click
+/// ramps can never land in disjoint windows and leave a hole.
+final class EditJoinFloorTests: XCTestCase {
+
+    private func plan(_ kinds: [EditOp.Kind], crossfadeMs: Double,
+                      duration: Double = 100) -> EditMixPlan.Plan {
+        var document = EditDocument()
+        document.ops = kinds.map { EditOp(kind: $0) }
+        document.joinCrossfadeMs = crossfadeMs
+        return EditMixPlan.plan(document: document, source: "SRC",
+                                sourceDuration: duration, sampleRate: 44100,
+                                sourceBpm: nil)
+    }
+
+    /// Every real join carries complementary ramps of at least the engine's
+    /// own de-click width — whatever the user set the chip to.
+    func testEveryJoinIsLappedAtLeastToTheDeclickWidth() {
+        let floor = EditMixPlan.engineEdgeFadeS * 2
+        for crossfade in [0.0, 4.0, 8.0, 40.0] {
+            let p = plan([.delete(EditRange(start: 30, end: 40))],
+                         crossfadeMs: crossfade)
+            XCTAssertEqual(p.spec.tracks.count, 2)
+            let out = p.spec.tracks[0].fadeOutS ?? 0
+            let into = p.spec.tracks[1].fadeInS ?? 0
+            XCTAssertGreaterThanOrEqual(out, floor - 1e-9, "\(crossfade) ms")
+            XCTAssertEqual(out, into, accuracy: 1e-9,
+                           "the two ramps are complementary")
+        }
+    }
+
+    /// A join at the source's own extremes — a tail spliced onto a head —
+    /// has nothing beyond either side to lap into. The overlap comes out of
+    /// the material instead, rather than leaving the hole.
+    func testAJoinWithNoSourceBeyondItIsStillLapped() {
+        // Keep the last 20 s, then paste the first 10 s after it: the join
+        // is sourceDuration meeting source 0.
+        var document = EditDocument()
+        let head = [EditSegment(sourceStart: 0, sourceEnd: 10)]
+        document.ops = [
+            EditOp(kind: .trim(EditRange(start: 80, end: 100))),
+            EditOp(kind: .paste(at: 20, slices: head)),
+        ]
+        document.joinCrossfadeMs = 0
+        let p = EditMixPlan.plan(document: document, source: "SRC",
+                                 sourceDuration: 100, sampleRate: 44100,
+                                 sourceBpm: nil)
+        XCTAssertEqual(p.spec.tracks.count, 2)
+        let out = p.spec.tracks[0].fadeOutS ?? 0
+        XCTAssertGreaterThanOrEqual(out, EditMixPlan.engineEdgeFadeS * 2 - 1e-9,
+                                    "no source to extend into, so the "
+                                        + "overlap comes from the material")
+        XCTAssertEqual(p.spec.tracks[1].fadeInS ?? 0, out, accuracy: 1e-9)
+        for track in p.spec.tracks {
+            XCTAssertGreaterThanOrEqual(track.offsetS, 0)
+            XCTAssertGreaterThanOrEqual(track.section?.startS ?? 0, 0)
+            XCTAssertLessThanOrEqual(track.section?.endS ?? 0, 100)
+        }
+    }
+
+    /// Borrowed overlap shortens the timeline, so everything after it has to
+    /// move with it. Applied to one track and not the next, it just moves the
+    /// hole one join along — which is what this pins.
+    func testBorrowedOverlapShiftsEverythingAfterIt() {
+        // Three copies of the whole track back to back: every join has the
+        // source's end meeting the source's start, so no join has material
+        // beyond it to lap into and all three must borrow.
+        var document = EditDocument()
+        let whole = [EditSegment(sourceStart: 0, sourceEnd: 100)]
+        document.ops = [
+            EditOp(kind: .paste(at: 100, slices: whole)),
+            EditOp(kind: .paste(at: 200, slices: whole)),
+        ]
+        document.joinCrossfadeMs = 0
+        let p = EditMixPlan.plan(document: document, source: "SRC",
+                                 sourceDuration: 100, sampleRate: 44100,
+                                 sourceBpm: nil)
+        XCTAssertEqual(p.spec.tracks.count, 3)
+        // Each track's real overlap with the one before it must equal the
+        // fade both of them declare.
+        for i in 0..<(p.spec.tracks.count - 1) {
+            let a = p.spec.tracks[i], b = p.spec.tracks[i + 1]
+            let aEnd = a.offsetS + (a.section.map { $0.endS - $0.startS } ?? 0)
+            let declared = a.fadeOutS ?? 0
+            XCTAssertEqual(b.fadeInS ?? 0, declared, accuracy: 1e-9)
+            XCTAssertEqual(aEnd - b.offsetS, declared, accuracy: 1e-6,
+                           "join \(i): the real overlap must be the declared "
+                               + "one, not one shortfall less")
+            XCTAssertGreaterThan(declared, 0)
+        }
+        // And the announced length matches where the last track actually ends.
+        let last = p.spec.tracks[p.spec.tracks.count - 1]
+        let end = last.offsetS
+            + (last.section.map { $0.endS - $0.startS } ?? 0)
+        XCTAssertEqual(p.spec.target.durationS ?? 0, end, accuracy: 1e-6)
+    }
+
+    /// A gap is not a join: silence between two runs must stay silent.
+    func testAGapIsNotLapped() {
+        let p = plan([.silence(EditRange(start: 30, end: 40))],
+                     crossfadeMs: 8)
+        XCTAssertEqual(p.spec.tracks.count, 2)
+        XCTAssertNil(p.spec.tracks[0].fadeOutS)
+        XCTAssertNil(p.spec.tracks[1].fadeInS)
+        XCTAssertEqual(p.spec.tracks[1].offsetS, 40, accuracy: 1e-9)
     }
 }

@@ -31,6 +31,14 @@ final class PartsStore {
         analyses = map
     }
 
+    /// As `LibraryStore.noteEdits` — keep the cached rows in step with the
+    /// Editor's narrow column write.
+    func noteEdits(id: String, editsJSON: String?) {
+        for index in results.indices where results[index].id == id {
+            results[index].editsJSON = editsJSON
+        }
+    }
+
     func analysis(for partId: String) -> AnalysisRecord? {
         analyses[partId] ?? (try? repo.analysis(ownerId: partId)) ?? nil
     }

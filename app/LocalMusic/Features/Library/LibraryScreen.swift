@@ -52,6 +52,9 @@ struct LibraryScreen: View {
     /// artist doesn't narrow the menu you picked it from down to that one name.
     @State private var artists: [String] = []
     @State private var partGroups: [LibraryPartGroup] = []
+    /// Whether the Edited scope is what set the "recently edited" sort — as
+    /// opposed to the user picking it.
+    @State private var promotedSort = false
     @State private var siblings: [PartRecord] = []
 
     private struct ScopeCounts: Equatable {
@@ -99,8 +102,9 @@ struct LibraryScreen: View {
             library.filters.origin = .any
             library.filters.favoritesOnly = false
             library.filters.hasEdits = false
-            if library.filters.sort == .recentlyEdited {
+            if promotedSort, library.filters.sort == .recentlyEdited {
                 library.filters.sort = .newest
+                promotedSort = false
             }
             library.filters.artist = nil
             parts.filters.favoritesOnly = false
@@ -632,9 +636,14 @@ struct LibraryScreen: View {
         if scope == .edited {
             if library.filters.sort == .newest {
                 library.filters.sort = .recentlyEdited
+                promotedSort = true
             }
-        } else if library.filters.sort == .recentlyEdited {
+        } else if promotedSort, library.filters.sort == .recentlyEdited {
+            // Only the promotion is undone. Choosing "recently edited"
+            // yourself, in any scope, is a choice — putting it back to
+            // "newest" on the way out would be overriding it.
             library.filters.sort = .newest
+            promotedSort = false
         }
         if scope != .imported { library.filters.artist = nil }
         parts.filters.favoritesOnly = scope == .favourites

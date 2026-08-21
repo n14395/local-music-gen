@@ -42,18 +42,7 @@ struct EditorOverviewStrip: View {
         }
     }
 
-    private var cutCount: Int {
-        var joins = 0
-        for (index, segment) in store.segments.enumerated() where index > 0 {
-            let previous = store.segments[index - 1]
-            guard !segment.silent, !previous.silent else { continue }
-            if previous.reversed || segment.reversed
-                || abs(previous.sourceEnd - segment.sourceStart) > 1e-9 {
-                joins += 1
-            }
-        }
-        return joins
-    }
+    private var cutCount: Int { store.joinTimes.count }
 
     private func strip(width: CGFloat) -> some View {
         let duration = max(0.001, store.timelineDurationS)
@@ -109,25 +98,11 @@ struct EditorOverviewStrip: View {
             .onEnded { _ in grabOffsetS = nil })
         .task(id: store.sourceURL) { await loadPeaks() }
         .onChange(of: store.applyStage) {
-            if store.applyStage == .idle { Task { await loadPeaks() } }
+            if !store.applyStage.isBusy { Task { await loadPeaks() } }
         }
     }
 
-    private var cutPositions: [Double] {
-        var out: [Double] = []
-        var cursor = 0.0
-        for (index, segment) in store.segments.enumerated() {
-            defer { cursor += segment.length }
-            guard index > 0 else { continue }
-            let previous = store.segments[index - 1]
-            guard !segment.silent, !previous.silent else { continue }
-            if previous.reversed || segment.reversed
-                || abs(previous.sourceEnd - segment.sourceStart) > 1e-9 {
-                out.append(cursor)
-            }
-        }
-        return out
-    }
+    private var cutPositions: [Double] { store.joinTimes }
 
     private var visibleSeconds: Double {
         guard store.pxPerSecond > 0, store.wellWidth > 0 else {

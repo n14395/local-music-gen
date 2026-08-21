@@ -116,39 +116,65 @@ enum EditMixPlan {
         // rather than a splice. `crossfadeJoins` off means "as short as is
         // honest", not "none".
         let minOverlapS = Self.engineEdgeFadeS * 2
+        // Overlap borrowed from the MATERIAL rather than from source beyond
+        // the cut shortens the timeline, so it has to move everything after
+        // it. Carried forward: a shift applied to one track and not the next
+        // simply moves the hole one join along.
+        var shift = 0.0
         for i in tracks.indices.dropLast() {
             let a = runs[i], b = runs[i + 1]
+            tracks[i + 1].offsetS = max(0, tracks[i + 1].offsetS - shift)
             guard !b.followsGap else { continue }   // silence sits between
             let want = max(minOverlapS, crossfadeS)
             let budget = min(want, min(a.length, b.length) / rate) / 2
             let wantSource = budget * rate
-            let extendA: Double
-            if a.reversed {
-                extendA = min(wantSource, a.sourceStart)
-                tracks[i].section?.startS -= extendA
-            } else {
-                extendA = min(wantSource,
-                              max(0, sourceDuration - a.sourceEnd))
-                tracks[i].section?.endS += extendA
+            // How much source lies beyond each side, in the direction that
+            // side would have to grow.
+            let roomA = a.reversed ? a.sourceStart
+                                   : max(0, sourceDuration - a.sourceEnd)
+            let roomB = b.reversed ? max(0, sourceDuration - b.sourceEnd)
+                                   : b.sourceStart
+            var extendA = min(wantSource, roomA)
+            var extendB = min(wantSource, roomB)
+            // One side at the source's edge does not halve the lap: the
+            // other side makes up the difference where it can.
+            let deficit = 2 * wantSource - (extendA + extendB)
+            if deficit > 1e-12 {
+                if roomA > extendA {
+                    extendA = min(roomA, extendA + deficit)
+                } else if roomB > extendB {
+                    extendB = min(roomB, extendB + deficit)
+                }
             }
-            let extendB: Double
-            if b.reversed {
-                extendB = min(wantSource,
-                              max(0, sourceDuration - b.sourceEnd))
-                tracks[i + 1].section?.endS += extendB
-            } else {
-                extendB = min(wantSource, b.sourceStart)
-                tracks[i + 1].section?.startS -= extendB
+            if a.reversed { tracks[i].section?.startS -= extendA }
+            else { tracks[i].section?.endS += extendA }
+            if b.reversed { tracks[i + 1].section?.endS += extendB }
+            else { tracks[i + 1].section?.startS -= extendB }
+
+            var overlap = (extendA + extendB) / rate
+            var pullBack = extendB / rate
+            // A join with the source's own edge on BOTH sides — a tail
+            // spliced onto a head — has nothing beyond it to lap into.
+            // Rather than leave the two de-click ramps in disjoint windows,
+            // which is a hole, take the few milliseconds out of the material
+            // and shorten the result by exactly that much.
+            if overlap < minOverlapS {
+                let shortfall = min(minOverlapS - overlap,
+                                    min(a.length, b.length) / rate / 2)
+                if shortfall > 1e-9 {
+                    overlap += shortfall
+                    pullBack += shortfall
+                    shift += shortfall
+                }
             }
-            let overlap = (extendA + extendB) / rate
             guard overlap > 1e-9 else { continue }
             tracks[i].fadeOutS = overlap
             tracks[i + 1].fadeInS = overlap
             // Pulling the second track earlier must never take it below
             // zero — the engine fails the job on a negative offset_s.
-            tracks[i + 1].offsetS = max(0, tracks[i + 1].offsetS
-                                        - extendB / rate)
+            tracks[i + 1].offsetS = max(0, tracks[i + 1].offsetS - pullBack)
         }
+        let borrowed = shift
 
         // The audible head/tail fades. Two conversions matter: the ramps are
         // authored in timeline seconds but the engine applies them AFTER
@@ -174,7 +200,7 @@ enum EditMixPlan {
             if case .amplify(_, let db) = op.kind { return db > 0 }
             return false
         }
-        let duration = EditProgram.timelineDuration(segments) / rate
+        let duration = EditProgram.timelineDuration(segments) / rate - borrowed
         let spec = MixSpec(
             target: MixSpec.Target(
                 bpm: stretching ? carrierBpm * rate : nil,
@@ -194,7 +220,7 @@ enum EditMixPlan {
 
     /// One stretch of the edited timeline that renders as a single mix
     /// track: a run of segments the source runs straight through.
-    private struct Run {
+    fileprivate struct Run {
         var timelineStart: Double
         var timelineEnd: Double
         var sourceStart: Double
@@ -223,7 +249,44 @@ enum EditMixPlan {
     /// gets whether or not the caller asked for a crossfade.
     static let engineEdgeFadeS = 0.002
 
-    private static func hasGap(before timelineStart: Double,
+    /// Where the render will actually have a seam: the boundaries between
+    /// runs, which is not the same as the boundaries between segments (a
+    /// split leaves a segment edge but no seam). The well and the overview
+    /// strip draw from this so their markers cannot disagree with what is
+    /// rendered.
+    static func joinTimes(segments: [EditSegment]) -> [Double] {
+        var joins: [Double] = []
+        var runs: [Run] = []
+        var cursor = 0.0
+        for segment in segments {
+            let start = cursor
+            cursor += segment.length
+            guard !segment.silent else { continue }
+            if var last = runs.last, last.joins(segment, at: start) {
+                if segment.reversed {
+                    last.sourceStart = segment.sourceStart
+                } else {
+                    last.sourceEnd = segment.sourceEnd
+                }
+                last.timelineEnd = cursor
+                runs[runs.count - 1] = last
+            } else {
+                if !runs.isEmpty, !hasGap(before: start, in: segments) {
+                    joins.append(start)
+                }
+                runs.append(Run(timelineStart: start, timelineEnd: cursor,
+                                sourceStart: segment.sourceStart,
+                                sourceEnd: segment.sourceEnd,
+                                reversed: segment.reversed,
+                                gainDb: segment.gainDb,
+                                followsGap: hasGap(before: start,
+                                                   in: segments)))
+            }
+        }
+        return joins
+    }
+
+    fileprivate static func hasGap(before timelineStart: Double,
                                in segments: [EditSegment]) -> Bool {
         var cursor = 0.0
         for segment in segments {
@@ -232,6 +295,46 @@ enum EditMixPlan {
             cursor = end
         }
         return false
+    }
+
+    /// What the head and tail fades will really be, after clamping to the
+    /// run that carries them. The engine's ramps cannot span two tracks, so
+    /// a fade longer than its end run is cut short — and the well draws
+    /// THIS rather than the number that was asked for.
+    static func effectiveFades(document: EditDocument,
+                               sourceDuration: Double)
+        -> (headS: Double, tailS: Double) {
+        let segments = EditProgram.segments(sourceDuration: sourceDuration,
+                                            ops: document.ops)
+        let rate = document.speedRate
+        var runLengths: [Double] = []
+        var runs: [Run] = []
+        var cursor = 0.0
+        for segment in segments {
+            let start = cursor
+            cursor += segment.length
+            guard !segment.silent else { continue }
+            if var last = runs.last, last.joins(segment, at: start) {
+                last.timelineEnd = cursor
+                if segment.reversed { last.sourceStart = segment.sourceStart }
+                else { last.sourceEnd = segment.sourceEnd }
+                runs[runs.count - 1] = last
+            } else {
+                runs.append(Run(timelineStart: start, timelineEnd: cursor,
+                                sourceStart: segment.sourceStart,
+                                sourceEnd: segment.sourceEnd,
+                                reversed: segment.reversed,
+                                gainDb: segment.gainDb, followsGap: false))
+            }
+        }
+        runLengths = runs.map { $0.length / rate }
+        let head = document.fadeIn.map {
+            min($0.seconds / rate, runLengths.first ?? 0) * rate
+        } ?? 0
+        let tail = document.fadeOut.map {
+            min($0.seconds / rate, runLengths.last ?? 0) * rate
+        } ?? 0
+        return (head, tail)
     }
 
     private static func targetLength(_ track: MixSpec.Track,

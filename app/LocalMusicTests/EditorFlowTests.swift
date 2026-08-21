@@ -409,3 +409,64 @@ final class EditorLevellingTests: XCTestCase {
         XCTAssertEqual(store.amplifyDbForSelection, 2.5, accuracy: 1e-9)
     }
 }
+
+/// Amplify sets a region's level, so the control has to be able to put a
+/// region back to flat even when the level came from somewhere else.
+@MainActor
+final class EditorAmplifyTests: XCTestCase {
+
+    private func makeStore() throws -> EditorStore {
+        let env = AppEnvironment(database: try DatabaseManager.inMemory())
+        env.library.insert(SongRecord(
+            id: "s1", title: "Tone", prompt: "", lyrics: nil, modelId: "m",
+            modelName: "M", groupId: nil, paramsJSON: "{}", durationS: 100,
+            sampleRate: 44100, fileName: "s1.wav", seedUsed: nil,
+            createdAt: Date(), rating: 0, notes: "", favorite: false))
+        env.editor.open(songId: "s1")
+        return env.editor
+    }
+
+    /// The readout reads the audio, so it follows a level set by a wider row.
+    func testTheReadoutFollowsAWiderRowsLevel() throws {
+        let store = try makeStore()
+        store.selection = EditRange(start: 0, end: 40)
+        store.setAmplify(db: 5)
+        store.endInteraction()
+        store.selection = EditRange(start: 10, end: 20)
+        XCTAssertEqual(store.amplifyDbForSelection, 5, accuracy: 1e-9)
+    }
+
+    /// …and dialling that sub-region back to 0 actually flattens it.
+    func testZeroingASubRegionOfAWiderAmplifyWorks() throws {
+        let store = try makeStore()
+        store.selection = EditRange(start: 0, end: 40)
+        store.setAmplify(db: 5)
+        store.endInteraction()
+        store.selection = EditRange(start: 10, end: 20)
+        store.setAmplify(db: 0)
+        store.endInteraction()
+        XCTAssertEqual(store.amplifyDbForSelection, 0, accuracy: 1e-9)
+        // The rest of the wider region keeps its level.
+        store.selection = EditRange(start: 25, end: 35)
+        XCTAssertEqual(store.amplifyDbForSelection, 5, accuracy: 1e-9)
+    }
+
+    /// A selection spanning two different levels reports neither, rather
+    /// than picking one and misdescribing the rest.
+    func testMixedLevelsReportNothing() throws {
+        let store = try makeStore()
+        store.selection = EditRange(start: 0, end: 20)
+        store.setAmplify(db: 5)
+        store.endInteraction()
+        store.selection = EditRange(start: 10, end: 40)
+        XCTAssertEqual(store.amplifyDbForSelection, 0, accuracy: 1e-9)
+    }
+
+    /// Amplifying a flat region with 0 dB is not an edit at all.
+    func testZeroOnAFlatRegionAddsNothing() throws {
+        let store = try makeStore()
+        store.selection = EditRange(start: 0, end: 10)
+        store.setAmplify(db: 0)
+        XCTAssertTrue(store.document.ops.isEmpty)
+    }
+}

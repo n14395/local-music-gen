@@ -63,6 +63,9 @@ final class EditorStore {
     /// `persistPending`.
     var repo: LibraryRepository { library.repository }
     let partsRepo: PartsRepository
+    /// Set by the shell so a narrow edits write can keep the parts list's
+    /// cached rows in step — see `persistPending`.
+    weak var partsStore: PartsStore?
     let jobs: JobsStore
     let catalog: ModelCatalogStore
     let player = MultiPartPlayer()
@@ -209,6 +212,26 @@ final class EditorStore {
         applyOwnerId == nil || applyOwnerId == material?.id
     }
 
+    /// The stage as it concerns the material on screen. A render started for
+    /// another track is still running, but it is not this screen's business
+    /// to draw — so everything the view reads goes through here.
+    var currentApplyStage: ApplyStage {
+        applyBelongsToCurrentMaterial ? applyStage : .idle
+    }
+
+    /// A render is in flight for something — possibly a track that is not
+    /// open. Only one runs at a time, so this is what gates Apply and Revert
+    /// wherever they are offered.
+    var isRenderingAnything: Bool { applyStage.isBusy }
+
+    /// What is rendering, for the tooltip that explains a disabled button.
+    var renderingTitle: String? {
+        guard applyStage.isBusy, let ownerId = applyOwnerId else { return nil }
+        if ownerId == material?.id { return material?.title }
+        if let song = library.song(id: ownerId) { return song.title }
+        return ((try? partsRepo.part(id: ownerId)) ?? nil)?.name
+    }
+
     /// Why this program cannot be rendered, in plain language — nil when it
     /// can. Checked before anything irreversible happens.
     var renderRefusal: String? {
@@ -224,6 +247,21 @@ final class EditorStore {
                 + "renders edits."
         }
         return nil
+    }
+
+    /// The seams the render will actually have. A split leaves a segment
+    /// edge but no seam, so the markers read this rather than counting
+    /// segment boundaries.
+    var joinTimes: [Double] {
+        EditMixPlan.joinTimes(segments: segments)
+    }
+
+    /// The head and tail fades as they will really render — clamped to the
+    /// run that carries them, because the engine's ramps cannot span two
+    /// tracks. The well draws these, not the numbers that were asked for.
+    var effectiveFades: (headS: Double, tailS: Double) {
+        EditMixPlan.effectiveFades(document: document,
+                                   sourceDuration: sourceDurationS)
     }
 
     /// Where the head and tail fades actually land: the first and last
@@ -361,8 +399,17 @@ final class EditorStore {
         rebuild()
     }
 
+    /// What a join will actually be lapped by, in milliseconds. Off does
+    /// not mean zero: the engine de-clicks every trim either way, and two of
+    /// those ramps in disjoint windows is a hole — so the plan keeps them
+    /// overlapping at the minimum. The readouts say this number rather than
+    /// the one the chip was set to.
+    var joinCrossfadeMsEffective: Double {
+        max(document.joinCrossfadeMs, EditMixPlan.engineEdgeFadeS * 2 * 1000)
+    }
+
     /// The Tier 2.6 chip: on = a few ms of overlap at every discontinuous
-    /// join, off = butt joints (the engine's 2 ms de-click still applies).
+    /// join, off = the shortest join that does not click.
     func setCrossfadeJoins(_ on: Bool) {
         guard on != crossfadeJoins else { return }
         perform(on ? "Crossfade Joins" : "Butt Joins") { doc in
@@ -497,11 +544,16 @@ final class EditorStore {
             try? partsRepo.setEdits(id: material.id, editsJSON: json,
                                     editedAt: part?.editedAt,
                                     backupFileName: part?.backupFileName)
+            partsStore?.noteEdits(id: material.id, editsJSON: json)
         } else {
             let song = library.song(id: material.id)
             try? repo.setEdits(id: material.id, editsJSON: json,
                                editedAt: song?.editedAt,
                                backupFileName: song?.backupFileName)
+            // The cached rows every OTHER writer builds its whole-row update
+            // from must learn about this, or the next rating or heart write
+            // sends the pre-edit editsJSON back over the program.
+            library.noteEdits(id: material.id, editsJSON: json)
         }
     }
 
@@ -609,7 +661,8 @@ final class EditorStore {
         replaceWholeTrack("Normalise", matches: { kind in
             if case .normalize = kind { return true }
             return false
-        }, with: lufs.map { .normalize(lufs: $0) }, then: { doc in
+        }, with: lufs.map { .normalize(lufs: $0) },
+           coalescing: "normalize", then: { doc in
             // The other half of the radio pair — see `setAmplify`. Only the
             // current selection's amplify goes: a level set on some other
             // region is not what this control is about.
@@ -680,6 +733,10 @@ final class EditorStore {
     func setAmplify(db: Double) {
         guard let selection else { return }
         let existing = amplifyIndex(for: selection)
+        // Whether this region is already at some level — possibly set by a
+        // row covering a different range, which is why the flat case cannot
+        // just delete a row and hope.
+        let current = amplifyDbForSelection
         perform("Amplify", coalescing: "amplify") { doc in
             if let existing {
                 if abs(db) < 0.05 {
@@ -687,7 +744,9 @@ final class EditorStore {
                 } else {
                     doc.ops[existing].kind = .amplify(selection, db: db)
                 }
-            } else if abs(db) >= 0.05 {
+            } else if abs(db) >= 0.05 || abs(current) >= 0.05 {
+                // Dialling back to 0 over a region an earlier, wider row
+                // raised is still an edit: it says "this part, flat".
                 doc.ops.append(EditOp(kind: .amplify(selection, db: db)))
             }
             // Levelling is one decision, which is why the design draws these
@@ -703,13 +762,22 @@ final class EditorStore {
         }
     }
 
-    /// What this selection is already amplified by, for the slider.
+    /// What this selection is already amplified by, for the slider — read
+    /// from the SEGMENTS, which is where the truth is. Reading it off an op
+    /// meant hunting for a row whose stored numbers still matched a ruler
+    /// that later cuts had moved underneath it.
+    ///
+    /// Zero when the selection spans regions at different levels: there is
+    /// no single number to show, and showing one of them would misreport the
+    /// rest.
     var amplifyDbForSelection: Double {
-        guard let selection, let index = amplifyIndex(for: selection),
-              case .amplify(_, let db) = document.ops[index].kind else {
-            return 0
-        }
-        return db
+        guard let selection else { return 0 }
+        let covered = EditProgram.extract(segments, range: selection)
+            .filter { !$0.silent }
+        guard let first = covered.first,
+              covered.allSatisfy({ abs($0.gainDb - first.gainDb) < 1e-9 })
+        else { return 0 }
+        return first.gainDb
     }
 
     private func amplifyIndex(for selection: EditRange) -> Int? {
@@ -745,8 +813,10 @@ final class EditorStore {
         perform("Remove Edit") { $0.ops.removeAll { $0.id == id } }
     }
 
-    func updateOp(id: UUID, kind: EditOp.Kind) {
-        perform("Edit Step") { doc in
+    /// `coalescing` is passed by the edit-list sliders: a drag on a row's
+    /// Length or Gain is one edit to undo, not one per frame.
+    func updateOp(id: UUID, kind: EditOp.Kind, coalescing key: String? = nil) {
+        perform("Edit Step", coalescing: key) { doc in
             if let index = doc.ops.firstIndex(where: { $0.id == id }) {
                 doc.ops[index].kind = kind
             }
@@ -763,8 +833,8 @@ final class EditorStore {
         perform("Add \(kind.label)") { $0.effects.append(.fresh(kind)) }
     }
 
-    func updateEffect(_ effect: EffectSetting) {
-        perform("Adjust \(effect.kind.label)") { doc in
+    func updateEffect(_ effect: EffectSetting, coalescing key: String? = nil) {
+        perform("Adjust \(effect.kind.label)", coalescing: key) { doc in
             if let index = doc.effects.firstIndex(where: { $0.id == effect.id }) {
                 doc.effects[index] = effect
             }

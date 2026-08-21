@@ -295,14 +295,14 @@ struct EditorApplyCard: View {
     }
 
     private var isFailed: Bool {
-        if case .failed = store.applyStage { return true }
+        if case .failed = store.currentApplyStage { return true }
         return false
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
-                if case .failed(let message) = store.applyStage {
+                if case .failed(let message) = store.currentApplyStage {
                     Text("The render failed")
                         .font(.system(size: 16, weight: .semibold))
                         .tracking(-0.16)
@@ -352,14 +352,16 @@ struct EditorApplyCard: View {
     }
 
     private var renderingFraction: Double? {
-        if case .rendering(_, let fraction, _, _) = store.applyStage {
+        if case .rendering(_, let fraction, _, _) = store.currentApplyStage {
             return fraction
         }
         return nil
     }
 
     private var renderingEta: Double? {
-        if case .rendering(_, _, let eta, _) = store.applyStage { return eta }
+        if case .rendering(_, _, let eta, _) = store.currentApplyStage {
+            return eta
+        }
         return nil
     }
 
@@ -378,7 +380,7 @@ struct EditorApplyCard: View {
 
     private func stageState(_ index: Int) -> StageState {
         let current: Int
-        switch store.applyStage {
+        switch store.currentApplyStage {
         case .idle, .failed: current = -1
         case .stashingBackup: current = 0
         case .uploading, .queued: current = 1
@@ -464,7 +466,7 @@ struct EditorApplyCard: View {
             }
             Spacer()
             if isFailed {
-                Button("Dismiss") { store.applyStage = .idle }
+                Button("Dismiss") { store.dismissApplyStage() }
                     .buttonStyle(.benchSecondary)
             } else {
                 Button("Notify me and go to Library") {

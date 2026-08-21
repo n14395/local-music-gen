@@ -13,8 +13,15 @@ extension EditorStore {
     /// pristine source, render the program, replace the file. Everything
     /// before the replace is reversible by doing nothing.
     func applyEdits() async {
-        guard let material, !document.isEmpty || appliedDocument != nil,
-              applyStage.isBusy == false else { return }
+        guard let material, !document.isEmpty || appliedDocument != nil
+        else { return }
+        // Only one render at a time, and a refusal must never overwrite the
+        // stage of a render that is still going.
+        guard !applyStage.isBusy else { return }
+        // Owned from here on, so every refusal below is attributed to the
+        // track that asked for it rather than to whatever is open when it
+        // is read.
+        applyOwnerId = material.id
         // Everything that could refuse is checked BEFORE anything
         // irreversible happens — no backup is stashed and nothing is
         // uploaded for a render that cannot succeed.
@@ -35,7 +42,6 @@ extension EditorStore {
                                  + "silenced.")
             return
         }
-        applyOwnerId = material.id
         applyStage = .stashingBackup
         if !hasBackup {
             do {
@@ -63,6 +69,14 @@ extension EditorStore {
                                ownerType: material.ownerType)
             persistPending()
         }
+        // The document travels WITH the job, and is snapshotted BEFORE the
+        // upload suspends: the user may open another track while this is in
+        // flight, and what lands must be recorded against the program that
+        // was actually submitted. The source's own bit depth is read here
+        // for the same reason.
+        let documentJSON = (try? JSONEncoder().encode(document))
+            .map { String(decoding: $0, as: UTF8.self) }
+        let sourceDepth = sourceURL.flatMap(Self.bitDepth(of:))
         applyStage = .uploading
         guard let sourceId = await uploadSource() else {
             applyStage = .failed(jobs.lastError ?? "Upload failed")
@@ -73,11 +87,6 @@ extension EditorStore {
         for index in submitted.tracks.indices {
             submitted.tracks[index].source = sourceId
         }
-        // The document travels WITH the job: the user may open another track
-        // while this renders, and what lands must be recorded against the
-        // program that was actually submitted.
-        let documentJSON = (try? JSONEncoder().encode(document))
-            .map { String(decoding: $0, as: UTF8.self) }
         guard let created = await jobs.submitEditorRender(
             modelId: model.id, spec: submitted, normalize: plan.normalize,
             limiter: plan.limiter, targetLufs: plan.targetLufs,
@@ -85,7 +94,7 @@ extension EditorStore {
             // copied as they are, so a 24-bit master stays 24-bit — and
             // rendering it back at the default 16 would quietly flatten the
             // user's own file the first time they trimmed it.
-            bitDepth: sourceURL.flatMap(Self.bitDepth(of:)),
+            bitDepth: sourceDepth,
             purpose: .apply(ownerId: material.id,
                             ownerType: material.ownerType,
                             title: material.title,
@@ -106,10 +115,48 @@ extension EditorStore {
             await jobs.cancel(jobId)
         }
         applyStage = .idle
+        applyOwnerId = nil
+    }
+
+    /// Clear a finished-with stage that this material owns. The failure card
+    /// stays attached to the track it belongs to until it is dismissed —
+    /// clearing the owner at the moment of failure made it look like
+    /// whatever was open had failed.
+    func dismissApplyStage() {
+        guard applyBelongsToCurrentMaterial else { return }
+        applyStage = .idle
+        applyOwnerId = nil
     }
 
     /// Restore the pristine file and clear the program (Tier 1.10). The
     /// backup is consumed: after this the file *is* the original.
+    /// Revert a track the Editor is not necessarily showing — what the
+    /// Library's row menu calls. It does NOT open the Editor: taking over a
+    /// session the user is mid-edit in, to act on a different track, is a
+    /// surprise nobody asked for.
+    ///
+    /// Returns false when a render is in flight, so the caller can say so
+    /// rather than appearing to do nothing.
+    @discardableResult
+    func revert(songId: String) -> Bool {
+        guard !applyStage.isBusy else { return false }
+        if material?.id == songId {
+            revertToOriginal()
+            return true
+        }
+        guard let song = library.song(id: songId),
+              FileManager.default.fileExists(atPath: song.backupURL.path)
+        else { return false }
+        restoreOriginal(ownerId: song.id, ownerType: "song",
+                        backupURL: song.backupURL,
+                        restoredName: (song.editsJSON.flatMap {
+                            try? JSONDecoder().decode(
+                                EditDocument.self, from: Data($0.utf8))
+                        })?.originalFileName ?? song.fileName)
+        return true
+    }
+
+    /// Revert whatever the Editor currently holds.
     func revertToOriginal() {
         guard let material, hasBackup else {
             // No apply ever happened — reverting is just clearing the list.
@@ -121,34 +168,55 @@ extension EditorStore {
             flushPersist()
             return
         }
-        guard !applyStage.isBusy else {
-            applyStage = .failed("Wait for the render to finish before "
-                                 + "reverting.")
-            return
-        }
+        // Never while a render is running — and never by writing into a
+        // stage this path does not own.
+        guard !applyStage.isBusy else { return }
         stopPreview()
         uploadedSourceId = nil
         // The rows below are the truth from here on; a write still queued
         // from the last keystroke would put the cleared program straight
         // back (the reopen at the end of this method flushes).
         discardPendingWrite()
-        let fm = FileManager.default
         let restoredName = document.originalFileName ?? material.fileName
-        let restoredURL = material.isPart
+        guard restoreOriginal(ownerId: material.id,
+                              ownerType: material.ownerType,
+                              backupURL: material.backupURL,
+                              restoredName: restoredName) else { return }
+        // Reload from the records so every readout reflects the restore.
+        let id = material.id
+        material.isPart ? open(partId: id) : open(songId: id)
+    }
+
+    /// Put the pristine file back and clear the program. Shared by both
+    /// entry points, and deliberately id-based: it must work on a track the
+    /// Editor is not showing.
+    @discardableResult
+    private func restoreOriginal(ownerId: String, ownerType: String,
+                                 backupURL: URL,
+                                 restoredName: String) -> Bool {
+        let fm = FileManager.default
+        let isPart = ownerType == "part"
+        let currentURL: URL? = isPart
+            ? ((try? partsRepo.part(id: ownerId)) ?? nil)?.fileURL
+            : library.song(id: ownerId)?.fileURL
+        let restoredURL = isPart
             ? StoragePaths.libraryParts.appendingPathComponent(restoredName)
             : StoragePaths.libraryAudio.appendingPathComponent(restoredName)
         do {
-            try? fm.removeItem(at: material.fileURL)
+            if let currentURL { try? fm.removeItem(at: currentURL) }
             try? fm.removeItem(at: restoredURL)
-            try fm.copyItem(at: material.backupURL, to: restoredURL)
+            try fm.copyItem(at: backupURL, to: restoredURL)
         } catch {
-            applyStage = .failed("Could not restore the original: "
-                                 + error.localizedDescription)
-            return
+            if applyOwnerId == nil || applyOwnerId == ownerId {
+                applyStage = .failed("Could not restore the original: "
+                                     + error.localizedDescription)
+                applyOwnerId = ownerId
+            }
+            return false
         }
         let shape = Self.audioShape(of: restoredURL)
-        if material.isPart {
-            if var part = ((try? partsRepo.part(id: material.id)) ?? nil) {
+        if isPart {
+            if var part = ((try? partsRepo.part(id: ownerId)) ?? nil) {
                 part.fileName = restoredName
                 part.durationS = shape.durationS
                 part.sampleRate = shape.sampleRate
@@ -157,7 +225,7 @@ extension EditorStore {
                 part.backupFileName = nil
                 try? partsRepo.update(part)
             }
-        } else if var song = library.song(id: material.id) {
+        } else if var song = library.song(id: ownerId) {
             song.fileName = restoredName
             song.durationS = shape.durationS ?? song.durationS
             song.sampleRate = shape.sampleRate ?? song.sampleRate
@@ -166,19 +234,16 @@ extension EditorStore {
             song.backupFileName = nil
             library.update(song)
         }
-        for backup in StoragePaths.backups(forId: material.id) {
+        for backup in StoragePaths.backups(forId: ownerId) {
             try? fm.removeItem(at: backup)
         }
-        WaveformExtractor.invalidateCache(material.isPart
-            ? StoragePaths.libraryWaveforms
-                .appendingPathComponent(material.id + ".peaks")
-            : material.waveformCacheURL)
         WaveformExtractor.invalidateCache(
             StoragePaths.libraryWaveforms
-                .appendingPathComponent(material.id + ".original.peaks"))
-        // Reload from the records so every readout reflects the restore.
-        let id = material.id
-        material.isPart ? open(partId: id) : open(songId: id)
+                .appendingPathComponent(ownerId + ".peaks"))
+        WaveformExtractor.invalidateCache(
+            StoragePaths.libraryWaveforms
+                .appendingPathComponent(ownerId + ".original.peaks"))
+        return true
     }
 
     // MARK: export (Tier 2.8)
@@ -225,15 +290,25 @@ extension EditorStore {
         if let hz = choice.sampleRateHz {
             exportDoc.ops.append(EditOp(kind: .resample(hz: hz)))
         }
+        // Planned BEFORE the upload, so a render that cannot succeed is
+        // refused without sending the file anywhere.
+        var plan = EditMixPlan.plan(
+            document: exportDoc, source: "PENDING",
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        guard plan.isRenderable else {
+            exportStage = .failed("There is nothing to export — the "
+                                  + "selection is silent.")
+            return
+        }
         exportStage = .uploading
         guard let sourceId = await uploadSource() else {
             exportStage = .failed(jobs.lastError ?? "Upload failed")
             return
         }
-        let plan = EditMixPlan.plan(
-            document: exportDoc, source: sourceId,
-            sourceDuration: sourceDurationS,
-            sampleRate: material.sampleRate, sourceBpm: bpm)
+        for index in plan.spec.tracks.indices {
+            plan.spec.tracks[index].source = sourceId
+        }
         guard let created = await jobs.submitEditorRender(
             modelId: model.id, spec: plan.spec,
             normalize: choice.applyEdits && plan.normalize,
@@ -285,15 +360,23 @@ extension EditorStore {
         }
         var snippetDoc = document
         snippetDoc.ops.append(EditOp(kind: .trim(selection)))
+        var plan = EditMixPlan.plan(
+            document: snippetDoc, source: "PENDING",
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        guard plan.isRenderable else {
+            exportStage = .failed("There is nothing in that selection to "
+                                  + "send — it is silent.")
+            return
+        }
         exportStage = .uploading
         guard let sourceId = await uploadSource() else {
             exportStage = .failed(jobs.lastError ?? "Upload failed")
             return
         }
-        let plan = EditMixPlan.plan(
-            document: snippetDoc, source: sourceId,
-            sourceDuration: sourceDurationS,
-            sampleRate: material.sampleRate, sourceBpm: bpm)
+        for index in plan.spec.tracks.indices {
+            plan.spec.tracks[index].source = sourceId
+        }
         let title = "\(material.title) "
             + "(\(EditorClock.short(selection.start))–"
             + "\(EditorClock.short(selection.end)))"
@@ -362,14 +445,25 @@ extension EditorStore {
             if isCurrent || applyOwnerId == ownerId {
                 applyStage = .failed("Could not replace the file: "
                                      + error.localizedDescription)
+                applyOwnerId = ownerId   // the card belongs to THIS track
             }
-            applyOwnerId = nil
             return
         }
         // The program that was SUBMITTED, not whatever is loaded now.
-        var appliedDoc = (documentJSON.flatMap {
+        // No fallback to the loaded document: if the submitted program
+        // cannot be read back, the row keeps what it had rather than being
+        // stamped with whatever happens to be open now.
+        guard var appliedDoc = documentJSON.flatMap({
             try? JSONDecoder().decode(EditDocument.self, from: Data($0.utf8))
-        }) ?? document
+        }) else {
+            if isCurrent || applyOwnerId == ownerId {
+                applyStage = .failed("The rendered edit could not be "
+                                     + "recorded — the file was replaced but "
+                                     + "its edit list was not saved.")
+                applyOwnerId = ownerId
+            }
+            return
+        }
         appliedDoc.appliedAt = Date()
         let json = (try? JSONEncoder().encode(appliedDoc))
             .map { String(decoding: $0, as: UTF8.self) }
@@ -515,12 +609,23 @@ extension EditorStore {
                 switch active.status {
                 case .failed:
                     let message = active.error?.message ?? "The render failed"
-                    if kind == .apply { self.applyStage = .failed(message) }
-                    else { self.exportStage = .failed(message) }
+                    if kind == .apply {
+                        self.applyStage = .failed(message)
+                        // Ownership is kept, not cleared: the failure card
+                        // belongs to the track that was rendering, and
+                        // clearing it would show the failure on whatever is
+                        // open instead.
+                    } else {
+                        self.exportStage = .failed(message)
+                    }
                     return
                 case .canceled:
-                    if kind == .apply { self.applyStage = .idle }
-                    else { self.exportStage = .idle }
+                    if kind == .apply {
+                        self.applyStage = .idle
+                        self.applyOwnerId = nil
+                    } else {
+                        self.exportStage = .idle
+                    }
                     return
                 case .succeeded:
                     return

@@ -48,12 +48,15 @@ actor WaveformExtractor {
     /// One `Peaks` per channel: `[mono]` for a mono file, `[left, right]`
     /// for stereo (further channels are ignored, matching the mix path).
     /// `mono: true` folds them into one lane by max magnitude.
+    /// Cancellable, and deliberately not detached: a detached task does not
+    /// inherit cancellation, so a window the view has already scrolled past
+    /// would decode to the end anyway — which is the whole cost this is
+    /// meant to avoid. The actor's executor is not the main one, so calling
+    /// it directly still keeps the decode off the main thread.
     func peaks(for audioURL: URL, startS: Double, endS: Double,
                binCount: Int, mono: Bool) async throws -> [Peaks] {
-        try await Task<[Peaks], Error>.detached(priority: .userInitiated) {
-            try Self.extractRange(from: audioURL, startS: startS, endS: endS,
-                                  binCount: binCount, mono: mono)
-        }.value
+        try Self.extractRange(from: audioURL, startS: startS, endS: endS,
+                              binCount: binCount, mono: mono)
     }
 
     // MARK: extraction
@@ -124,6 +127,9 @@ actor WaveformExtractor {
         file.framePosition = firstFrame
         var frameIndex = 0
         while frameIndex < totalFrames {
+            // Checked per chunk: the caller is a scroll gesture, and the
+            // window it wanted is stale the moment the next event lands.
+            try Task.checkCancellation()
             let want = AVAudioFrameCount(min(Int(chunk),
                                              totalFrames - frameIndex))
             try file.read(into: buffer, frameCount: want)

@@ -359,9 +359,14 @@ enum EditProgram {
             let r = clamp(range, to: duration)
             guard r.length > 0 else { return segments }
             var out = extract(segments, range: EditRange(start: 0, end: r.start))
+            // SETS the level rather than adding to it. The control is a
+            // slider reading "this region is at +2.5 dB", so two rows over
+            // the same audio must not silently render +5 — and after a cut
+            // has re-timed the ruler there is no reliable way to recognise
+            // "the same audio" by its numbers alone.
             out += extract(segments, range: r).map { segment in
                 var louder = segment
-                if !louder.silent { louder.gainDb += db }
+                if !louder.silent { louder.gainDb = db }
                 return louder
             }
             out += extract(segments, range: EditRange(start: r.end, end: duration))

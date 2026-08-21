@@ -302,11 +302,15 @@ struct EditorWellView: View {
     private func fadeOverlays(_ geometry: EditorGeometry) -> some View {
         ZStack(alignment: .topLeading) {
             let anchors = store.fadeAnchors
-            if let fadeIn = store.document.fadeIn {
+            // The lengths the RENDER will use: a ramp longer than the run
+            // that carries it is cut short by the engine, and drawing the
+            // full request would promise something the file will not have.
+            let effective = store.effectiveFades
+            if store.document.fadeIn != nil, effective.headS > 0 {
                 // From the first AUDIBLE moment: the engine attaches the ramp
                 // to the first track, and leading silence produces no track.
                 let x0 = geometry.x(at: anchors.headS)
-                let width = geometry.x(at: anchors.headS + fadeIn.seconds) - x0
+                let width = geometry.x(at: anchors.headS + effective.headS) - x0
                 LinearGradient(
                     colors: [Bench.Palette.well.opacity(0.9),
                              Bench.Palette.accent.opacity(0.07)],
@@ -318,14 +322,14 @@ struct EditorWellView: View {
                             .fill(Bench.Palette.accent.opacity(0.35))
                             .frame(width: 1)
                     }
-                Text("FADE IN \(trimmedSeconds(fadeIn.seconds)) S")
+                Text("FADE IN \(trimmedSeconds(effective.headS)) S")
                     .font(Bench.Typo.mono(9, .semibold))
                     .tracking(0.7)
                     .foregroundStyle(Bench.Palette.accent)
                     .offset(x: x0 + max(0, width) + 8, y: 14)
             }
-            if let fadeOut = store.document.fadeOut {
-                let x0 = geometry.x(at: anchors.tailS - fadeOut.seconds)
+            if store.document.fadeOut != nil, effective.tailS > 0 {
+                let x0 = geometry.x(at: anchors.tailS - effective.tailS)
                 let x1 = geometry.x(at: anchors.tailS)
                 LinearGradient(
                     colors: [Bench.Palette.accent.opacity(0.07),
@@ -338,7 +342,7 @@ struct EditorWellView: View {
                             .fill(Bench.Palette.accent.opacity(0.35))
                             .frame(width: 1)
                     }
-                Text("FADE OUT \(trimmedSeconds(fadeOut.seconds)) S")
+                Text("FADE OUT \(trimmedSeconds(effective.tailS)) S")
                     .font(Bench.Typo.mono(9, .semibold))
                     .tracking(0.7)
                     .foregroundStyle(Bench.Palette.accent)
@@ -351,17 +355,7 @@ struct EditorWellView: View {
     /// The joins the render will crossfade: where consecutive segments are
     /// discontinuous source (a delete's seam, a paste's edges).
     private func joinMarkers(_ geometry: EditorGeometry) -> some View {
-        var joins: [Double] = []
-        var cursor = 0.0
-        for (index, segment) in store.segments.enumerated() {
-            defer { cursor += segment.length }
-            guard index > 0 else { continue }
-            let previous = store.segments[index - 1]
-            guard !segment.silent, !previous.silent else { continue }
-            let contiguous = !previous.reversed && !segment.reversed
-                && abs(previous.sourceEnd - segment.sourceStart) < 1e-9
-            if !contiguous { joins.append(cursor) }
-        }
+        let joins = store.joinTimes
         return ZStack(alignment: .topLeading) {
             ForEach(Array(joins.enumerated()), id: \.offset) { _, join in
                 let x = geometry.x(at: join)
@@ -374,7 +368,8 @@ struct EditorWellView: View {
                                           lineWidth: 1))
                         .offset(x: x - 6)
                     if store.crossfadeJoins {
-                        Text("JOIN · CROSSFADE 8 MS")
+                        Text("JOIN · CROSSFADE "
+                             + "\(Int(store.joinCrossfadeMsEffective.rounded())) MS")
                             .font(Bench.Typo.mono(9, .semibold))
                             .tracking(0.5)
                             .foregroundStyle(Bench.Palette.dangerText)
@@ -570,7 +565,8 @@ struct EditorWellView: View {
             BenchToggleChip(
                 isOn: Binding(get: { store.crossfadeJoins },
                               set: { store.setCrossfadeJoins($0) }),
-                label: "Crossfade joins · 8 ms")
+                label: store.crossfadeJoins
+                    ? "Crossfade joins · 8 ms" : "Crossfade joins")
             Spacer(minLength: 8)
             Text("VIEW").eyebrow()
             BenchSegmented(
@@ -727,7 +723,9 @@ struct EditorWellView: View {
         // read, and a short lead-in lets a fast drag settle first.
         fetchTask?.cancel()
         fetchTask = Task {
-            try? await Task.sleep(for: .milliseconds(16))
+            // Longer than the gesture's own event interval, so a drag issues
+            // one fetch rather than one per mouse-move.
+            try? await Task.sleep(for: .milliseconds(60))
             if Task.isCancelled { return }
             var out: [EditorWellView.WaveSlice] = []
             var cursor = 0.0

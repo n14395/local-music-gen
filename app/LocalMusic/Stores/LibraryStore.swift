@@ -119,6 +119,22 @@ final class LibraryStore {
         refreshSearch()
     }
 
+    /// Record an Editor program against the cached rows without re-querying.
+    ///
+    /// The Editor writes `editsJSON` through a narrow column update, so the
+    /// snapshots in `recent`/`results` would otherwise still hold the value
+    /// from before the edit — and every other writer in the app builds its
+    /// whole-row `update(_:)` from those snapshots, which would put the
+    /// stale program back.
+    func noteEdits(id: String, editsJSON: String?) {
+        for index in recent.indices where recent[index].id == id {
+            recent[index].editsJSON = editsJSON
+        }
+        for index in results.indices where results[index].id == id {
+            results[index].editsJSON = editsJSON
+        }
+    }
+
     func insert(_ song: SongRecord) {
         try? repo.insert(song)
         refreshRecent()

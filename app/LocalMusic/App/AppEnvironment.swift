@@ -143,6 +143,7 @@ final class AppEnvironment {
             self?.library.refreshRecent()
             self?.partsStore.refresh()
         }
+        editor.partsStore = partsStore
         editor.pauseGlobalPlayback = { [weak self] in
             guard let playback = self?.playback, playback.isPlaying else {
                 return
