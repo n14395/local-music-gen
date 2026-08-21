@@ -47,7 +47,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
-            "help": "How closely to follow the prompt",
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -59,6 +59,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -69,6 +70,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -79,6 +81,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -149,6 +152,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -160,6 +164,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -170,6 +175,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -180,6 +186,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -250,6 +257,7 @@
             "nullable": false,
             "min": 4,
             "max": 50,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -261,6 +269,7 @@
             "min": 0.5,
             "max": 6.0,
             "step": 0.5,
+            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
             "group": "sampling"
           },
           {
@@ -271,6 +280,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -279,7 +289,7 @@
             "label": "Reimagine source",
             "default": null,
             "nullable": true,
-            "help": "Audio to reimagine — diffusion starts from this clip instead of noise",
+            "help": "Audio to reimagine — diffusion starts from this clip instead of noise.",
             "group": "task"
           },
           {
@@ -291,7 +301,7 @@
             "min": 0.1,
             "max": 10.0,
             "step": 0.1,
-            "help": "How far to depart from the source (higher = freer)",
+            "help": "How far to depart from the source (higher = freer).",
             "group": "task"
           }
         ]
@@ -371,7 +381,7 @@
             "nullable": false,
             "min": 4,
             "max": 100,
-            "help": "Turbo model: 8 steps is the sweet spot",
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum. This is the Turbo checkpoint: 8 steps is the sweet spot.",
             "group": "sampling"
           },
           {
@@ -383,6 +393,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -391,7 +402,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
-            "help": "Let the language model plan the track first",
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -408,6 +419,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -446,6 +458,7 @@
                 "label": "Chinese"
               }
             ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
             "group": "musical"
           },
           {
@@ -456,6 +469,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -478,7 +492,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -487,7 +501,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -503,7 +517,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -515,7 +529,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -524,7 +538,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -541,7 +555,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -560,6 +574,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -577,7 +592,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -668,6 +683,7 @@
             "nullable": false,
             "min": 10,
             "max": 150,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -679,6 +695,7 @@
             "min": 1.0,
             "max": 10.0,
             "step": 0.5,
+            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
             "group": "sampling"
           },
           {
@@ -689,6 +706,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ],
@@ -764,6 +782,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ],
@@ -859,6 +878,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -870,6 +890,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -880,6 +901,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -968,6 +990,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -979,6 +1002,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -989,6 +1013,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1077,6 +1102,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1088,6 +1114,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -1098,6 +1125,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1186,6 +1214,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1197,6 +1226,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -1207,6 +1237,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1295,6 +1326,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1306,6 +1338,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -1316,6 +1349,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1404,6 +1438,7 @@
             "min": 0.5,
             "max": 10.0,
             "step": 0.5,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1415,6 +1450,7 @@
             "min": 0.1,
             "max": 1.0,
             "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
             "group": "sampling"
           },
           {
@@ -1425,6 +1461,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1514,7 +1551,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose sound and texture the model imitates — the melody is not copied",
+            "help": "Audio clip whose sound and texture the model imitates — the melody is not copied.",
             "group": "task"
           },
           {
@@ -1526,7 +1563,7 @@
             "min": 1.5,
             "max": 4.5,
             "step": 0.5,
-            "help": "How much of the reference the model listens to. Shorter excerpts generalise; longer ones copy more closely",
+            "help": "How much of the reference the model listens to. Shorter excerpts generalise; longer ones copy more closely.",
             "group": "task"
           },
           {
@@ -1538,6 +1575,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -1549,6 +1587,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1559,6 +1598,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -1569,6 +1609,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1656,7 +1697,7 @@
             "label": "Melody reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is)",
+            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
             "group": "task"
           },
           {
@@ -1668,6 +1709,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -1679,6 +1721,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -1689,6 +1732,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -1699,6 +1743,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1794,6 +1839,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -1805,6 +1851,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -1813,6 +1860,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -1823,6 +1871,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -1833,6 +1882,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -1927,6 +1977,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -1938,6 +1989,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -1946,6 +1998,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -1956,6 +2009,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -1966,6 +2020,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2060,6 +2115,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2071,6 +2127,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2079,6 +2136,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2089,6 +2147,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2099,6 +2158,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2193,6 +2253,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2204,6 +2265,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2212,6 +2274,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2222,6 +2285,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2232,6 +2296,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2326,6 +2391,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2337,6 +2403,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2345,6 +2412,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2355,6 +2423,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2365,6 +2434,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2459,6 +2529,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2470,6 +2541,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2478,6 +2550,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2488,6 +2561,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2498,6 +2572,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2592,6 +2667,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2603,6 +2679,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2611,6 +2688,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2621,6 +2699,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2631,6 +2710,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2725,6 +2805,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2736,6 +2817,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -2744,6 +2826,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling"
           },
           {
@@ -2754,6 +2837,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -2764,6 +2848,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -2838,6 +2923,7 @@
             "nullable": false,
             "min": 1,
             "max": 30,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2848,6 +2934,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ],
@@ -2929,6 +3016,7 @@
             "nullable": false,
             "min": 1,
             "max": 30,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -2939,6 +3027,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ],
@@ -3020,6 +3109,7 @@
             "nullable": false,
             "min": 1,
             "max": 30,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -3030,6 +3120,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ],
@@ -3113,6 +3204,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3124,6 +3216,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3134,6 +3227,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3144,6 +3238,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3218,6 +3313,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3229,6 +3325,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3239,6 +3336,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3249,6 +3347,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3323,6 +3422,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3334,6 +3434,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3344,6 +3445,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3354,6 +3456,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3427,6 +3530,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3438,6 +3542,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3448,6 +3553,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3458,6 +3564,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3525,7 +3632,7 @@
             "label": "Melody reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is)",
+            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
             "group": "task"
           },
           {
@@ -3537,6 +3644,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3548,6 +3656,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3558,6 +3667,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3568,6 +3678,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3637,7 +3748,7 @@
             "label": "Melody reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is)",
+            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
             "group": "task"
           },
           {
@@ -3649,6 +3760,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3660,6 +3772,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3670,6 +3783,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3680,6 +3794,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3752,6 +3867,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3763,6 +3879,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3773,6 +3890,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3783,6 +3901,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3853,6 +3972,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3864,6 +3984,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3874,6 +3995,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3884,6 +4006,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -3954,6 +4077,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -3965,6 +4089,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -3975,6 +4100,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -3985,6 +4111,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -4052,7 +4179,7 @@
             "label": "Melody reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is)",
+            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
             "group": "task"
           },
           {
@@ -4064,6 +4191,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -4075,6 +4203,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -4085,6 +4214,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -4095,6 +4225,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -4164,7 +4295,7 @@
             "label": "Melody reference",
             "default": null,
             "nullable": true,
-            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is)",
+            "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
             "group": "task"
           },
           {
@@ -4176,6 +4307,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -4187,6 +4319,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -4197,6 +4330,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -4207,6 +4341,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -4279,6 +4414,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -4290,6 +4426,7 @@
             "min": 0.1,
             "max": 2.0,
             "step": 0.1,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
             "group": "sampling"
           },
           {
@@ -4300,6 +4437,7 @@
             "nullable": false,
             "min": 10,
             "max": 1000,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
             "group": "sampling"
           },
           {
@@ -4310,6 +4448,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -4380,6 +4519,7 @@
             "nullable": false,
             "min": 20,
             "max": 250,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -4391,6 +4531,7 @@
             "min": 0.5,
             "max": 15.0,
             "step": 0.5,
+            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
             "group": "sampling"
           },
           {
@@ -4401,6 +4542,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -4409,7 +4551,7 @@
             "label": "Reimagine source",
             "default": null,
             "nullable": true,
-            "help": "Audio to reimagine — diffusion starts from this clip instead of noise",
+            "help": "Audio to reimagine — diffusion starts from this clip instead of noise.",
             "group": "task"
           },
           {
@@ -4421,7 +4563,7 @@
             "min": 0.1,
             "max": 10.0,
             "step": 0.1,
-            "help": "How far to depart from the source (higher = freer)",
+            "help": "How far to depart from the source (higher = freer).",
             "group": "task"
           }
         ]
@@ -4493,6 +4635,7 @@
             "nullable": false,
             "min": 1,
             "max": 50,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -4504,6 +4647,7 @@
             "min": 0.5,
             "max": 15.0,
             "step": 0.5,
+            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
             "group": "sampling"
           },
           {
@@ -4513,6 +4657,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -4523,6 +4668,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -4531,7 +4677,7 @@
             "label": "Reimagine source",
             "default": null,
             "nullable": true,
-            "help": "Audio to reimagine — diffusion starts from this clip instead of noise",
+            "help": "Audio to reimagine — diffusion starts from this clip instead of noise.",
             "group": "task"
           },
           {
@@ -4543,7 +4689,7 @@
             "min": 0.1,
             "max": 10.0,
             "step": 0.1,
-            "help": "How far to depart from the source (higher = freer)",
+            "help": "How far to depart from the source (higher = freer).",
             "group": "task"
           },
           {
@@ -4552,7 +4698,7 @@
             "label": "Continue source",
             "default": null,
             "nullable": true,
-            "help": "Song to continue — the output starts with it and keeps going (120 s total cap)",
+            "help": "Song to continue — the output starts with it and keeps going (120 s total cap).",
             "group": "task"
           },
           {
@@ -4561,7 +4707,7 @@
             "label": "Repaint source",
             "default": null,
             "nullable": true,
-            "help": "Audio to partially regenerate (with the region below); output keeps its length",
+            "help": "Audio to partially regenerate (with the region below); output keeps its length.",
             "group": "task"
           },
           {
@@ -4573,6 +4719,7 @@
             "min": 0.0,
             "max": 120.0,
             "step": 0.5,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task"
           },
           {
@@ -4584,6 +4731,7 @@
             "min": 0.0,
             "max": 120.0,
             "step": 0.5,
+            "help": "Where the regenerated span ends, in seconds.",
             "group": "task"
           }
         ]
@@ -4677,6 +4825,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -4688,6 +4837,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -4696,6 +4846,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -4712,6 +4863,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -4722,6 +4874,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -4756,7 +4909,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -4765,7 +4918,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -4784,7 +4937,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -4796,7 +4949,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -4805,7 +4958,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -4822,7 +4975,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -4841,6 +4994,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -4859,7 +5013,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -4925,7 +5079,7 @@
                 "label": "Vocals"
               }
             ],
-            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete)",
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5032,6 +5186,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -5043,6 +5198,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -5051,6 +5207,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -5067,6 +5224,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -5077,6 +5235,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -5111,7 +5270,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -5120,7 +5279,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5139,7 +5298,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -5151,7 +5310,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -5160,7 +5319,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5177,7 +5336,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5196,6 +5355,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5214,7 +5374,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5280,7 +5440,7 @@
                 "label": "Vocals"
               }
             ],
-            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete)",
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5387,6 +5547,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -5398,6 +5559,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -5406,6 +5568,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -5422,6 +5585,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -5432,6 +5596,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -5454,7 +5619,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -5463,7 +5628,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5479,7 +5644,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -5491,7 +5656,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -5500,7 +5665,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5517,7 +5682,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5536,6 +5701,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5553,7 +5719,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5658,6 +5824,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -5669,6 +5836,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -5677,6 +5845,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -5693,6 +5862,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -5703,6 +5873,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -5737,7 +5908,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -5746,7 +5917,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5765,7 +5936,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -5777,7 +5948,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -5786,7 +5957,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5803,7 +5974,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5822,6 +5993,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5840,7 +6012,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -5906,7 +6078,7 @@
                 "label": "Vocals"
               }
             ],
-            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete)",
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6013,6 +6185,7 @@
             "nullable": false,
             "min": 4,
             "max": 200,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6024,6 +6197,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6032,6 +6206,7 @@
             "label": "LM reasoning",
             "default": true,
             "nullable": false,
+            "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
             "group": "sampling",
             "applies_when": {
               "param": "task_type",
@@ -6048,6 +6223,7 @@
             "nullable": true,
             "min": 40,
             "max": 220,
+            "help": "Target tempo in beats per minute. Left on Random the model picks one to suit the prompt. It is a request rather than a guarantee — nothing locks the output to a click.",
             "group": "musical"
           },
           {
@@ -6058,6 +6234,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           },
           {
@@ -6092,7 +6269,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any)",
+            "help": "What to do with the source audio (if any).",
             "group": "task"
           },
           {
@@ -6101,7 +6278,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": true,
-            "help": "Required for every task except Generate; output length locks to this file",
+            "help": "Required for every task except Generate; output length locks to this file.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6120,7 +6297,7 @@
             "label": "Style reference",
             "default": null,
             "nullable": true,
-            "help": "Optional style reference for Cover",
+            "help": "Optional style reference for Cover.",
             "group": "task"
           },
           {
@@ -6132,7 +6309,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover",
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
             "group": "task"
           },
           {
@@ -6141,7 +6318,7 @@
             "label": "Morph",
             "default": false,
             "nullable": false,
-            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete",
+            "help": "Rewrite the source from one description into another (FlowEdit). Needs a source audio file; works on the Turbo DiT, unlike extract/layer/complete.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6158,7 +6335,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "e.g. upbeat electropop with a female vocal",
-            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result",
+            "help": "What the source is now — a morph travels from this description to the prompt. Left empty it morphs away from nothing in particular, which blurs the result.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6177,6 +6354,7 @@
             "min": 0.0,
             "max": 600.0,
             "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6195,7 +6373,7 @@
             "min": -1.0,
             "max": 600.0,
             "step": 0.1,
-            "help": "-1 = to the end",
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6261,7 +6439,7 @@
                 "label": "Vocals"
               }
             ],
-            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete)",
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
             "group": "task",
             "applies_when": {
               "param": "task_type",
@@ -6346,6 +6524,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6357,6 +6536,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6366,6 +6546,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6376,6 +6557,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6446,6 +6628,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6457,6 +6640,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6466,6 +6650,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6476,6 +6661,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6546,6 +6732,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6557,6 +6744,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6566,6 +6754,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6576,6 +6765,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6646,6 +6836,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6657,6 +6848,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6666,6 +6858,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6676,6 +6869,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6746,6 +6940,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6757,6 +6952,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6766,6 +6962,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6776,6 +6973,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6846,6 +7044,7 @@
             "nullable": false,
             "min": 5,
             "max": 300,
+            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
             "group": "sampling"
           },
           {
@@ -6857,6 +7056,7 @@
             "min": 1.0,
             "max": 15.0,
             "step": 0.5,
+            "help": "How hard the model is pushed to match your prompt. Low wanders off the brief but tends to sound relaxed and natural; high follows the words closely and can turn harsh or lifeless. The default is the value this model was tuned around.",
             "group": "sampling"
           },
           {
@@ -6866,6 +7066,7 @@
             "default": "low quality, average quality",
             "nullable": false,
             "placeholder": "low quality",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -6876,6 +7077,7 @@
             "nullable": true,
             "min": 0,
             "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -6927,7 +7129,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to split into stems"
+            "help": "The song to split into stems."
           },
           {
             "key": "shifts",
@@ -6937,7 +7139,7 @@
             "nullable": false,
             "min": 1,
             "max": 5,
-            "help": "More shifts average more predictions — slightly cleaner stems, linearly slower"
+            "help": "How many times the separator re-runs over a time-shifted copy of the input, averaging the results to cancel position-dependent artifacts. Slightly cleaner stems, and linearly slower."
           }
         ],
         "est_realtime_factor": 0.15
@@ -6993,7 +7195,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to split into stems"
+            "help": "The song to split into stems."
           },
           {
             "key": "shifts",
@@ -7002,7 +7204,8 @@
             "default": 1,
             "nullable": false,
             "min": 1,
-            "max": 5
+            "max": 5,
+            "help": "How many times the separator re-runs over a time-shifted copy of the input, averaging the results to cancel position-dependent artifacts. Slightly cleaner stems, and linearly slower."
           }
         ],
         "est_realtime_factor": 0.6
@@ -7058,7 +7261,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to split into stems"
+            "help": "The song to split into stems."
           },
           {
             "key": "shifts",
@@ -7067,7 +7270,8 @@
             "default": 1,
             "nullable": false,
             "min": 1,
-            "max": 5
+            "max": 5,
+            "help": "How many times the separator re-runs over a time-shifted copy of the input, averaging the results to cancel position-dependent artifacts. Slightly cleaner stems, and linearly slower."
           }
         ],
         "est_realtime_factor": 0.2
@@ -7131,7 +7335,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to split into vocals + instrumental"
+            "help": "The song to split into vocals + instrumental."
           }
         ],
         "est_realtime_factor": 2.0
@@ -7198,7 +7402,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to split into vocals + instrumental"
+            "help": "The song to split into vocals + instrumental."
           }
         ],
         "est_realtime_factor": 2.0
@@ -7262,7 +7466,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The audio to analyze"
+            "help": "The audio to analyze."
           },
           {
             "key": "deep",
@@ -7270,7 +7474,7 @@
             "label": "Structure analysis",
             "default": true,
             "nullable": false,
-            "help": "Also segment the song into sections (a little slower)"
+            "help": "Also segment the song into sections (a little slower)."
           }
         ],
         "est_realtime_factor": 0.1
@@ -7334,7 +7538,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The audio to analyze"
+            "help": "The audio to analyze."
           },
           {
             "key": "deep",
@@ -7342,7 +7546,7 @@
             "label": "Structure analysis",
             "default": true,
             "nullable": false,
-            "help": "Also segment the song into sections (a little slower)"
+            "help": "Also segment the song into sections (a little slower)."
           }
         ],
         "est_realtime_factor": 0.15
@@ -7470,7 +7674,7 @@
             "min": -30.0,
             "max": -6.0,
             "step": 0.5,
-            "help": "Integrated loudness of the final mix"
+            "help": "Integrated loudness of the final mix."
           },
           {
             "key": "keep_tracks",
@@ -7478,7 +7682,7 @@
             "label": "Keep tracks",
             "default": false,
             "nullable": false,
-            "help": "Also save each aligned track as a part of the result"
+            "help": "Also save each aligned track as a part of the result."
           }
         ],
         "est_realtime_factor": 0.3
@@ -7530,7 +7734,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The audio to transcribe — a separated stem works much better than a full mix"
+            "help": "The audio to transcribe — a separated stem works much better than a full mix."
           },
           {
             "key": "instrument_label",
@@ -7539,7 +7743,7 @@
             "default": null,
             "nullable": true,
             "placeholder": "guitar",
-            "help": "Names the resulting notes part"
+            "help": "Names the resulting notes part."
           }
         ],
         "est_realtime_factor": 0.15
@@ -7602,7 +7806,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "The song to transcribe into per-instrument note tracks"
+            "help": "The song to transcribe into per-instrument note tracks."
           }
         ],
         "est_realtime_factor": 0.8
@@ -7658,7 +7862,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "Piano audio — solo recordings or a separated piano stem"
+            "help": "Piano audio — solo recordings or a separated piano stem."
           }
         ],
         "est_realtime_factor": 1.0
@@ -7713,7 +7917,7 @@
             "label": "Source audio",
             "default": null,
             "nullable": false,
-            "help": "Monophonic audio — a vocals stem or a single-instrument line"
+            "help": "Monophonic audio — a vocals stem or a single-instrument line."
           }
         ],
         "est_realtime_factor": 0.02
@@ -7768,7 +7972,7 @@
             "label": "Notes",
             "default": null,
             "nullable": false,
-            "help": "The MIDI part to render"
+            "help": "The MIDI part to render."
           },
           {
             "key": "gain_db",
@@ -7778,7 +7982,8 @@
             "nullable": false,
             "min": -12.0,
             "max": 12.0,
-            "step": 0.5
+            "step": 0.5,
+            "help": "Volume applied to the rendered audio, in decibels. 0 leaves it exactly as the SoundFont produced it; every 6 dB is roughly a doubling."
           },
           {
             "key": "sample_rate",
@@ -7795,7 +8000,8 @@
                 "value": "48000",
                 "label": "48 kHz"
               }
-            ]
+            ],
+            "help": "Samples per second in the rendered file. 44.1 kHz is CD rate and 48 kHz is the video standard; neither adds detail the SoundFont does not already have."
           }
         ],
         "est_realtime_factor": 0.05

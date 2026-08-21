@@ -282,6 +282,134 @@ PARAM_GROUPS = {
 }
 
 
+# What every knob actually does, in words a musician can act on.
+#
+# Keyed by param key rather than by family for the same reason PARAM_GROUPS is:
+# `temperature` means the same thing wherever it appears, and writing it out at
+# each of the dozen call sites that declare it guarantees a dozen slightly
+# different explanations. A key that is rendered but explained nowhere fails
+# the build (see `apply_help`) — "Full control" existed for months as eight
+# unlabelled sliders, which is a feature the target audience cannot use.
+#
+# The copy may be technical; the reader is expected to look a term up. What it
+# must not do is assume the reader already knows what the term means, or state
+# a number as universal when models disagree — MAGNeT's temperature runs 0.5…10
+# around a default of 3, MusicGen's 0.1…2 around 1, so "1.0 is neutral" would
+# be false half the time. Everything here is phrased in relative terms for that
+# reason.
+PARAM_HELP = {
+    # ---- how the model draws ---------------------------------------------
+    "steps": "How many passes the model makes refining the audio. More steps "
+             "means more detail and a proportionally longer render, with "
+             "sharply diminishing returns — most models stop improving well "
+             "below their maximum.",
+    "guidance_scale": "How hard the model is pushed to match your prompt. Low "
+                      "wanders off the brief but tends to sound relaxed and "
+                      "natural; high follows the words closely and can turn "
+                      "harsh or lifeless. The default is the value this model "
+                      "was tuned around.",
+    "cfg_scale": "Classifier-free guidance — how hard the model is pushed "
+                 "towards your prompt, and away from the negative one. Low is "
+                 "loose and natural; high obeys the words and can sound "
+                 "brittle.",
+    "temperature": "How adventurous the model is at each step. Lower is safer "
+                   "and more repetitive; higher is more surprising and more "
+                   "likely to wander or fall apart. What counts as high "
+                   "differs between models, so move away from the default in "
+                   "small steps.",
+    "top_k": "At each step the model considers only its K likeliest options. "
+             "Small keeps it tight and predictable; large lets rarer, stranger "
+             "sounds through. Temperature then chooses among whatever this "
+             "leaves.",
+    "top_p": "At each step the model considers only its likeliest options, up "
+             "to this share of the total probability — 0.9 keeps the top 90%. "
+             "A softer Top-K: how many options stay in play rises and falls "
+             "with how certain the model is.",
+    "seed": "The random starting point. The same seed with the same prompt and "
+            "settings reproduces a take exactly, which is how you change one "
+            "setting and hear only that change. Leave it on Random for "
+            "something different every run.",
+    "negative_prompt": "What to steer away from — \"distorted, muffled, live "
+                       "recording\". It works through guidance, so it does "
+                       "nothing while guidance is at its lowest setting.",
+    "thinking": "A language model drafts the arrangement — sections, "
+                "instrumentation, where the vocal sits — before the audio "
+                "model renders it. Slower, and usually more coherent across a "
+                "long track.",
+    # ---- properties of the music -----------------------------------------
+    "bpm": "Target tempo in beats per minute. Left on Random the model picks "
+           "one to suit the prompt. It is a request rather than a guarantee — "
+           "nothing locks the output to a click.",
+    "vocal_language": "Which language the model should sing in. Write the "
+                      "lyrics in that language too: this tells the model how "
+                      "to pronounce them, it does not translate.",
+    # ---- regions ----------------------------------------------------------
+    "repainting_start": "Where the regenerated span starts, in seconds from "
+                        "the beginning of the source. Audio outside the span "
+                        "is kept exactly as it was.",
+    "repainting_end": "Where the regenerated span ends, in seconds. -1 means "
+                      "to the end of the track.",
+    "inpaint_start_s": "Where the regenerated span starts, in seconds from the "
+                       "beginning of the source. Audio outside the span is "
+                       "kept exactly as it was.",
+    "inpaint_end_s": "Where the regenerated span ends, in seconds.",
+    # ---- task models ------------------------------------------------------
+    "shifts": "How many times the separator re-runs over a time-shifted copy "
+              "of the input, averaging the results to cancel "
+              "position-dependent artifacts. Slightly cleaner stems, and "
+              "linearly slower.",
+    "target_lufs": "How loud the result is normalised to, in LUFS — perceived "
+                   "loudness averaged across the whole track, not peak level. "
+                   "Streaming services land around -14.",
+    "gain_db": "Volume applied to the rendered audio, in decibels. 0 leaves it "
+               "exactly as the SoundFont produced it; every 6 dB is roughly a "
+               "doubling.",
+    "sample_rate": "Samples per second in the rendered file. 44.1 kHz is CD "
+                   "rate and 48 kHz is the video standard; neither adds detail "
+                   "the SoundFont does not already have.",
+}
+
+
+def apply_help(entry: dict) -> None:
+    """Fill in `help` for any rendered param that has none, and refuse to build
+    a catalog where one is still missing.
+
+    Fill-only, never overwrite: a param whose declaration already carries help
+    is saying something PARAM_HELP cannot — "Turbo model: 8 steps is the sweet
+    spot" is about one checkpoint, and the generic sentence about steps would
+    be the wrong thing to replace it with. Where both are wanted the specific
+    text is written out in full at its declaration.
+
+    Internal params (mix_spec, splice_spec) are populated in code and never
+    rendered, so they are exempt.
+    """
+    for param in entry["capabilities"]["params"]:
+        if param.get("internal"):
+            continue
+        if param.get("help"):
+            continue
+        general = PARAM_HELP.get(param["key"])
+        if general is None:
+            raise KeyError(
+                f"{entry['id']}: param '{param['key']}' is shown to the user "
+                f"with no explanation — add one to PARAM_HELP or to the "
+                f"param's own declaration")
+        param["help"] = general
+
+
+def normalise_help(entry: dict) -> None:
+    """Give every explanation a full stop.
+
+    Cosmetic, and it earns the pass: the panel prints these as a column of
+    sentences under a column of controls, and half of them stopping mid-air
+    reads as unfinished rather than as terse. Idempotent - a string that
+    already ends in punctuation is left alone.
+    """
+    for param in entry["capabilities"]["params"]:
+        help_ = param.get("help")
+        if help_ and help_[-1] not in ".!?":
+            param["help"] = help_ + "."
+
 # Which ACE-Step tasks each control actually reaches, read out of
 # adapter_acestep and the installed ACE-Step pipeline rather than guessed from
 # the names. ACE-Step is the only family with a task selector, so it is the only
@@ -580,7 +708,7 @@ def ace_task_params(full):
          "min": 0.0, "max": 600.0, "step": 0.1},
         {"key": "repainting_end", "type": "float", "label": "Repaint end (s)",
          "default": None, "nullable": True, "min": -1.0, "max": 600.0,
-         "step": 0.1, "help": "-1 = to the end"},
+         "step": 0.1},
     ]
     if full:
         params.append(
@@ -1052,9 +1180,7 @@ NEW_ENTRIES = [
         task_caps(["separate"], [
             source_audio_param("The song to split into stems"),
             {"key": "shifts", "type": "int", "label": "Quality shifts",
-             "default": 1, "nullable": False, "min": 1, "max": 5,
-             "help": "More shifts average more predictions — slightly "
-                     "cleaner stems, linearly slower"},
+             "default": 1, "nullable": False, "min": 1, "max": 5},
         ], est_realtime_factor=0.15),
         8, "fast", MIT, size_hint_bytes=84_000_000, featured=True,
         settings={"engine": "demucs", "model": "htdemucs"}),
@@ -1315,6 +1441,12 @@ def main() -> None:
         m["tags"] = derive_tags(m)
         apply_pipeline(m)
         apply_preview(m)
+        # Before apply_groups, which rebuilds `group` by popping and re-adding
+        # it: filling `help` afterwards would land the two keys in a different
+        # order on a first run than on every run after, so the file would not
+        # settle until it had been regenerated twice.
+        apply_help(m)
+        normalise_help(m)
         apply_groups(m)
     cache: dict[tuple, int] = {}
     for m in models:

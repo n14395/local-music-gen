@@ -29,6 +29,28 @@ enum ParameterGroups {
             case .other: "Other"
             }
         }
+
+        /// One line orienting the reader before they read four controls.
+        ///
+        /// "SAMPLING" is a heading that means something to whoever chose it
+        /// and nothing to a musician, and the panel is the one place in the
+        /// app where the vocabulary is unavoidably the model's rather than
+        /// the music's. Nil for `other`, which is the fallback bucket and has
+        /// nothing true to say about what is in it.
+        var blurb: String? {
+            switch self {
+            case .sampling:
+                "How the model draws. These change the take you get, not the "
+                    + "music you asked for."
+            case .musical:
+                "Properties of the music itself, asked for up front rather "
+                    + "than described in the prompt."
+            case .task:
+                "What is being transformed, and how much of it survives."
+            case .other:
+                nil
+            }
+        }
     }
 
     /// Partition `specs` into groups. Internal params are the caller's problem

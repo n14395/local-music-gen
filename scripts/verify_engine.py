@@ -199,6 +199,18 @@ def check_catalog_curation() -> None:
              if any(r.get("gated") for r in by_id.get(i, {}).get("hf_repos", []))]
     check("nothing onboarding installs is gated", not gated, f"gated: {gated}")
 
+    # Every control the parameter panel renders says what it does, under the
+    # control itself. A param with no `help` draws a bare slider with a jargon
+    # label — which is what Studio's "Full control" was for months, and is
+    # invisible from the engine side because the job still submits fine.
+    # build_catalog raises on this too; the check is here because the catalog
+    # is a checked-in artifact that can be hand-edited without re-running it.
+    unexplained = [f"{m['id']}.{p['key']}" for m in models
+                   for p in m["capabilities"].get("params", [])
+                   if not p.get("internal") and not p.get("help")]
+    check("every rendered param explains itself", not unexplained,
+          f"no help: {unexplained[:6]}")
+
     # --- Style Transfer -----------------------------------------------------
     # Every mode of the workspace has to be reachable by *some* model in the
     # catalog, and the modes a default install can serve have to be reachable

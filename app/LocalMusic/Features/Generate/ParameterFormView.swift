@@ -105,7 +105,15 @@ struct ParameterFormView: View {
 
     private func groupCard(_ group: ParameterGroups.Group) -> some View {
         VStack(alignment: .leading, spacing: 13) {
-            Text(group.label.uppercased()).eyebrow()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(group.label.uppercased()).eyebrow()
+                if let blurb = ParameterGroups.Known(rawValue: group.id)?.blurb {
+                    Text(blurb)
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.textQuaternary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             ForEach(group.specs) { spec in
                 row(spec)
             }
@@ -127,18 +135,39 @@ struct ParameterFormView: View {
         .benchCard(stroke: Bench.Palette.cardStrokeSoft)
     }
 
-    /// One labelled row. Inapplicable controls dim rather than disappear, so
-    /// the panel keeps the same shape as you change task — and the footnote
-    /// under the group says which task they belong to.
+    /// One labelled row, with what the control does written under it.
+    ///
+    /// Inapplicable controls dim rather than disappear, so the panel keeps the
+    /// same shape as you change task — and the footnote under the group says
+    /// which task they belong to.
+    ///
+    /// The explanation used to be a `.help` tooltip and nothing else, which is
+    /// no use to the person who needs it: you have to already suspect a
+    /// control is worth understanding before you hover over it, and Studio's
+    /// "Full control" is precisely the screen where you don't. It stays as a
+    /// tooltip too, for the compact ungrouped forms that have no room for it.
     @ViewBuilder
     private func row(_ spec: ParamSpec) -> some View {
         let applicable = ParameterGroups.isApplicable(spec, values: state.values)
-        HStack(spacing: 12) {
-            Text(spec.label)
-                .font(Bench.Typo.secondary)
-                .foregroundStyle(Bench.Palette.textSecondary)
-                .frame(width: labelWidth, alignment: .leading)
-            control(for: spec)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 12) {
+                Text(spec.label)
+                    .font(Bench.Typo.secondary)
+                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .frame(width: labelWidth, alignment: .leading)
+                control(for: spec)
+            }
+            // Bools already print their help beside the switch — the label
+            // there is the sentence — so printing it again would double it.
+            if grouped, spec.type != .bool, let help = spec.help {
+                Text(help)
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.textFaintest)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, labelWidth + 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .opacity(applicable ? 1 : 0.45)
         .allowsHitTesting(applicable)
