@@ -119,6 +119,53 @@ final class MigrationTests: XCTestCase {
         XCTAssertEqual(try repo.search(filters).map(\.id), ["a"])
     }
 
+    /// v5 adds the Editor's columns. Existing rows read back with nil edits,
+    /// and a written program round-trips on both tables.
+    func testV4DataSurvivesV5() throws {
+        let queue = try DatabaseQueue()
+        try DatabaseManager.migrator.migrate(queue, upTo: "v4")
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO song (id, title, prompt, modelId, modelName,
+                                  paramsJSON, durationS, sampleRate, fileName,
+                                  createdAt, rating, notes, favorite, origin)
+                VALUES ('s1', 'Old song', 'lofi', 'm', 'M', '{}', 10, 32000,
+                        's1.wav', '2026-08-01T00:00:00Z', 0, '', 0, 'generated')
+                """)
+        }
+        try DatabaseManager.migrator.migrate(queue)
+
+        var song = try XCTUnwrap(
+            try queue.read { try SongRecord.fetchOne($0, key: "s1") })
+        XCTAssertNil(song.editsJSON)
+        XCTAssertNil(song.editedAt)
+
+        var document = EditDocument()
+        document.ops = [EditOp(kind: .delete(EditRange(start: 1, end: 2)))]
+        song.editsJSON = String(
+            decoding: try JSONEncoder().encode(document), as: UTF8.self)
+        song.editedAt = Date(timeIntervalSince1970: 1_766_000_000)
+        try queue.write { [song] in try song.update($0) }
+        let back = try queue.read { try SongRecord.fetchOne($0, key: "s1") }
+        let decoded = try JSONDecoder().decode(
+            EditDocument.self, from: Data((back?.editsJSON ?? "").utf8))
+        XCTAssertEqual(decoded.ops, document.ops)
+        XCTAssertNotNil(back?.editedAt)
+
+        try queue.write { db in
+            var part = PartRecord(
+                id: "p1", songId: "s1", kind: "stem.drums", name: "Drums",
+                fileName: "p1.wav", format: "wav", previewFileName: nil,
+                modelId: "sep", modelName: "Sep", jobId: nil,
+                splitParamsJSON: "{}", durationS: 10, sampleRate: 44100,
+                createdAt: Date())
+            part.editsJSON = "{}"
+            try part.insert(db)
+        }
+        let part = try queue.read { try PartRecord.fetchOne($0, key: "p1") }
+        XCTAssertEqual(part?.editsJSON, "{}")
+    }
+
     func testFTSStillMatchesAfterV2() throws {
         let repo = LibraryRepository(db: try DatabaseManager.inMemory())
         try repo.insert(SongRecord(

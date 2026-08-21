@@ -195,6 +195,16 @@ def main() -> int:
         check("weights progress carries counters and a rate",
               prog is not None and prog["bytes_total"] > 0
               and prog["bytes_done"] >= 0 and prog["speed_bps"] > 0, str(prog))
+        # The stub grows a POST /v1/downloads/{id}/_step in manual mode, which
+        # lets the app's own tests drive a transfer tick by tick instead of
+        # racing its clock. It is a fixture control, not contract surface, and
+        # the registration is inside an `if MANUAL_DOWNLOADS` for that reason.
+        # This is what keeps that honest: in an ordinary run — which is what
+        # every other check here verifies against — the route must not exist.
+        step_status, _ = c.req("POST", f"/v1/downloads/{dl_id}/_step")
+        check("the manual-step control is absent outside manual mode",
+              step_status == 404, f"got {step_status}")
+
         status, _ = c.req("POST", f"/v1/downloads/{dl_id}/pause")
         time.sleep(0.6)
         status, body = c.req("GET", "/v1/downloads")
@@ -696,7 +706,7 @@ def main() -> int:
             "target": {"sample_rate": 44100},
             "tracks": [{"source": upload_id, "role": "edit",
                         "gain_db": 0.0, "offset_s": 0.0,
-                        "reverse": True,
+                        "reverse": True, "fade_in_curve": "scurve",
                         "effects": [
                             {"type": "highpass", "cutoff_hz": 80.0},
                             {"type": "eq3", "low_db": 2.5, "mid_db": 0.0,
@@ -721,6 +731,7 @@ def main() -> int:
                     .get("tracks") or [{}])[0]
         check("reverse + effects survive submission verbatim",
               ed_track.get("reverse") is True
+              and ed_track.get("fade_in_curve") == "scurve"
               and [fx.get("type") for fx in (ed_track.get("effects") or [])]
               == ["highpass", "eq3", "compressor", "gate"]
               and ed_info["params"].get("normalize") is False

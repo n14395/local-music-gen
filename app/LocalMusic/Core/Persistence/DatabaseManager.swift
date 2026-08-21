@@ -141,6 +141,22 @@ final class DatabaseManager: Sendable {
                 t.column("notes")
             }
         }
+        // The Editor's non-destructive edit program, one JSON document per
+        // track (or stem). The document alone is not "this track is edited" —
+        // it exists from the first pending op — so `editedAt` records the
+        // moment a program was last *applied*, which is what the Library's
+        // badge, filter and sort read. The backup file's presence on disk is
+        // what makes Revert offerable; no column mirrors it.
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "song") { t in
+                t.add(column: "editsJSON", .text)
+                t.add(column: "editedAt", .datetime)
+            }
+            try db.alter(table: "part") { t in
+                t.add(column: "editsJSON", .text)
+                t.add(column: "editedAt", .datetime)
+            }
+        }
         return migrator
     }
 }

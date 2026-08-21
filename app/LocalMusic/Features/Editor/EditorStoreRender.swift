@@ -1,0 +1,455 @@
+import AVFoundation
+import Foundation
+
+// The Editor's engine round trips: Apply (replace the file in place), Export
+// (save a copy), and the selection snippets the send-onward panel routes.
+// All three are the same one-track mix job with a different destination for
+// the artifact; `JobsStore.onEditorArtifact` calls back into here.
+extension EditorStore {
+
+    // MARK: apply
+
+    /// The one destructive moment (Tier 1.9): stash the backup, upload the
+    /// pristine source, render the program, replace the file. Everything
+    /// before the replace is reversible by doing nothing.
+    func applyEdits() async {
+        guard let material, !document.isEmpty || appliedDocument != nil,
+              applyStage.isBusy == false else { return }
+        guard let model = mixdownModel else {
+            applyStage = .failed("The Mixdown & Align (DSP) model is not "
+                                 + "installed — it renders edits.")
+            return
+        }
+        stopPreview()
+        applyStage = .stashingBackup
+        if !hasBackup {
+            do {
+                try FileManager.default.createDirectory(
+                    at: StoragePaths.libraryBackups,
+                    withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: material.fileURL,
+                                                 to: material.backupURL)
+            } catch {
+                applyStage = .failed("Could not stash the backup: "
+                                     + error.localizedDescription)
+                return
+            }
+            var updated = document
+            updated.originalDurationS = material.fileDurationS
+            updated.originalFileName = material.fileName
+            document = updated
+            persistPending()
+        }
+        applyStage = .uploading
+        guard let sourceId = await uploadSource() else {
+            applyStage = .failed(jobs.lastError ?? "Upload failed")
+            return
+        }
+        let plan = EditMixPlan.plan(
+            document: document, source: sourceId,
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        guard let created = await jobs.submitEditorRender(
+            modelId: model.id, spec: plan.spec, normalize: plan.normalize,
+            limiter: plan.limiter, targetLufs: plan.targetLufs,
+            purpose: .apply(ownerId: material.id,
+                            ownerType: material.ownerType,
+                            title: material.title)),
+            let jobId = created.jobs.first?.jobId else {
+            applyStage = .failed(jobs.lastError ?? "Submit failed")
+            return
+        }
+        applyStage = .queued(jobId: jobId)
+        watchJob(jobId, kind: .apply)
+    }
+
+    func cancelApply() async {
+        if case .queued(let jobId) = applyStage {
+            await jobs.cancel(jobId)
+        } else if case .rendering(let jobId, _, _, _) = applyStage {
+            await jobs.cancel(jobId)
+        }
+        applyStage = .idle
+    }
+
+    /// Restore the pristine file and clear the program (Tier 1.10). The
+    /// backup is consumed: after this the file *is* the original.
+    func revertToOriginal() {
+        guard let material, hasBackup else {
+            // No apply ever happened — reverting is just clearing the list.
+            perform("Revert to Original") { doc in
+                doc.ops.removeAll()
+                doc.effects.removeAll()
+            }
+            selection = nil
+            return
+        }
+        stopPreview()
+        let fm = FileManager.default
+        let restoredName = document.originalFileName ?? material.fileName
+        let restoredURL = material.isPart
+            ? StoragePaths.libraryParts.appendingPathComponent(restoredName)
+            : StoragePaths.libraryAudio.appendingPathComponent(restoredName)
+        do {
+            try? fm.removeItem(at: material.fileURL)
+            try? fm.removeItem(at: restoredURL)
+            try fm.copyItem(at: material.backupURL, to: restoredURL)
+        } catch {
+            applyStage = .failed("Could not restore the original: "
+                                 + error.localizedDescription)
+            return
+        }
+        let shape = Self.audioShape(of: restoredURL)
+        if material.isPart {
+            if var part = ((try? partsRepo.part(id: material.id)) ?? nil) {
+                part.fileName = restoredName
+                part.durationS = shape.durationS
+                part.sampleRate = shape.sampleRate
+                part.editsJSON = nil
+                part.editedAt = nil
+                try? partsRepo.update(part)
+            }
+        } else if var song = library.song(id: material.id) {
+            song.fileName = restoredName
+            song.durationS = shape.durationS ?? song.durationS
+            song.sampleRate = shape.sampleRate ?? song.sampleRate
+            song.editsJSON = nil
+            song.editedAt = nil
+            library.update(song)
+        }
+        try? fm.removeItem(at: material.backupURL)
+        WaveformExtractor.invalidateCache(material.isPart
+            ? StoragePaths.libraryWaveforms
+                .appendingPathComponent(material.id + ".peaks")
+            : material.waveformCacheURL)
+        WaveformExtractor.invalidateCache(
+            StoragePaths.libraryWaveforms
+                .appendingPathComponent(material.id + ".original.peaks"))
+        // Reload from the records so every readout reflects the restore.
+        let id = material.id
+        material.isPart ? open(partId: id) : open(songId: id)
+    }
+
+    // MARK: export (Tier 2.8)
+
+    struct ExportChoice: Equatable {
+        var format = "wav"          // wav | aiff | flac | mp3
+        var bitDepth = "pcm24"      // pcm16 | pcm24 | float32
+        var sampleRateHz: Int?      // nil = same as source
+        var applyEdits = true
+    }
+
+    /// Render the selection (or, with no selection, the whole program) into
+    /// `destination`. Runs through the engine — there is no Swift-side
+    /// renderer, deliberately.
+    func exportSelection(choice: ExportChoice, destination: URL) async {
+        guard let material, exportStage.isBusy == false else { return }
+        guard let model = mixdownModel else {
+            exportStage = .failed("The Mixdown & Align (DSP) model is not "
+                                  + "installed — it renders exports.")
+            return
+        }
+        var exportDoc: EditDocument
+        if choice.applyEdits {
+            exportDoc = document
+            if let selection {
+                exportDoc.ops.append(EditOp(kind: .trim(selection)))
+            }
+        } else {
+            // The bare material under the selection: the same slices, with
+            // every treatment stripped — what you selected, not what you
+            // turned it into.
+            exportDoc = EditDocument()
+            let range = selection
+                ?? EditRange(start: 0, end: timelineDurationS)
+            var slices = EditProgram.extract(segments, range: range)
+            for index in slices.indices { slices[index].gainDb = 0 }
+            let length = slices.reduce(0) { $0 + $1.length }
+            exportDoc.ops = [
+                EditOp(kind: .paste(at: 0, slices: slices)),
+                EditOp(kind: .trim(EditRange(start: 0, end: length))),
+            ]
+            exportDoc.joinCrossfadeMs = document.joinCrossfadeMs
+        }
+        if let hz = choice.sampleRateHz {
+            exportDoc.ops.append(EditOp(kind: .resample(hz: hz)))
+        }
+        exportStage = .uploading
+        guard let sourceId = await uploadSource() else {
+            exportStage = .failed(jobs.lastError ?? "Upload failed")
+            return
+        }
+        let plan = EditMixPlan.plan(
+            document: exportDoc, source: sourceId,
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        guard let created = await jobs.submitEditorRender(
+            modelId: model.id, spec: plan.spec,
+            normalize: choice.applyEdits && plan.normalize,
+            limiter: choice.applyEdits && plan.limiter,
+            targetLufs: plan.targetLufs,
+            outputFormat: choice.format, bitDepth: choice.bitDepth,
+            purpose: .export(destination: destination,
+                             title: material.title)),
+            let jobId = created.jobs.first?.jobId else {
+            exportStage = .failed(jobs.lastError ?? "Submit failed")
+            return
+        }
+        exportStage = .queued(jobId: jobId)
+        watchJob(jobId, kind: .export)
+    }
+
+    /// The name the save panel offers: `Drums — test01 (1_12–1_21).wav`.
+    /// Colons are path separators to AppKit, so the clock's dots stay and
+    /// its colon becomes an underscore.
+    static func exportName(title: String, songTitle: String?,
+                           selection: EditRange?, format: String) -> String {
+        var base = title.replacingOccurrences(of: "/", with: "-")
+        if let songTitle {
+            base += " — " + songTitle.replacingOccurrences(of: "/", with: "-")
+        }
+        if let selection {
+            let clock = { (t: Double) in
+                EditorClock.short(t).replacingOccurrences(of: ":", with: "_")
+            }
+            base += " (\(clock(selection.start))–\(clock(selection.end)))"
+        }
+        return base + "." + format
+    }
+
+    // MARK: send-onward snippets (Tier 3.1)
+
+    /// Render the selection as it sounds under the program, land it in the
+    /// library as its own row, and let the shell route it onward.
+    func sendSelection(_ intent: SnippetIntent) async {
+        guard let material, let selection, exportStage.isBusy == false
+        else { return }
+        guard let model = mixdownModel else {
+            exportStage = .failed("The Mixdown & Align (DSP) model is not "
+                                  + "installed — it renders selections.")
+            return
+        }
+        var snippetDoc = document
+        snippetDoc.ops.append(EditOp(kind: .trim(selection)))
+        exportStage = .uploading
+        guard let sourceId = await uploadSource() else {
+            exportStage = .failed(jobs.lastError ?? "Upload failed")
+            return
+        }
+        let plan = EditMixPlan.plan(
+            document: snippetDoc, source: sourceId,
+            sourceDuration: sourceDurationS,
+            sampleRate: material.sampleRate, sourceBpm: bpm)
+        let title = "\(material.title) "
+            + "(\(EditorClock.short(selection.start))–"
+            + "\(EditorClock.short(selection.end)))"
+        guard let created = await jobs.submitEditorRender(
+            modelId: model.id, spec: plan.spec, normalize: plan.normalize,
+            limiter: plan.limiter, targetLufs: plan.targetLufs,
+            purpose: .snippet(title: title)),
+            let jobId = created.jobs.first?.jobId else {
+            exportStage = .failed(jobs.lastError ?? "Submit failed")
+            return
+        }
+        noteSnippetIntent(intent, jobId: jobId)
+        exportStage = .queued(jobId: jobId)
+        watchJob(jobId, kind: .export)
+    }
+
+    // MARK: artifact handling (wired from AppEnvironment)
+
+    func handleArtifact(job: JobInfo, result: JobResult,
+                        purpose: EditorRenderPurpose) {
+        guard let artifact = (result.artifacts ?? [])
+            .first(where: { $0.kind == "audio" }) else { return }
+        switch purpose {
+        case .apply(let ownerId, let ownerType, _):
+            finishApply(artifact: artifact, ownerId: ownerId,
+                        ownerType: ownerType)
+        case .export(let destination, _):
+            let fm = FileManager.default
+            try? fm.removeItem(at: destination)
+            do {
+                try fm.moveItem(at: URL(fileURLWithPath: artifact.path),
+                                to: destination)
+                exportStage = .idle
+            } catch {
+                exportStage = .failed("Could not save the export: "
+                                      + error.localizedDescription)
+            }
+        case .snippet(let title):
+            finishSnippet(job: job, artifact: artifact, title: title)
+        }
+    }
+
+    private func finishApply(artifact: JobArtifact, ownerId: String,
+                             ownerType: String) {
+        applyStage = .replacing
+        let fm = FileManager.default
+        let newFileName = "\(ownerId).\(artifact.format)"
+        let directory = ownerType == "part" ? StoragePaths.libraryParts
+                                            : StoragePaths.libraryAudio
+        let newURL = directory.appendingPathComponent(newFileName)
+        do {
+            // The old file may have a different extension (an imported mp3
+            // becomes wav on first apply) — both names come off.
+            if let material, material.id == ownerId {
+                try? fm.removeItem(at: material.fileURL)
+            }
+            try? fm.removeItem(at: newURL)
+            try fm.moveItem(at: URL(fileURLWithPath: artifact.path),
+                            to: newURL)
+        } catch {
+            applyStage = .failed("Could not replace the file: "
+                                 + error.localizedDescription)
+            return
+        }
+        var appliedDoc = document
+        appliedDoc.appliedAt = Date()
+        let json = (try? JSONEncoder().encode(appliedDoc))
+            .map { String(decoding: $0, as: UTF8.self) }
+        if ownerType == "part" {
+            if var part = ((try? partsRepo.part(id: ownerId)) ?? nil) {
+                part.fileName = newFileName
+                part.durationS = artifact.durationS ?? part.durationS
+                part.sampleRate = artifact.sampleRate ?? part.sampleRate
+                part.editsJSON = json
+                part.editedAt = Date()
+                try? partsRepo.update(part)
+            }
+        } else if var song = library.song(id: ownerId) {
+            song.fileName = newFileName
+            song.durationS = artifact.durationS ?? song.durationS
+            song.sampleRate = artifact.sampleRate ?? song.sampleRate
+            song.editsJSON = json
+            song.editedAt = Date()
+            library.update(song)
+        }
+        document = appliedDoc
+        appliedDocument = appliedDoc
+        let peaksURL = StoragePaths.libraryWaveforms
+            .appendingPathComponent(ownerId + ".peaks")
+        WaveformExtractor.invalidateCache(peaksURL)
+        // Refresh the loaded material's facts without resetting the session.
+        if var current = material, current.id == ownerId {
+            current.fileURL = newURL
+            current.fileName = newFileName
+            current.fileDurationS = artifact.durationS ?? current.fileDurationS
+            current.sampleRate = artifact.sampleRate ?? current.sampleRate
+            material = current
+        }
+        applyStage = .rebuildingPeaks
+        if notifyWhenApplied {
+            notifyApplied(material?.title ?? "Edited track")
+            notifyWhenApplied = false
+        }
+        Task {
+            _ = try? await WaveformExtractor.shared.peaks(for: newURL,
+                                                          cacheURL: peaksURL)
+            if case .rebuildingPeaks = self.applyStage {
+                self.applyStage = .idle
+            }
+        }
+    }
+
+    private func finishSnippet(job: JobInfo, artifact: JobArtifact,
+                               title: String) {
+        let songId = UUID().uuidString.lowercased()
+        let fileName = "\(songId).\(artifact.format)"
+        let dest = StoragePaths.libraryAudio.appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(
+                at: StoragePaths.libraryAudio, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(
+                at: URL(fileURLWithPath: artifact.path), to: dest)
+        } catch {
+            exportStage = .failed("Could not keep the selection: "
+                                  + error.localizedDescription)
+            return
+        }
+        let song = SongRecord(
+            id: songId, title: title, prompt: "", lyrics: nil,
+            modelId: job.modelId, modelName: "Editor selection",
+            groupId: job.groupId, paramsJSON: "{}",
+            durationS: artifact.durationS ?? 0,
+            sampleRate: artifact.sampleRate ?? 44100,
+            fileName: fileName, seedUsed: nil, createdAt: Date(), rating: 0,
+            notes: "Cut in the Editor from “\(material?.title ?? "a track")”.",
+            favorite: false, origin: SongOrigin.recombined.rawValue,
+            recipeId: "editor-selection")
+        library.insert(song)
+        exportStage = .idle
+        if let intent = takeSnippetIntent(jobId: job.jobId) {
+            onSnippetReady(song, intent)
+        }
+    }
+
+    // MARK: shared plumbing
+
+    private func uploadSource() async -> String? {
+        if let uploadedSourceId { return uploadedSourceId }
+        guard let sourceURL else { return nil }
+        let id = await jobs.uploadAudio(fileURL: sourceURL)
+        uploadedSourceId = id
+        return id
+    }
+
+    enum WatchKind { case apply, export }
+
+    /// Follows the queue for failure and progress. Success arrives through
+    /// `handleArtifact`; this notices everything else (contract: the job can
+    /// fail or be cancelled from anywhere, including another client).
+    func watchJob(_ jobId: String, kind: WatchKind) {
+        Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard let self else { return }
+                guard let active = self.jobs.active[jobId] else {
+                    // Dismissed after success — handleArtifact took over.
+                    return
+                }
+                switch active.status {
+                case .failed:
+                    let message = active.error?.message ?? "The render failed"
+                    if kind == .apply { self.applyStage = .failed(message) }
+                    else { self.exportStage = .failed(message) }
+                    return
+                case .canceled:
+                    if kind == .apply { self.applyStage = .idle }
+                    else { self.exportStage = .idle }
+                    return
+                case .succeeded:
+                    return
+                default:
+                    if kind == .apply {
+                        if active.status == .queued {
+                            self.applyStage = .queued(jobId: jobId)
+                        } else {
+                            self.applyStage = .rendering(
+                                jobId: jobId,
+                                fraction: active.progress?.fraction,
+                                etaS: active.progress?.etaS,
+                                message: active.progress?.message)
+                        }
+                    } else if self.exportStage.isBusy {
+                        if active.status != .queued {
+                            self.exportStage = .rendering(
+                                jobId: jobId,
+                                fraction: active.progress?.fraction,
+                                etaS: active.progress?.etaS,
+                                message: active.progress?.message)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private static func audioShape(of url: URL)
+        -> (durationS: Double?, sampleRate: Int?) {
+        guard let file = try? AVAudioFile(forReading: url),
+              file.fileFormat.sampleRate > 0 else { return (nil, nil) }
+        return (Double(file.length) / file.fileFormat.sampleRate,
+                Int(file.fileFormat.sampleRate))
+    }
+}

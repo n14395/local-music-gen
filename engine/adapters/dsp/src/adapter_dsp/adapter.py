@@ -153,7 +153,9 @@ class DSPAdapter(ModelAdapter):
         # base the caller placed the track in.
         audio = _apply_fades(audio, sr,
                              _maybe_float(track.get("fade_in_s")) or 0.0,
-                             _maybe_float(track.get("fade_out_s")) or 0.0)
+                             _maybe_float(track.get("fade_out_s")) or 0.0,
+                             str(track.get("fade_in_curve") or "linear"),
+                             str(track.get("fade_out_curve") or "linear"))
 
         gain = 10.0 ** ((_maybe_float(track.get("gain_db")) or 0.0) / 20.0)
         return (audio * gain).astype(np.float32)
@@ -212,12 +214,15 @@ def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
         kind = (fx or {}).get("type")
         if kind == "highpass":
             # pedalboard's filters are 6 dB/oct; two in series make the
-            # 12 dB/oct slope the contract promises.
+            # 12 dB/oct slope the contract promises. Distinct instances —
+            # pedalboard refuses the same plugin object twice in one chain.
             cutoff = need(fx, "cutoff_hz")
-            plugins += [HighpassFilter(cutoff_frequency_hz=cutoff)] * 2
+            plugins += [HighpassFilter(cutoff_frequency_hz=cutoff)
+                        for _ in range(2)]
         elif kind == "lowpass":
             cutoff = need(fx, "cutoff_hz")
-            plugins += [LowpassFilter(cutoff_frequency_hz=cutoff)] * 2
+            plugins += [LowpassFilter(cutoff_frequency_hz=cutoff)
+                        for _ in range(2)]
         elif kind == "eq3":
             plugins += [
                 LowShelfFilter(cutoff_frequency_hz=120.0,
@@ -265,16 +270,35 @@ def _edge_fade(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio
 
 
-def _apply_fades(audio: np.ndarray, sr: int, fade_in_s: float,
-                 fade_out_s: float) -> np.ndarray:
-    """Linear amplitude ramps at the head and tail of a track.
+def _fade_shape(ramp: np.ndarray, curve: str) -> np.ndarray:
+    if curve == "scurve":
+        return ramp * ramp * (3.0 - 2.0 * ramp)
+    if curve == "log":
+        return np.sqrt(ramp)
+    if curve == "linear":
+        return ramp
+    raise ValueError(f"unknown fade curve '{curve}'")
 
-    Linear rather than equal-power: the crossfades this produces are usually
-    between two placements of the SAME source (a repeated section, a lapped
-    duplicate), where linear ramps sum back to exactly the original level and
-    equal-power would bulge by 3 dB.
+
+def _apply_fades(audio: np.ndarray, sr: int, fade_in_s: float,
+                 fade_out_s: float, in_curve: str = "linear",
+                 out_curve: str = "linear") -> np.ndarray:
+    """Amplitude ramps at the head and tail of a track.
+
+    Linear by default rather than equal-power: the crossfades this produces
+    are usually between two placements of the SAME source (a repeated section,
+    a lapped duplicate), where linear ramps sum back to exactly the original
+    level and equal-power would bulge by 3 dB. `scurve` (smoothstep) and `log`
+    (square root) exist for the editor's audible head/tail fades, where
+    nothing is being summed against the ramp — per ramp, because one track
+    routinely carries a curved head fade and a linear crossfade tail
+    (contract 5.4).
     """
     if fade_in_s <= 0 and fade_out_s <= 0:
+        # Still refuse a bad curve name on a zero-length fade: a typo should
+        # not go unreported just because the fade was dialled to nothing.
+        for curve in (in_curve, out_curve):
+            _fade_shape(np.zeros(1, dtype=np.float32), curve)
         return audio
     n = len(audio)
     if n == 0:
@@ -285,12 +309,15 @@ def _apply_fades(audio: np.ndarray, sr: int, fade_in_s: float,
         scale = n / float(fade_in + fade_out)
         fade_in = int(fade_in * scale)
         fade_out = n - fade_in
+
     audio = audio.copy()
     if fade_in > 1:
-        ramp = np.linspace(0.0, 1.0, fade_in, dtype=np.float32)[:, None]
+        ramp = _fade_shape(np.linspace(0.0, 1.0, fade_in, dtype=np.float32),
+                           in_curve)[:, None]
         audio[:fade_in] *= ramp
     if fade_out > 1:
-        ramp = np.linspace(1.0, 0.0, fade_out, dtype=np.float32)[:, None]
+        ramp = _fade_shape(np.linspace(1.0, 0.0, fade_out, dtype=np.float32),
+                           out_curve)[:, None]
         audio[-fade_out:] *= ramp
     return audio
 

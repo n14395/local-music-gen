@@ -52,6 +52,12 @@ struct SongRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     /// Performer, read from the file's own tags at import. Defaulted, so rows
     /// written before the v4 migration decode cleanly.
     var artist: String?
+    /// The Editor's edit program (an `EditDocument`), nil until one exists.
+    /// Optional so rows written before the v5 migration decode cleanly.
+    var editsJSON: String?
+    /// When that program was last applied to the file. nil while the program
+    /// is only pending — the Library badge reads this, not `editsJSON`.
+    var editedAt: Date?
 
     /// The typed `origin`. An unrecognised value reads as `.generated` rather
     /// than crashing or vanishing from every scope — a row is always somewhere.
@@ -70,6 +76,13 @@ struct SongRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     var fileURL: URL { StoragePaths.libraryAudio.appendingPathComponent(fileName) }
     var waveformURL: URL {
         StoragePaths.libraryWaveforms.appendingPathComponent(id + ".peaks")
+    }
+    /// Where the pristine pre-edit original is stashed. Keyed by id (titles
+    /// rename; ids don't) and keeping the source's real extension.
+    var backupURL: URL {
+        StoragePaths.libraryBackups.appendingPathComponent(
+            id + "." + ((fileName as NSString).pathExtension.isEmpty
+                        ? "wav" : (fileName as NSString).pathExtension))
     }
 
     /// Default name for the nth generated track: `track007`. Padded to three
@@ -162,8 +175,17 @@ struct PartRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     var createdAt: Date
     /// Defaulted, so rows written before the v3 migration decode cleanly.
     var favorite: Bool = false
+    /// The Editor's edit program — stems are editable too (v5).
+    var editsJSON: String?
+    var editedAt: Date?
 
     var fileURL: URL { StoragePaths.libraryParts.appendingPathComponent(fileName) }
+    /// Same convention as a song's: the pristine pre-edit stem, keyed by id.
+    var backupURL: URL {
+        StoragePaths.libraryBackups.appendingPathComponent(
+            id + "." + ((fileName as NSString).pathExtension.isEmpty
+                        ? "wav" : (fileName as NSString).pathExtension))
+    }
     var previewURL: URL? {
         previewFileName.map { StoragePaths.libraryParts.appendingPathComponent($0) }
     }

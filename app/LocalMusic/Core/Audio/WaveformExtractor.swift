@@ -39,6 +39,23 @@ actor WaveformExtractor {
         }.value
     }
 
+    /// Peaks for one *window* of a file, read fresh from only the frames in
+    /// view — the whole-file cache is 2000 bins (~90 ms per bin on a three
+    /// minute track), which cannot support a zoomed editor. No cache: the
+    /// window moves with every scroll and zoom, and reading a few seconds of
+    /// PCM is cheaper than managing invalidation for it.
+    ///
+    /// One `Peaks` per channel: `[mono]` for a mono file, `[left, right]`
+    /// for stereo (further channels are ignored, matching the mix path).
+    /// `mono: true` folds them into one lane by max magnitude.
+    func peaks(for audioURL: URL, startS: Double, endS: Double,
+               binCount: Int, mono: Bool) async throws -> [Peaks] {
+        try await Task<[Peaks], Error>.detached(priority: .userInitiated) {
+            try Self.extractRange(from: audioURL, startS: startS, endS: endS,
+                                  binCount: binCount, mono: mono)
+        }.value
+    }
+
     // MARK: extraction
 
     private static func extract(from url: URL) throws -> Peaks {
@@ -71,6 +88,80 @@ actor WaveformExtractor {
             frameIndex += n
         }
         return Peaks(mins: mins, maxs: maxs)
+    }
+
+    private static func extractRange(from url: URL, startS: Double,
+                                     endS: Double, binCount: Int,
+                                     mono: Bool) throws -> [Peaks] {
+        let file = try AVAudioFile(forReading: url)
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0, file.length > 0, endS > startS,
+              binCount > 0 else { return [] }
+        let channelCount = mono ? 1 : min(2, Int(file.processingFormat.channelCount))
+        let firstFrame = max(0, min(file.length,
+                                    AVAudioFramePosition(startS * sampleRate)))
+        let lastFrame = max(firstFrame,
+                            min(file.length,
+                                AVAudioFramePosition(endS * sampleRate)))
+        let totalFrames = Int(lastFrame - firstFrame)
+        guard totalFrames > 0 else {
+            return Array(repeating: Peaks(mins: [], maxs: []),
+                         count: channelCount)
+        }
+        let bins = min(binCount, totalFrames)
+        let framesPerBin = max(1, totalFrames / bins)
+        var mins = Array(repeating: [Float](repeating: 0, count: bins),
+                         count: channelCount)
+        var maxs = Array(repeating: [Float](repeating: 0, count: bins),
+                         count: channelCount)
+
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                   sampleRate: sampleRate,
+                                   channels: file.processingFormat.channelCount,
+                                   interleaved: false)!
+        let chunk = AVAudioFrameCount(65536)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk)!
+        file.framePosition = firstFrame
+        var frameIndex = 0
+        while frameIndex < totalFrames {
+            let want = AVAudioFrameCount(min(Int(chunk),
+                                             totalFrames - frameIndex))
+            try file.read(into: buffer, frameCount: want)
+            let n = Int(buffer.frameLength)
+            if n == 0 { break }
+            guard let data = buffer.floatChannelData else { break }
+            let sourceChannels = Int(buffer.format.channelCount)
+            for i in 0..<min(n, totalFrames - frameIndex) {
+                let bin = min(bins - 1, (frameIndex + i) / framesPerBin)
+                for lane in 0..<channelCount {
+                    let v: Float
+                    if mono {
+                        // Fold every channel by magnitude, keeping sign of
+                        // the loudest, so the lane still draws both halves.
+                        var loudest: Float = 0
+                        for channel in 0..<sourceChannels {
+                            let sample = data[channel][i]
+                            if abs(sample) > abs(loudest) { loudest = sample }
+                        }
+                        v = loudest
+                    } else {
+                        v = data[min(lane, sourceChannels - 1)][i]
+                    }
+                    if v < mins[lane][bin] { mins[lane][bin] = v }
+                    if v > maxs[lane][bin] { maxs[lane][bin] = v }
+                }
+            }
+            frameIndex += n
+        }
+        return (0..<channelCount).map {
+            Peaks(mins: mins[$0], maxs: maxs[$0])
+        }
+    }
+
+    /// Drop a file's cached whole-file peaks — an in-place edit that keeps
+    /// the cache would draw the old audio forever.
+    nonisolated static func invalidateCache(_ cacheURL: URL) {
+        try? FileManager.default.removeItem(at: cacheURL)
     }
 
     // MARK: cache

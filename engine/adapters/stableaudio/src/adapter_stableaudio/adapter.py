@@ -18,6 +18,7 @@ actually stands at that step rather than a guess at it.
 from __future__ import annotations
 
 import gc
+import inspect
 import json
 import os
 import sys
@@ -105,6 +106,22 @@ class StableAudioAdapter(ModelAdapter):
         kwargs = dict(model=self.model, steps=steps, cfg_scale=cfg_scale,
                       conditioning=conditioning, sample_size=sample_size,
                       seed=seed, device=self.device)
+
+        # Adaptive Projected Guidance does its projection in float64 (`dit.py`
+        # `apg_project`: `v0, v1 = v0.double(), v1.double()`), and MPS has no
+        # float64 at all — so with the tool's default `apg_scale=1.0` every
+        # Open 1.0 render died at the first guided step with "Cannot convert a
+        # MPS Tensor to float64 dtype". It is the whole family's problem and
+        # only 1.0's symptom: guidance is skipped entirely at `cfg_scale == 1.0`
+        # (`dit.py`: `if cfg_scale != 1.0 and …`), which is what Open Small and
+        # SA3 Small default to, and 1.0 defaults to 7.
+        #
+        # 0.0 asks for vanilla CFG, which is the recipe Stable Audio Open 1.0
+        # was released with — APG arrived in the tool years later — so this is
+        # the reference sampler rather than a workaround that costs quality.
+        # Guarded by the signature because older builds have no such knob.
+        if "apg_scale" in inspect.signature(generate_diffusion_cond).parameters:
+            kwargs["apg_scale"] = 0.0
 
         # audio-to-audio: diffuse from a noised version of a reference clip
         # instead of pure noise ("Reimagine a Loop"). init_noise_level is the

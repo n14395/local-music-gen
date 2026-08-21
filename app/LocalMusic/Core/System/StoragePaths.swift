@@ -13,6 +13,7 @@ enum StoragePaths {
     static var libraryAudio: URL { root.appendingPathComponent("Library/Audio", isDirectory: true) }
     static var libraryParts: URL { root.appendingPathComponent("Library/Parts", isDirectory: true) }
     static var libraryWaveforms: URL { root.appendingPathComponent("Library/Waveforms", isDirectory: true) }
+    static var libraryBackups: URL { root.appendingPathComponent("Library/Backups", isDirectory: true) }
     static var appLogs: URL { root.appendingPathComponent("Logs", isDirectory: true) }
 
     // Engine-owned (we create the roots; the engine populates them)
@@ -24,8 +25,8 @@ enum StoragePaths {
 
     static func ensureDirectories() throws {
         let dirs = [database.deletingLastPathComponent(), libraryAudio,
-                    libraryParts, libraryWaveforms, appLogs, engineOutputs,
-                    engineLogs]
+                    libraryParts, libraryWaveforms, libraryBackups, appLogs,
+                    engineOutputs, engineLogs]
         for dir in dirs {
             try FileManager.default.createDirectory(at: dir,
                                                     withIntermediateDirectories: true)

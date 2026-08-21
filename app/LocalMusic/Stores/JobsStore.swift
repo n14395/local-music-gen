@@ -21,6 +21,30 @@ enum JobContext {
     /// and SoundFont renders of notes parts ("layer.<name>").
     case generativePart(songId: String, sourceTitle: String, kind: String,
                         name: String)
+    /// A render the Editor asked for. The artifact never lands in the library
+    /// by itself — what happens to it (replace a file in place, save a copy,
+    /// become a snippet) is the Editor's decision, made in `onEditorArtifact`.
+    case editor(purpose: EditorRenderPurpose)
+}
+
+/// Why the Editor submitted a mix, carried through the queue so completion
+/// knows where the audio goes and the queue rail knows what to call it.
+enum EditorRenderPurpose {
+    /// Replace `ownerId`'s file with the render (ownerType "song" | "part").
+    case apply(ownerId: String, ownerType: String, title: String)
+    /// Save the render at a destination the user already chose.
+    case export(destination: URL, title: String)
+    /// Import the render as a new library song named `title`; the Editor
+    /// routes it onward (continue / split / find matches) itself.
+    case snippet(title: String)
+
+    var title: String {
+        switch self {
+        case .apply(_, _, let title): title
+        case .export(_, let title): title
+        case .snippet(let title): title
+        }
+    }
 }
 
 /// One filled slot / workbench row of a recombination, both the wire payload
@@ -68,8 +92,8 @@ struct RecombineOptions: Sendable {
 // MARK: mix_spec wire shape (contract §5.4) — encoded with
 // BackendClient.encoder so property names become snake_case.
 
-struct MixSpec: Codable, Sendable {
-    struct Target: Codable, Sendable {
+struct MixSpec: Codable, Sendable, Equatable {
+    struct Target: Codable, Sendable, Equatable {
         var bpm: Double?
         var key: String?
         var sampleRate: Int
@@ -79,18 +103,18 @@ struct MixSpec: Codable, Sendable {
         var durationS: Double?
     }
 
-    struct Stretch: Codable, Sendable {
+    struct Stretch: Codable, Sendable, Equatable {
         var mode: String                 // beat | uniform | none
         var transientMode: String        // crisp | smooth
         var preserveFormants: Bool
     }
 
-    struct Section: Codable, Sendable {
+    struct Section: Codable, Sendable, Equatable {
         var startS: Double
         var endS: Double
     }
 
-    struct Track: Codable, Sendable {
+    struct Track: Codable, Sendable, Equatable {
         var source: String               // upload id; engine resolves to a path
         var role: String
         var gainDb: Double
@@ -99,10 +123,33 @@ struct MixSpec: Codable, Sendable {
         var section: Section?
         var fadeInS: Double?
         var fadeOutS: Double?
+        /// Per ramp, not per track: an Editor track routinely carries a
+        /// curved head fade and a linear crossfade tail (contract §5.4).
+        var fadeInCurve: String?
+        var fadeOutCurve: String?
         var sourceBpm: Double?
         var sourceDownbeats: [Double]?
         var stretch: Stretch
         var pitchShiftSt: Double
+        /// Sample-for-sample reversal of the section, before stretching.
+        var reverse: Bool?
+        /// The Editor's ordered processor chain (contract §5.4).
+        var effects: [Effect]?
+    }
+
+    /// One processor of a track's chain. All fields optional on the wire;
+    /// which ones an effect requires is the contract's table, and the worker
+    /// fails the job on a missing one rather than guessing.
+    struct Effect: Codable, Sendable, Equatable {
+        var type: String
+        var cutoffHz: Double?
+        var lowDb: Double?
+        var midDb: Double?
+        var highDb: Double?
+        var thresholdDb: Double?
+        var ratio: Double?
+        var attackMs: Double?
+        var releaseMs: Double?
     }
 
     var target: Target
@@ -142,6 +189,11 @@ final class JobsStore {
     var modelName: (String) -> String = { $0 }
     var onSongsIngested: ([SongRecord]) -> Void = { _ in }
     var onPartsIngested: ([PartRecord]) -> Void = { _ in }
+    /// A finished Editor render, with why it was made. The audio artifact's
+    /// file still sits in the engine's Outputs directory; the handler moves
+    /// it or the 24 h GC takes it.
+    var onEditorArtifact: (JobInfo, JobResult, EditorRenderPurpose) -> Void = {
+        _, _, _ in }
 
     private let repo: LibraryRepository
     /// Present when the parts library exists (nil in some legacy tests).
@@ -427,6 +479,44 @@ final class JobsStore {
         }
     }
 
+    /// A one-track mix the Editor planned (apply / export / snippet). The
+    /// spec arrives with upload ids already in place — the Editor uploads its
+    /// one source itself, because the same upload serves repeated renders.
+    @discardableResult
+    func submitEditorRender(modelId: String, spec: MixSpec, normalize: Bool,
+                            limiter: Bool, targetLufs: Double,
+                            outputFormat: String? = nil,
+                            bitDepth: String? = nil,
+                            purpose: EditorRenderPurpose) async -> JobsCreated? {
+        guard let client else { return nil }
+        guard let specData = try? BackendClient.encoder.encode(spec) else {
+            lastError = "Could not encode the edit"
+            return nil
+        }
+        var params: [String: JSONValue] = [
+            "mix_spec": .string(String(decoding: specData, as: UTF8.self)),
+            "normalize": .bool(normalize),
+            "limiter": .bool(limiter),
+            "target_lufs": .double(targetLufs),
+        ]
+        if let outputFormat { params["output_format"] = .string(outputFormat) }
+        if let bitDepth { params["bit_depth"] = .string(bitDepth) }
+        do {
+            let created = try await client.submit(JobSubmission(
+                modelIds: [modelId], task: "mix", prompt: "", lyrics: nil,
+                durationS: 0, count: 1, params: params, force: false))
+            lastError = nil
+            for ref in created.jobs {
+                pendingContext[ref.jobId] = .editor(purpose: purpose)
+                await track(jobId: ref.jobId)
+            }
+            return created
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     /// Token Splice Playground: EnCodec codebook recombination of two songs
     /// (experimental). Rides task "mix" with a splice_spec instead of a
     /// mix_spec; the result is an ordinary recombined song.
@@ -556,6 +646,12 @@ final class JobsStore {
             return title
         case .generativePart(_, let sourceTitle, _, let name):
             return "\(name): \(sourceTitle)"
+        case .editor(let purpose):
+            switch purpose {
+            case .apply: return "Apply edits: \(purpose.title)"
+            case .export: return "Export: \(purpose.title)"
+            case .snippet: return "Selection: \(purpose.title)"
+            }
         case .generate, .none:
             // Deliberately the prompt, not the name: what identifies a render
             // in the queue is what you asked for, and the name is on the track
@@ -874,6 +970,18 @@ final class JobsStore {
         case .recombine(let recipeId, let title, let applied):
             ingestRecombine(job: job, result: result, recipeId: recipeId,
                             title: title, applied: applied, repo: partsRepo)
+            return
+        case .editor(let purpose):
+            guard artifacts.contains(where: { $0.kind == "audio" }) else {
+                active[jobId]?.status = .failed
+                active[jobId]?.error = APIErrorBody(
+                    code: "INTERNAL", message: "edit render produced no audio")
+                return
+            }
+            onEditorArtifact(job, result, purpose)
+            active[jobId]?.status = .succeeded
+            active[jobId]?.progress = nil
+            finish(jobId)
             return
         case .generativePart(let ownerSongId, _, let kind, let name):
             // Render task jobs (notes → SoundFont audio): the single audio

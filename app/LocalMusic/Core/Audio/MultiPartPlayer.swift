@@ -37,6 +37,16 @@ final class MultiPartPlayer {
     private var armedItems: [Item] = []
 
     private(set) var state: TransportState = .stopped
+    /// Peak level of the summed preview per channel, in dBFS, ~20 Hz while
+    /// playing; nil otherwise. Opt-in: the tap costs a little per render
+    /// cycle and only the Editor draws a meter.
+    private(set) var meterDb: (left: Double, right: Double)?
+    var metersEnabled = false
+    /// The workbench sums its items, so headroom scales with their count.
+    /// The Editor's items are one timeline cut into pieces — never more than
+    /// two sounding at once (a crossfade) — and scaling by segment count
+    /// would make a heavily-cut track quieter with every cut.
+    var sumsConcurrently = true
     /// Coarse mirror of the audio clock for bindings and readouts; the playhead
     /// itself reads `currentPosition()` so nothing that draws clips is
     /// invalidated 30 times a second.
@@ -184,8 +194,10 @@ final class MultiPartPlayer {
         }
         // Summing N clips with no normalisation clips the mixer; the mix job
         // normalises and limits, the preview does neither.
-        engine.mainMixerNode.outputVolume =
-            Float(min(1.0, 4.0 / Double(prepared.count).squareRoot()))
+        engine.mainMixerNode.outputVolume = sumsConcurrently
+            ? Float(min(1.0, 4.0 / Double(prepared.count).squareRoot()))
+            : 1.0
+        if metersEnabled { installMeterTap() }
         do {
             try engine.start()
         } catch {
@@ -252,7 +264,43 @@ final class MultiPartPlayer {
         }
     }
 
+    /// Reads peaks on the render thread, publishes on the main actor. The
+    /// buffer is only touched inside the tap block — what crosses the hop is
+    /// two Doubles.
+    private func installMeterTap() {
+        let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        engine.mainMixerNode.removeTap(onBus: 0)
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 2048,
+                                        format: format) { [weak self] buffer, _ in
+            guard let data = buffer.floatChannelData else { return }
+            let frames = Int(buffer.frameLength)
+            let channels = Int(buffer.format.channelCount)
+            guard frames > 0, channels > 0 else { return }
+            var peaks = [Float](repeating: 0, count: min(2, channels))
+            for channel in 0..<min(2, channels) {
+                var peak: Float = 0
+                for i in 0..<frames {
+                    let v = abs(data[channel][i])
+                    if v > peak { peak = v }
+                }
+                peaks[channel] = peak
+            }
+            let left = Double(peaks[0])
+            let right = Double(peaks.count > 1 ? peaks[1] : peaks[0])
+            func db(_ v: Double) -> Double {
+                v > 0 ? max(-80, 20 * log10(v)) : -80
+            }
+            let value = (left: db(left), right: db(right))
+            Task { @MainActor [weak self] in
+                guard let self, self.state == .playing else { return }
+                self.meterDb = value
+            }
+        }
+    }
+
     private func teardown() {
+        if metersEnabled { engine.mainMixerNode.removeTap(onBus: 0) }
+        meterDb = nil
         engine.stop()
         for node in nodes.values {
             engine.detach(node)

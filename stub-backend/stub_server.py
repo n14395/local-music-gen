@@ -44,6 +44,23 @@ TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix")
 
 DOWNLOAD_SECONDS = float(os.environ.get("LOCALMUSIC_STUB_DOWNLOAD_S", "20"))
 PROVISION_SECONDS = float(os.environ.get("LOCALMUSIC_STUB_PROVISION_S", "3"))
+
+# LOCALMUSIC_STUB_DOWNLOAD_S=0 means "advance only when told to", via the
+# test-only POST /v1/downloads/{id}/_step registered at the bottom of this file.
+#
+# Every timed transfer is a stopwatch race for the test watching it. The app's
+# download test has to see the download appear, see it reach the weights stage,
+# pause it, and see the paused state land — all before the simulated transfer
+# ends, because a finished download is removed from the store and its id stops
+# resolving. Each of those hops crosses a process boundary and an SSE stream,
+# and on a loaded machine they lose to the clock: the window was widened once
+# (3 s -> 8 s) and it still failed, at three different assertions.
+#
+# So the clock comes out. In manual mode provisioning takes exactly one step
+# and the transfer takes MANUAL_TICKS more, nothing moves in between, and the
+# test asserts against a download that cannot finish behind its back.
+MANUAL_DOWNLOADS = DOWNLOAD_SECONDS == 0
+MANUAL_TICKS = 4
 JOB_SPEED = float(os.environ.get("LOCALMUSIC_STUB_JOB_SPEED", "1"))  # >1 = faster
 
 # Mirrors supervisor.jobqueue: small models run in a transient slot, never
@@ -490,6 +507,19 @@ class Download:
         self.paused = asyncio.Event()
         self.paused.set()  # set = not paused
         self.task: asyncio.Task | None = None
+        # Manual mode only: how many ticks have been granted but not yet
+        # consumed. A counter rather than a bare Event because a test that
+        # wants the transfer finished asks for all the remaining ticks at
+        # once, and an Event cannot carry a number.
+        self.steps_pending = 0
+        self.step = asyncio.Event()
+
+    async def await_step(self) -> None:
+        """Block until a tick has been granted, then spend it."""
+        while self.steps_pending <= 0:
+            self.step.clear()
+            await self.step.wait()
+        self.steps_pending -= 1
 
     def info(self) -> dict:
         # nothing is transferring while provisioning or still waiting its turn,
@@ -499,7 +529,10 @@ class Download:
         return {"download_id": self.id, "model_id": self.model_id,
                 "state": "paused" if not self.paused.is_set() else self.state,
                 "bytes_done": self.done, "bytes_total": self.total,
-                "speed_bps": int(self.total / DOWNLOAD_SECONDS) if moving else 0,
+                # No wall clock in manual mode, so no rate to report — which
+                # is also true of it: nothing is transferring between steps.
+                "speed_bps": (0 if MANUAL_DOWNLOADS or not moving
+                              else int(self.total / DOWNLOAD_SECONDS)),
                 "stage": self.stage, "message": self.message,
                 "runtime_only": self.runtime_only}
 
@@ -728,11 +761,15 @@ async def run_download(dl: Download) -> None:
     try:
         if dl.stage == "provisioning":
             dl.message = f"Installing {model['family']} runtime (stub)"
-            steps = int(PROVISION_SECONDS / 0.5)
-            for _ in range(steps):
-                await dl.paused.wait()
-                await asyncio.sleep(0.5)
+            if MANUAL_DOWNLOADS:
+                await dl.await_step()
                 st.bus.emit("download.progress", dl.info())
+            else:
+                steps = int(PROVISION_SECONDS / 0.5)
+                for _ in range(steps):
+                    await dl.paused.wait()
+                    await asyncio.sleep(0.5)
+                    st.bus.emit("download.progress", dl.info())
             st.provisioned_families.add(model["family"])
             if dl.runtime_only:
                 # no weights to fetch and no install marker to write: only the
@@ -760,10 +797,25 @@ async def run_download(dl: Download) -> None:
             return
         dl.message = "fetching model.safetensors"
         tick = 0.5
-        per_tick = int(dl.total / (DOWNLOAD_SECONDS / tick))
+        per_tick = (max(1, -(-dl.total // MANUAL_TICKS)) if MANUAL_DOWNLOADS
+                    else int(dl.total / (DOWNLOAD_SECONDS / tick)))
         while dl.done < dl.total:
+            # Paused first, in both modes: a granted tick is not spent while
+            # the transfer is held, which is what makes "paused" mean the same
+            # thing whether a clock or a test is driving it.
             await dl.paused.wait()
-            await asyncio.sleep(tick)
+            if MANUAL_DOWNLOADS:
+                await dl.await_step()
+                # Held again after the grant, never mind the gate above: by the
+                # time a pause arrives this coroutine is already sitting in
+                # await_step, past that first check. Without this a tick granted
+                # while paused would be spent by it, and "paused" would mean
+                # nothing to anyone driving the transfer by hand. The tick is
+                # not lost — it is banked and spent on resume, exactly as an
+                # elapsed second is in the timed path.
+                await dl.paused.wait()
+            else:
+                await asyncio.sleep(tick)
             dl.done = min(dl.total, dl.done + per_tick)
             st.install[dl.model_id]["installed_bytes"] = dl.done
             st.bus.emit("download.progress", dl.info())
@@ -1284,6 +1336,27 @@ async def download_start(mid: str):
     # right state
     pump_downloads()
     return {"download_id": dl.id}
+
+
+# Test-only, and registered ONLY in manual mode — the contract has no such
+# endpoint and the real engine will never grow one. Keeping the decorator
+# inside the `if` is what makes that enforceable rather than a promise:
+# scripts/verify_stub.py asserts it 404s in an ordinary run, so this surface
+# cannot quietly become part of the fixture everything else is verified against.
+if MANUAL_DOWNLOADS:
+    @app.post("/v1/downloads/{did}/_step", status_code=202)
+    async def download_step(did: str, ticks: int = 1):
+        """Grant `ticks` units of progress to a download that is waiting.
+
+        Returns the download's info so a caller can drive the transfer without
+        a round-trip to GET /v1/downloads between every step.
+        """
+        d = STATE.downloads.get(did)
+        if not d:
+            return err(404, "NOT_FOUND", "unknown download")
+        d.steps_pending += max(1, ticks)
+        d.step.set()
+        return d.info()
 
 
 @app.post("/v1/models/{mid}/runtime", status_code=202)

@@ -647,6 +647,8 @@ all beat math is precomputed — the dsp worker performs no analysis):
                                          // must be >= 0 (negative → job fails)
      "section": {"start_s": 43.2, "end_s": 71.9},    // optional source trim
      "fade_in_s": 0.0, "fade_out_s": 2.0,            // optional, default 0
+     "fade_in_curve": "linear" | "scurve" | "log",   // optional, default linear
+     "fade_out_curve": "linear" | "scurve" | "log",  // optional, default linear
      "source_bpm": 98.0, "source_downbeats": [0.51, 2.96],
      "stretch": {"mode": "beat" | "uniform" | "none",
                  "transient_mode": "smooth" | "crisp",
@@ -676,6 +678,14 @@ trim already gets. Ramps longer than the track share it proportionally. A
 crossfade is expressed as two overlapping tracks with complementary fades —
 the worker has no notion of a crossfade itself; linear ramps of the same source
 sum back to the original level, which equal-power ones would not.
+
+`fade_in_curve` / `fade_out_curve` (optional) shape each ramp
+independently: `linear` (the default, and the only correct choice for the
+complementary crossfades above), `scurve` (smoothstep — eases both ends),
+`log` (square root — fast early change that tails off, the perceptually
+gentle fade). Per-ramp rather than per-track because one track routinely
+carries both an audible head fade (curved) and a crossfade tail (linear). An
+unknown value fails the job.
 
 `reverse` (optional, default false) plays the track's audio backwards:
 sample-for-sample reversal of the `section` trim (or the whole file without
