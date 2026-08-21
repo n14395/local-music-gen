@@ -61,6 +61,56 @@ final class QueuePanelTests: XCTestCase {
 
     // MARK: - Pinning
 
+    /// A queue that arrives because you pressed Generate is the thing you are
+    /// about to watch, so it takes a column rather than lying over the screen.
+    func testWorkOpensItPinnedWithoutTouchingThePreference() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        XCTAssertTrue(panel.isPinned(preference: false))
+        XCTAssertTrue(panel.pinnedByWork)
+    }
+
+    /// Unpinning a work-opened panel has to stick for that showing, or the
+    /// button does nothing you can see.
+    func testUnpinningOutranksTheWorkPin() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.pinChanged()
+        XCTAssertFalse(panel.isPinned(preference: false))
+        // …and a render still running must not put it back.
+        for _ in 0..<10 { panel.workChanged(isWorking: true) }
+        XCTAssertFalse(panel.isPinned(preference: false))
+    }
+
+    /// It is the render's pin, not the user's, so it goes when the panel does —
+    /// otherwise opening it by hand later would find it mysteriously pinned.
+    func testClosingForgetsTheWorkPin() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.close()
+        panel.toggle()
+        XCTAssertTrue(panel.isOpen)
+        XCTAssertFalse(panel.isPinned(preference: false))
+    }
+
+    func testAStoredPinStillWinsOnItsOwn() {
+        var panel = QueuePanel()
+        panel.toggle()
+        XCTAssertTrue(panel.isPinned(preference: true))
+        XCTAssertFalse(panel.isPinned(preference: false))
+    }
+
+    /// The same shape as the open/close rule: a choice made during one batch
+    /// does not bind the next one.
+    func testTheNextBatchPinsAgain() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.pinChanged()
+        panel.workChanged(isWorking: false)
+        panel.workChanged(isWorking: true)
+        XCTAssertTrue(panel.isPinned(preference: false))
+    }
+
     /// A pinned panel takes its width out of the screen behind it; a floating
     /// one does not; and a *closed* panel takes nothing however it is pinned —
     /// the pin says where it goes when it opens, not that it is open.

@@ -18,6 +18,13 @@ import Foundation
 /// without an engine, a job, or a window.
 struct QueuePanel: Equatable {
     private(set) var isOpen = false
+    /// Set when the panel opened itself because work started. A queue that
+    /// arrives unasked is one you are going to watch — it is the thing you
+    /// just pressed a button to start — so it takes a column of its own rather
+    /// than lying over the screen you were reading. Separate from the stored
+    /// preference so it can do that without overwriting it: unpin it and the
+    /// answer holds for this showing, not for good.
+    private(set) var pinnedByWork = false
     /// What `workChanged` was last told. Held rather than recomputed because
     /// the edge is the whole point: the panel opens on the transition, not on
     /// the state — otherwise every progress tick would reopen it.
@@ -28,10 +35,26 @@ struct QueuePanel: Equatable {
         defer { isWorking = working }
         guard working, !isWorking else { return }
         isOpen = true
+        pinnedByWork = true
     }
 
-    mutating func toggle() { isOpen.toggle() }
-    mutating func close() { isOpen = false }
+    mutating func toggle() {
+        isOpen.toggle()
+        if !isOpen { pinnedByWork = false }
+    }
+
+    mutating func close() {
+        isOpen = false
+        pinnedByWork = false
+    }
+
+    /// The user reached for the pin. Whatever they chose is now the whole
+    /// answer, so the work-driven pin stops speaking over it.
+    mutating func pinChanged() { pinnedByWork = false }
+
+    /// Where the panel sits, given the stored preference. Pinned by preference
+    /// or pinned because work opened it — either way it holds its own column.
+    func isPinned(preference: Bool) -> Bool { preference || pinnedByWork }
 
     /// How much width the panel takes *out of* the screen behind it: the rail
     /// when it is pinned and showing, nothing otherwise. Pinning is a stored

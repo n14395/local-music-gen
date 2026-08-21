@@ -342,13 +342,17 @@ struct MainWindow: View {
     private static let panelMotion = Animation.easeOut(duration: 0.22)
     private static let windowMinWidth: CGFloat = 1100
 
+    /// Where the panel is sitting right now: the stored preference, unless it
+    /// opened itself for a render, which pins it for that showing.
+    private var queueIsPinned: Bool { queuePanel.isPinned(preference: queuePinned) }
+
     private var queueGutter: CGFloat {
-        QueuePanel.gutter(isOpen: queuePanel.isOpen, isPinned: queuePinned,
+        QueuePanel.gutter(isOpen: queuePanel.isOpen, isPinned: queueIsPinned,
                           width: Bench.Metrics.Inspector.queue)
     }
 
     /// Showing, and over the screen rather than beside it.
-    private var queueFloats: Bool { queuePanel.isOpen && !queuePinned }
+    private var queueFloats: Bool { queuePanel.isOpen && !queueIsPinned }
 
     /// Floats by default, so glancing at the queue never reflows the screen
     /// you were working on, and pins when you want it permanently — which is
@@ -363,15 +367,23 @@ struct MainWindow: View {
         if queuePanel.isOpen {
             BenchInspector(width: Bench.Metrics.Inspector.queue) {
                 QueueRail(jobs: env.jobsStore, downloads: env.downloadsStore,
-                          catalog: env.catalog, isPinned: queuePinned,
+                          catalog: env.catalog, isPinned: queueIsPinned,
                           onClose: {
                               withAnimation(Self.panelMotion) { queuePanel.close() }
                           },
                           onTogglePin: {
-                              withAnimation(Self.panelMotion) { queuePinned.toggle() }
+                              // Toggling what is *drawn*, not what is stored:
+                              // a panel pinned by a render shows a filled pin,
+                              // and clicking it has to unpin — flipping the
+                              // preference alone would leave it pinned and the
+                              // button looking broken.
+                              withAnimation(Self.panelMotion) {
+                                  queuePinned = !queueIsPinned
+                                  queuePanel.pinChanged()
+                              }
                           })
             }
-            .shadow(color: .black.opacity(queuePinned ? 0 : 0.45), radius: 26, x: -8)
+            .shadow(color: .black.opacity(queueIsPinned ? 0 : 0.45), radius: 26, x: -8)
             .transition(.move(edge: .trailing))
         }
     }
