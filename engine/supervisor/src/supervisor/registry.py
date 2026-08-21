@@ -100,7 +100,28 @@ _TEST_MODEL_SPLIT = {
                     "default": -14.0, "nullable": False,
                     "min": -30.0, "max": -6.0, "step": 0.5},
                    {"key": "keep_tracks", "type": "bool", "label": "Keep tracks",
-                    "default": False, "nullable": False}],
+                    "default": False, "nullable": False},
+                   # The Editor's side-channel params. Declared here because
+                   # the supervisor DROPS anything a model does not declare
+                   # (see JobQueue.submit) — a fixture missing them would let
+                   # the verification suite "pass" while the worker never saw
+                   # them. Kept in step with dsp-mixdown in the catalog.
+                   {"key": "normalize", "type": "bool",
+                    "label": "Normalize loudness", "default": True,
+                    "nullable": False},
+                   {"key": "limiter", "type": "bool",
+                    "label": "True-peak limiter", "default": True,
+                    "nullable": False},
+                   {"key": "output_format", "type": "enum",
+                    "label": "Output format", "default": "wav",
+                    "nullable": False,
+                    "choices": [{"value": v, "label": v.upper()}
+                                for v in ("wav", "aiff", "flac", "mp3")]},
+                   {"key": "bit_depth", "type": "enum", "label": "Bit depth",
+                    "default": "pcm16", "nullable": False,
+                    "choices": [{"value": "pcm16", "label": "16-bit"},
+                                {"value": "pcm24", "label": "24-bit"},
+                                {"value": "float32", "label": "32-bit float"}]}],
     },
     "requirements": {"min_ram_bytes": 1, "disk_bytes": 0, "speed_tier": "fast"},
     "license": {"name": "GPL-3.0", "commercial_use": True,
