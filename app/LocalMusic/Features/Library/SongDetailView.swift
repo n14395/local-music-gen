@@ -94,6 +94,15 @@ struct SongDetailView: View {
                     .font(Bench.Typo.inspectorTitle)
                     .tracking(-0.17)
                     .foregroundStyle(Bench.Palette.textPrimary)
+                if let titleError = editor.titleError {
+                    // The field has already sprung back to the stored name by
+                    // the time this is read; this says why rather than leaving
+                    // the revert looking like dropped input.
+                    Text(titleError)
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.dangerText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !song.prompt.isEmpty {
                     Text(song.prompt)
                         .font(Bench.Typo.secondary)
@@ -148,11 +157,7 @@ struct SongDetailView: View {
     // MARK: hero
 
     private var hero: some View {
-        BenchWaveformWell(
-            height: 96,
-            playheadFraction: isCurrent && song.durationS > 0
-                ? playback.currentTime / song.durationS : nil
-        ) {
+        BenchWaveformWell(height: 96) {
             BenchWaveformLoader(
                 audioURL: song.fileURL, cacheURL: song.waveformURL,
                 playedFraction: isCurrent && song.durationS > 0

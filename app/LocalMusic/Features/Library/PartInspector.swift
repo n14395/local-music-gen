@@ -158,11 +158,7 @@ struct PartInspector: View {
     @ViewBuilder
     private var hero: some View {
         if let url = part.auditionURL {
-            BenchWaveformWell(
-                height: 96,
-                playheadFraction: isCurrent && duration > 0 ? playedFraction : nil,
-                playheadColor: stem
-            ) {
+            BenchWaveformWell(height: 96) {
                 BenchWaveformLoader(audioURL: url, cacheURL: part.waveformURL,
                                     playedFraction: playedFraction,
                                     tint: stem, barPitch: 2.5,

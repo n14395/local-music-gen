@@ -19,6 +19,10 @@ final class SongEditor {
     var title = ""
     var notes = ""
     var tagsText = ""
+    /// Why the last rename was refused, cleared as soon as one succeeds or the
+    /// pane moves to another track. The field reverts on refusal, so without
+    /// this the name would simply spring back with no explanation.
+    private(set) var titleError: String?
 
     private var notesSaveTask: Task<Void, Never>?
 
@@ -28,6 +32,7 @@ final class SongEditor {
         if songId != song.id { flush(in: library) }
         songId = song.id
         title = song.title
+        titleError = nil
         notes = song.notes
         tagsText = library.tags(for: song.id).joined(separator: ", ")
     }
@@ -39,13 +44,30 @@ final class SongEditor {
         flushNotes(in: library)
     }
 
-    /// Store the buffered title. A blank name is refused — the field falls back
-    /// to the stored one.
+    /// Store the buffered title. Two names are refused, both by putting the
+    /// stored one back in the field: a blank one, and one another song already
+    /// has.
+    ///
+    /// The duplicate rule is not house-keeping. A part names its source by
+    /// title — the Parts list groups under it and the inspector's "From" row
+    /// prints it — so two tracks sharing a name makes those readouts point at
+    /// nothing in particular, and the parts of one look like the parts of the
+    /// other.
     func commitTitle(in library: LibraryStore) {
         guard var stored = library.song(id: songId) else { return }
         let trimmed = title.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { title = stored.title; return }
-        guard trimmed != stored.title else { return }
+        guard !trimmed.isEmpty else {
+            title = stored.title
+            titleError = nil
+            return
+        }
+        guard trimmed != stored.title else { titleError = nil; return }
+        if library.titleIsTaken(trimmed, excluding: songId) {
+            title = stored.title
+            titleError = "Another track is already called \u{201C}\(trimmed)\u{201D}."
+            return
+        }
+        titleError = nil
         stored.title = trimmed
         library.update(stored)
     }

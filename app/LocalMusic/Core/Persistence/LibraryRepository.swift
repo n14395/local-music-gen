@@ -157,6 +157,23 @@ struct LibraryRepository: Sendable {
         }
     }
 
+    /// Whether another song already answers to `title`.
+    ///
+    /// Case-insensitively, because "Test01" and "test01" are the same name to
+    /// anyone reading the list, and the point of the check is that a name
+    /// identifies one track. `excluding` is the song being renamed: committing
+    /// a title unchanged, or changed only in case, must not collide with
+    /// itself.
+    func titleIsTaken(_ title: String, excluding songId: String) throws -> Bool {
+        try db.queue.read { database in
+            try Bool.fetchOne(
+                database,
+                sql: "SELECT EXISTS(SELECT 1 FROM song "
+                    + "WHERE title = ? COLLATE NOCASE AND id <> ?)",
+                arguments: [title, songId]) ?? false
+        }
+    }
+
     /// Hearted songs of any origin — the song half of the Favourites scope.
     func favoriteCount() throws -> Int {
         try db.queue.read { database in

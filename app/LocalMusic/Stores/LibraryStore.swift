@@ -81,6 +81,12 @@ final class LibraryStore {
     /// were handed, so they need the current row to write back.
     func song(id: String) -> SongRecord? { try? repo.song(id: id) }
 
+    /// Whether another song already has this name. Renames are refused on it —
+    /// see `SongEditor.commitTitle`.
+    func titleIsTaken(_ title: String, excluding songId: String) -> Bool {
+        (try? repo.titleIsTaken(title, excluding: songId)) ?? false
+    }
+
     func tags(for songId: String) -> [String] {
         (try? repo.tags(for: songId)) ?? []
     }

@@ -144,6 +144,7 @@
 		CB0880EF63E74920F3AFCFC3 /* PartInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496230F2832658E1CEBC1097 /* PartInspector.swift */; };
 		CC2736CED281A92CB3C208F4 /* SidebarNavTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D033B6852E445B4E7F6E9E0 /* SidebarNavTests.swift */; };
 		D079F4509CEE49CE42455083 /* GenerativeFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCAF5D7307162C15DBB2D35 /* GenerativeFlowTests.swift */; };
+		D31B7BCCD3D2A113DD23D8DB /* SongRenameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE12620DEC274634B17D20BC /* SongRenameTests.swift */; };
 		D4172458D7E333C5B3702B2E /* SongDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6DA43F1AFCCDD4B020B8FE /* SongDetailView.swift */; };
 		D433B79A80F4D9FCC1D6F455 /* MultiPartPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D3BB55C6460A3F446FEC4BB /* MultiPartPlayer.swift */; };
 		D7F7680F70DE79C95C99B3F8 /* MixSpecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF604556D46AE672E54CA35B /* MixSpecTests.swift */; };
@@ -309,6 +310,7 @@
 		B8512BD5A6FB3D2630DC4DBD /* QueueLoad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueLoad.swift; sourceTree = "<group>"; };
 		B856186E4A3027AEC2948D60 /* DTOTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DTOTests.swift; sourceTree = "<group>"; };
 		BA652D7B9F14A5C7BB6B8773 /* MashabilityScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MashabilityScorer.swift; sourceTree = "<group>"; };
+		BE12620DEC274634B17D20BC /* SongRenameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongRenameTests.swift; sourceTree = "<group>"; };
 		BEE3504128BDE7D3124B5EB5 /* WaveformRegionSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformRegionSelector.swift; sourceTree = "<group>"; };
 		BEF9587CEE722A4A371DDA06 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		BF3AB5A100BBDFD17A583A0F /* WeightedRowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeightedRowLayout.swift; sourceTree = "<group>"; };
@@ -498,6 +500,7 @@
 				0D033B6852E445B4E7F6E9E0 /* SidebarNavTests.swift */,
 				3EFCD2D3D23CC1686DBDA68B /* SingleInstanceTests.swift */,
 				7A3BA2AB5665DB1A07542722 /* SongEditorTests.swift */,
+				BE12620DEC274634B17D20BC /* SongRenameTests.swift */,
 				DE0A14CA589CA561CC0D973C /* SplitFlowTests.swift */,
 				FF71E04C85F123A26D424789 /* SR5Tests.swift */,
 				B74169A1902391135341CBD6 /* StudioPromptEditorTests.swift */,
@@ -986,6 +989,7 @@
 				CC2736CED281A92CB3C208F4 /* SidebarNavTests.swift in Sources */,
 				239F91BBB7384A49F150B8F1 /* SingleInstanceTests.swift in Sources */,
 				15A882AA56534053979794E4 /* SongEditorTests.swift in Sources */,
+				D31B7BCCD3D2A113DD23D8DB /* SongRenameTests.swift in Sources */,
 				AFF798925BE58C00093A2A0D /* SplitFlowTests.swift in Sources */,
 				DC0C14D3477EF7E954F9E595 /* StudioPromptEditorTests.swift in Sources */,
 				30CA8DA16AAE9ABE4D5864AB /* StyleTransferChainTests.swift in Sources */,

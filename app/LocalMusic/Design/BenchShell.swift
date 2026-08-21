@@ -195,6 +195,13 @@ struct BenchSidebarRow<Destination: Hashable>: View {
                                            style: .continuous))
         }
         .buttonStyle(.plain)
+        // These rows say what is selected in the accent, and the system's
+        // focus ring says what the keyboard is on — two different rows, two
+        // different colours, and the ring stays put when you click elsewhere
+        // because clicking does not move focus. One row ringed blue while
+        // another is lit in lime reads as a bug however you explain it, so the
+        // accent is the only selection signal here.
+        .focusEffectDisabled()
     }
 }
 
@@ -250,6 +257,7 @@ struct BenchSidebarSubRow<Scope: Hashable>: View {
                                            style: .continuous))
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()   // as above: the raised fill is the signal
         .padding(.leading, 14)   // indents under the destination's glyph
     }
 }

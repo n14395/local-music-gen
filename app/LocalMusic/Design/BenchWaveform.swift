@@ -112,15 +112,21 @@ struct BenchWaveformLoader: View {
     }
 }
 
-/// The dark inset the design puts hero waveforms in (`#0D1013`, r10), with an
-/// optional playhead line in the tint colour.
+/// The dark inset the design puts hero waveforms in (`#0D1013`, r10).
+///
+/// No playhead line. It used to draw one over the waveform inside it, which
+/// said the same thing twice: `BenchWaveform` already tints every bar left of
+/// the play position, so the boundary between the tinted bars and the grey
+/// ones *is* the playhead — drawn at bar resolution, where a 1.5 pt rule
+/// landing mid-bar only ever disagreed with it.
+///
+/// This is not the timeline's playhead, which stays: that one is a control
+/// (draggable, and what "play from the playhead" plays from) rather than a
+/// readout of where playback has got to.
 struct BenchWaveformWell<Content: View>: View {
     var height: CGFloat = 96
     var padding: CGFloat = 11
     var radius: CGFloat = 10
-    var playheadFraction: Double?
-    var playheadColor: Color = Bench.Palette.accent
-    var glowsPlayhead = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -130,18 +136,6 @@ struct BenchWaveformWell<Content: View>: View {
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Bench.Palette.well))
-            .overlay(alignment: .leading) {
-                if let fraction = playheadFraction {
-                    GeometryReader { geo in
-                        Rectangle()
-                            .fill(playheadColor)
-                            .frame(width: 1.5)
-                            .shadow(color: glowsPlayhead ? playheadColor.opacity(0.6) : .clear,
-                                    radius: 7)
-                            .offset(x: geo.size.width * fraction.clamped(to: 0...1))
-                    }
-                }
-            }
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
