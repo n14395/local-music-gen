@@ -56,6 +56,7 @@ struct ActionsScreen: View {
     private var gallery: some View {
         ActionGallery(recipes: RecipeCatalog.all,
                       states: cardStates,
+                      readiness: catalog.readiness,
                       recent: recentRecipes,
                       query: $query,
                       category: $category,
@@ -86,6 +87,10 @@ struct ActionsScreen: View {
         /// four cards read as runnable on a fresh install and only admitted
         /// the problem once you were on the page.
         case needsTaskModel(String)
+        /// The engine has not said what is installed, so this card cannot
+        /// honestly claim anything. Every other gated state is a statement
+        /// about the user's disk; this one is a statement about the app.
+        case unknown(CatalogReadiness)
 
         var footnote: String? {
             switch self {
@@ -95,6 +100,7 @@ struct ActionsScreen: View {
             case .needsStyleModel(_, let hint): hint
             case .needsRenderModel: "Get the SoundFont renderer — free"
             case .needsSpliceModel: "Get Token Splice — 76 MB"
+            case .unknown(let readiness): readiness.shortLine
             case .needsTaskModel(let task):
                 switch task {
                 case "separate": "Get a separation model — 84 MB"
@@ -102,6 +108,27 @@ struct ActionsScreen: View {
                 case "analyze": "Get Musical analysis — 81 MB"
                 default: "Get a model for this"
                 }
+            }
+        }
+
+        /// Whether the footnote is telling the user off or just telling them
+        /// to wait. A "still starting" line drawn in the same amber as
+        /// "install this first" reads as a fault, and there isn't one.
+        var footnoteIsWarning: Bool {
+            if case .unknown(.pending) = self { return false }
+            return true
+        }
+
+        /// Nothing worth clicking. "Coming soon" has nowhere to go, and a card
+        /// that does not yet know what it needs cannot send you to get it —
+        /// unlike every gated state, which routes to Models on purpose.
+        var isInert: Bool {
+            switch self {
+            case .comingSoon: return true
+            case .unknown(let readiness):
+                if case .pending = readiness { return true }
+                return false
+            default: return false
             }
         }
     }
@@ -150,6 +177,20 @@ struct ActionsScreen: View {
 
     private func cardState(_ recipe: Recipe) -> CardState {
         guard recipe.isAvailable else { return .comingSoon }
+        // Everything below this line asks "is model X installed", and until
+        // the engine has answered once there is no honest answer to give: an
+        // empty catalog during startup is indistinguishable from an empty
+        // disk. Claiming the latter is how a fresh launch spent its first
+        // second telling a user with forty models installed that all
+        // twenty-six actions needed a download.
+        //
+        // Recipes that need no model at all — the bench, matching — are
+        // deliberately left alone: they run with no engine whatsoever, and
+        // greying them out while one starts would be its own wrong claim.
+        let readiness = catalog.readiness
+        if !readiness.knowsWhatIsInstalled, requirement(for: recipe) != nil {
+            return .unknown(readiness)
+        }
         switch recipe.engine {
         case .mix where !mixInstalled, .arrange where !mixInstalled:
             return .needsMixModel
@@ -194,6 +235,15 @@ struct ActionsScreen: View {
             return
         case .active:
             break
+        case .unknown(let readiness):
+            // Pending is inert at the card, so only the failure lands here.
+            // Models is still the right destination — it is where the engine
+            // error is spelled out — but *without* a requirement filter: a
+            // list narrowed to "models that would ungate this" is empty and
+            // silent when the reason is that nothing can be listed at all.
+            guard !readiness.knowsWhatIsInstalled else { return }
+            onOpenModels(nil)
+            return
         case let state:
             // Deliberate: a gated card is the shortest path to the model that
             // ungates it, so it stays clickable and lands you in Models —

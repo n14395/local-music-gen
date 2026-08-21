@@ -66,11 +66,18 @@ final class AppEnvironment {
     let styleTransfer = StyleTransferModel()
     private(set) var backendManager: BackendProcessManager!
 
+    /// What the engine status label opens. Assembled here because this is the
+    /// only place that holds all three.
+    var engineStatus: EngineStatus {
+        EngineStatus(status: backendStatus, manager: backendManager,
+                     telemetry: telemetry)
+    }
+
     init(modeOverride: BackendLaunchMode? = nil,
          database: DatabaseManager? = nil) {
         let status = BackendStatusStore()
         self.backendStatus = status
-        self.catalog = ModelCatalogStore()
+        self.catalog = ModelCatalogStore(backend: status)
         self.downloadsStore = DownloadsStore()
 
         let db: DatabaseManager

@@ -13,11 +13,9 @@ import SwiftUI
 struct StudioView: View {
     let catalog: ModelCatalogStore
     let jobs: JobsStore
-    let downloads: DownloadsStore
     let library: LibraryStore
     let playback: PlaybackController
     let prefill: PrefillBox
-    let backend: BackendStatusStore
     let actions: SongActions
     let onOpenModels: () -> Void
 
@@ -73,9 +71,9 @@ struct StudioView: View {
             if installed.isEmpty {
                 noModels.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if showsRendering {
-                StudioRenderingPane(jobs: jobs, downloads: downloads,
-                                    library: library, playback: playback,
-                                    catalog: catalog, actions: actions,
+                StudioRenderingPane(jobs: jobs, library: library,
+                                    playback: playback, catalog: catalog,
+                                    actions: actions,
                                     renderingJobs: renderingJobs)
             } else {
                 composer
@@ -146,25 +144,8 @@ struct StudioView: View {
                         .init(value: .full, label: "Full control"),
                     ])
                 }
-                readyPill
             }
         }
-    }
-
-    private var readyPill: some View {
-        HStack(spacing: 7) {
-            StatusDot(color: backend.phase == .ready ? Bench.Palette.ok
-                                                     : Bench.Palette.warn,
-                      size: 6, glows: false)
-            Text(backend.phase == .ready ? "Ready" : backend.phase.label)
-                .font(Bench.Typo.secondary)
-                .foregroundStyle(Bench.Palette.textSecondary)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button)
-            .fill(Bench.Palette.raised))
-        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button)
-            .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
     }
 
     // MARK: - Composer
@@ -569,20 +550,18 @@ struct StudioView: View {
     /// have models to the Models tab for nothing.
     @ViewBuilder
     private var noModels: some View {
-        if catalog.hasLoaded {
+        switch catalog.readiness {
+        case .ready:
             StudioEmptyState(
                 title: "No models installed",
                 message: "Download a model and it appears here.",
                 actionTitle: "Open Models", action: onOpenModels)
-        } else {
-            switch catalog.placeholder(backend: backend.phase) {
-            case .failed(let message):
-                StudioEmptyState(title: "The engine isn't running",
-                                 message: message, tone: .danger)
-            case .loading, .empty:
-                StudioEmptyState(title: "Loading generative models…",
-                                 message: "", showsSpinner: true)
-            }
+        case .unavailable(let message):
+            StudioEmptyState(title: "The engine isn't running",
+                             message: message, tone: .danger)
+        case .pending(let detail):
+            StudioEmptyState(title: "Loading generative models…",
+                             message: detail, showsSpinner: true)
         }
     }
 

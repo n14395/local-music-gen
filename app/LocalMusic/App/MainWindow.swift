@@ -3,9 +3,11 @@ import SwiftUI
 /// The Bench shell: a 230 pt sidebar, a content column that supplies its own
 /// top bar, and a transport bar spanning the full width beneath both.
 ///
-/// The window uses `.hiddenTitleBar`, so the traffic lights float over the
-/// sidebar's 52 pt header exactly as the design draws them, and there is no
-/// system toolbar at all — every screen draws its own.
+/// The window uses `.hiddenTitleBar` and the shell ignores the top safe area,
+/// so the whole thing starts at the top edge: the traffic lights float over
+/// the sidebar's 52 pt header exactly as the design draws them, each screen's
+/// top bar is level with them, and there is no system toolbar at all — every
+/// screen draws its own.
 struct MainWindow: View {
     let env: AppEnvironment
 
@@ -34,6 +36,15 @@ struct MainWindow: View {
     /// itself once more without a defaults migration.
     @AppStorage("onboarding.completedVersion") private var onboardingVersion = 0
     @State private var showOnboarding = false
+    /// The queue panel, and the rule for when it shows itself. Shell state
+    /// rather than a screen's, because the point of the change is that the
+    /// queue is the same queue from everywhere.
+    @State private var queuePanel = QueuePanel()
+    /// Whether the queue panel holds a column of its own instead of floating
+    /// over the screen. Stored, unlike `queuePanel`: where you want the queue
+    /// to sit is a way of working — a wide display can afford it permanently,
+    /// a laptop cannot — and re-pinning it every launch would be a chore.
+    @AppStorage("queue.pinned") private var queuePinned = false
 
     /// Bump when the recommended set changes enough to be worth re-offering.
     private static let onboardingVersionCurrent = 1
@@ -45,20 +56,65 @@ struct MainWindow: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Bench.Palette.windowBackground)
+                    // A focus ring is not drawn in z-order with everything
+                    // else: SwiftUI composites it above neighbouring views, so
+                    // the blue ring on whatever the keyboard is on — the
+                    // Simple/Full control switch, on a fresh launch — draws
+                    // straight through a floating panel sitting over it.
+                    // Nothing the panel covers may draw one, then. Pinned, it
+                    // covers nothing, so they come back.
+                    //
+                    // Applied under the overlay rather than over it: an
+                    // overlay's content is not a descendant of the modifiers
+                    // beneath it in the chain, so the panel keeps its own
+                    // focus rings while the screen behind it loses them.
+                    .focusEffectDisabled(queueFloats)
+                    // Pinning is this padding and nothing else. The panel is
+                    // one view in one place either way — the gutter decides
+                    // whether the screen ends before it or runs underneath it,
+                    // so pinning animates a single number instead of moving a
+                    // rail between two branches of the layout.
+                    .padding(.trailing, queueGutter)
+                    .overlay(alignment: .trailing) { queueOverlay }
             }
             .frame(maxHeight: .infinity)
             TransportBar(playback: env.playback, slot: transportSlot,
+                         queue: transportQueue,
+                         engine: env.engineStatus,
+                         isQueueOpen: queuePanel.isOpen,
+                         onToggleQueue: {
+                             withAnimation(Self.panelMotion) { queuePanel.toggle() }
+                         },
                          onToggleCompare: {
                              libraryCompare.toggle(playback: env.playback)
                          })
         }
         .background(Bench.Palette.windowBackground)
+        // `.hiddenTitleBar` gives the window a full-size content view but
+        // SwiftUI still keeps a 32 pt safe area where the titlebar would be,
+        // so every screen's own 52 pt bar was drawing *below* the traffic
+        // lights with an empty band above it. The design has one bar per
+        // screen and the lights floating over the sidebar's reserved header,
+        // which is what this restores — and it hands 32 pt of window height
+        // back to the screen.
+        //
+        // Safe to draw into: the titlebar's own widgets still win hit-testing
+        // where they are, and everything else in that band reaches the content.
+        .ignoresSafeArea(.container, edges: .top)
         .preferredColorScheme(.dark)
-        .frame(minWidth: 1100, minHeight: 700)
+        // The floor rises with the pinned rail rather than letting it eat the
+        // screen behind it: 1100 is already fully spent by Studio in Full
+        // control (230 pt of sidebar, a 576 pt parameter panel).
+        .frame(minWidth: Self.windowMinWidth + queueGutter, minHeight: 700)
         .onChange(of: env.studio.pending) { routeIntent() }
         .onChange(of: env.prefill.pending) { if env.prefill.pending != nil {
             destination = .studio
         } }
+        .onChange(of: isRenderingWork) {
+            withAnimation(Self.panelMotion) {
+                queuePanel.workChanged(isWorking: isRenderingWork)
+            }
+        }
         .task { await env.pollTelemetry() }
         .onAppear(perform: offerOnboarding)
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
@@ -74,6 +130,7 @@ struct MainWindow: View {
                                     })) {
             OnboardingView(catalog: env.catalog,
                            downloads: env.downloadsStore,
+                           backend: env.backendStatus,
                            freeDiskBytes: env.telemetry.freeDiskBytes) {
                 showOnboarding = false
             }
@@ -82,10 +139,25 @@ struct MainWindow: View {
 
     /// Show the first-run sheet once, and only when there is something to say:
     /// an install that already has every recommended model gets no welcome.
+    ///
+    /// Deliberately opened *before* the catalog arrives. A genuine first launch
+    /// spends tens of seconds inside the engine shim fetching a Python runtime
+    /// and building the supervisor's venv, and this used to wait it out — so
+    /// the slowest minute of the app's life was spent behind a fully-drawn
+    /// window claiming nothing was installed, with the welcome appearing only
+    /// once it was over. The sheet carries that wait now, and explains it.
     private func offerOnboarding() {
         guard onboardingVersion < Self.onboardingVersionCurrent,
-              !showOnboarding,
-              env.catalog.hasLoaded else { return }
+              !showOnboarding else { return }
+        // Only a never-onboarded install opens early. A *re-onboarding* — the
+        // version stamp moving in a later release — belongs to someone whose
+        // engine is already provisioned and whose catalog lands in under a
+        // second, and flashing a welcome at them to conclude "everything
+        // recommended is here" is worse than the second's wait.
+        guard env.catalog.hasLoaded else {
+            if onboardingVersion == 0 { showOnboarding = true }
+            return
+        }
         let plan = OnboardingPlan.make(models: env.catalog.models,
                                        physicalRAM: ModelCatalogStore.physicalRAM)
         guard !plan.isEmpty else {
@@ -222,28 +294,80 @@ struct MainWindow: View {
         }
     }
 
-    // MARK: - Transport slot
+    // MARK: - Transport corner
 
-    /// Exactly one thing at a time, in priority order: an active download beats
-    /// the queue, because a download is the slower and less visible of the two.
+    /// What the transport has to say *besides* the queue, which is always
+    /// drawn. Comparing two takes is the one thing you do with the transport
+    /// itself, so it is what earns the space beside the readout.
     private var transportSlot: TransportBar.Slot {
-        // Comparing two takes is the one thing you are doing *with* the
-        // transport, so it outranks the background work readouts.
         if destination == .library, libraryCompare.isActive {
             return .compare(isB: libraryCompare.isB)
         }
+        return .none
+    }
+
+    /// A transfer beats a render in the capsule, because a download is the
+    /// slower and less visible of the two — both are in the panel it opens, so
+    /// the one that loses here is not hidden, only unmentioned.
+    private var transportQueue: TransportBar.Queue {
         let downloading = env.downloadsStore.downloads.values
             .filter { $0.state == .downloading }
         if let download = downloading.first, download.bytesTotal > 0 {
             let percent = Int(Double(download.bytesDone)
                               / Double(download.bytesTotal) * 100)
-            return .download(percent: percent)
+            return .downloading(percent: percent)
         }
         // Takes, not jobs: one submission of four takes is four tracks being
         // made, and reading "QUEUE 1" beside it was the counter disagreeing
         // with the number the user typed.
         let load = QueueLoad.of(jobs: Array(env.jobsStore.active.values))
-        return load.jobs == 0 ? .idle : .queue(count: load.takesLeft)
+        return load.jobs == 0 ? .idle : .working(takes: load.takesLeft)
+    }
+
+    // MARK: - Queue panel
+
+    /// Renders, not transfers. A download is started from the Models screen
+    /// with its progress already in front of you; a render is started and then
+    /// waited on, which is the wait this panel exists to fill.
+    private var isRenderingWork: Bool {
+        env.jobsStore.active.values.contains { !$0.status.isTerminal }
+    }
+
+    private static let panelMotion = Animation.easeOut(duration: 0.22)
+    private static let windowMinWidth: CGFloat = 1100
+
+    private var queueGutter: CGFloat {
+        QueuePanel.gutter(isOpen: queuePanel.isOpen, isPinned: queuePinned,
+                          width: Bench.Metrics.Inspector.queue)
+    }
+
+    /// Showing, and over the screen rather than beside it.
+    private var queueFloats: Bool { queuePanel.isOpen && !queuePinned }
+
+    /// Floats by default, so glancing at the queue never reflows the screen
+    /// you were working on, and pins when you want it permanently — which is
+    /// the same view either way, sat in the gutter the padding above reserves.
+    ///
+    /// It covers the content only: the sidebar stays reachable underneath it,
+    /// and so does the transport bar carrying the button that opened it. The
+    /// shadow is what says which of the two it is doing — a floating panel is
+    /// over your work, a pinned one is beside it — so it goes when it pins.
+    @ViewBuilder
+    private var queueOverlay: some View {
+        if queuePanel.isOpen {
+            BenchInspector(width: Bench.Metrics.Inspector.queue) {
+                QueueRail(jobs: env.jobsStore, downloads: env.downloadsStore,
+                          catalog: env.catalog, isPinned: queuePinned,
+                          onClose: {
+                              withAnimation(Self.panelMotion) { queuePanel.close() }
+                          },
+                          onTogglePin: {
+                              withAnimation(Self.panelMotion) { queuePinned.toggle() }
+                          })
+            }
+            .shadow(color: .black.opacity(queuePinned ? 0 : 0.45), radius: 26, x: -8)
+            .transition(.move(edge: .trailing))
+        }
     }
 
     // MARK: - Content
@@ -253,9 +377,8 @@ struct MainWindow: View {
         switch destination {
         case .studio:
             StudioView(catalog: env.catalog, jobs: env.jobsStore,
-                       downloads: env.downloadsStore, library: env.library,
-                       playback: env.playback, prefill: env.prefill,
-                       backend: env.backendStatus, actions: songActions,
+                       library: env.library, playback: env.playback,
+                       prefill: env.prefill, actions: songActions,
                        onOpenModels: { openModels(for: nil) })
         case .library:
             LibraryScreen(library: env.library, parts: env.partsStore,
@@ -301,7 +424,7 @@ struct MainWindow: View {
                             })
         case .models:
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,
-                         backend: env.backendStatus, telemetry: env.telemetry,
+                         telemetry: env.telemetry,
                          requirement: $modelRequirement)
         }
     }
@@ -527,6 +650,12 @@ private struct SidebarFooterCard: View {
     }
 
     private var engineCard: some View {
+        EngineStatusButton(engine: env.engineStatus, arrowEdge: .trailing) {
+            engineCardBody
+        }
+    }
+
+    private var engineCardBody: some View {
         BenchSidebarCard(stroke: isRendering ? Bench.Palette.accent.opacity(0.2)
                                              : Bench.Palette.hairline) {
             HStack(spacing: 8) {
@@ -534,6 +663,8 @@ private struct SidebarFooterCard: View {
                 Text(isRendering ? "Rendering" : env.backendStatus.phase.label)
                     .font(Bench.Typo.secondaryEmphasis)
                     .foregroundStyle(Bench.Palette.textPrimary)
+                Spacer(minLength: 0)
+                EngineStatusHint()
             }
             if let detail = engineDetail {
                 Text(detail)
@@ -712,8 +843,13 @@ private struct SidebarFooterCard: View {
     }
 
     private var storageDetail: String {
-        var line = "\(installedModels.count) MODEL"
-            + (installedModels.count == 1 ? "" : "S")
+        // "0 MODELS" while the engine is still starting is the same wrong
+        // claim the Actions cards used to make, in the one card that is on
+        // screen at the same time as the list saying "Loading models…".
+        var line = env.catalog.readiness.knowsWhatIsInstalled
+            ? "\(installedModels.count) MODEL"
+                + (installedModels.count == 1 ? "" : "S")
+            : "— MODELS"
         line += " · \(TelemetryStore.gigabytes(audioBytes)) GB AUDIO"
         if let free = env.telemetry.freeDiskBytes {
             line += "\n\(TelemetryStore.gigabytes(free)) GB FREE"

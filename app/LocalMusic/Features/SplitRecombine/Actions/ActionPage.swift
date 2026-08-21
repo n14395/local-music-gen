@@ -734,6 +734,51 @@ struct ActionRail: View {
 /// What a page shows when there is no installed model that can run it. It keeps
 /// the route to Models rather than disabling into silence — the design's fifth
 /// rule, said at page scale.
+/// `ActionNeedsModel` with the third state in front of it.
+///
+/// Every page that gates on a model reaches the "you need to install this"
+/// branch by finding an empty candidate list — which is also what an empty
+/// list looks like for the first second of a launch, and for as long as a
+/// broken engine stays broken. This picks between the three so no page has to
+/// remember to.
+struct ActionModelGate: View {
+    let readiness: CatalogReadiness
+    let title: String
+    let detail: String
+    let onOpenModels: () -> Void
+
+    var body: some View {
+        switch readiness {
+        case .pending(let waiting):
+            HStack(spacing: 11) {
+                BenchSpinner(size: 15)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Checking what's installed…")
+                        .font(Bench.Typo.sectionTitle)
+                        .foregroundStyle(Bench.Palette.textPrimary)
+                    Text(waiting)
+                        .font(Bench.Typo.small)
+                        .foregroundStyle(Bench.Palette.textQuaternary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .benchCard(radius: 13)
+        case .unavailable(let message):
+            // Not "install a model": the models are probably right there, and
+            // the download button this would otherwise offer cannot work
+            // either. Models is still the destination — it is where the engine
+            // failure is spelled out and where the restart lives.
+            ActionNeedsModel(title: "The engine isn't running",
+                             detail: message, onOpenModels: onOpenModels)
+        case .ready:
+            ActionNeedsModel(title: title, detail: detail,
+                             onOpenModels: onOpenModels)
+        }
+    }
+}
+
 struct ActionNeedsModel: View {
     let title: String
     let detail: String

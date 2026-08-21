@@ -37,6 +37,12 @@ struct StyleTransferScreen: View {
 
     private var models: [ModelInfo] { catalog.models }
     private var chosen: ModelInfo? { model.model(in: models) }
+    /// Whether anything on this screen may claim a model is missing. Every
+    /// mode chip, the model picker and the commit bar all answer "is X
+    /// installed" from `models`, which is empty for the first second of a
+    /// launch whether or not anything is installed.
+    private var readiness: CatalogReadiness { catalog.readiness }
+    private var knowsModels: Bool { readiness.knowsWhatIsInstalled }
 
     var body: some View {
         @Bindable var model = model
@@ -246,12 +252,16 @@ struct StyleTransferScreen: View {
     }
 
     private func modeChip(_ mode: StyleTransferMode) -> some View {
-        let isAvailable = !mode.eligible(models).isEmpty
+        // Until the engine answers, every mode is neither available nor
+        // unavailable. Treating it as unavailable would grey out all eleven
+        // and offer eleven downloads the user very likely already has.
+        let isAvailable = !knowsModels || !mode.eligible(models).isEmpty
         let isSelected = model.mode == mode
         return Button {
             // A dimmed chip stays clickable on purpose: clicking it is the
             // shortest path to the model that lights it up, which is the same
-            // bargain the gated Actions cards make.
+            // bargain the gated Actions cards make. That bargain is off while
+            // the catalog is unknown — there is no model to send anyone to.
             if isAvailable {
                 self.model.mode = mode
             } else {
@@ -290,6 +300,21 @@ struct StyleTransferScreen: View {
                           : (mode.unavailableReason(models) ?? mode.survives))
     }
 
+    /// The one line that stands in for every "you need to install something"
+    /// this screen would otherwise be guessing at.
+    @ViewBuilder
+    private func catalogFootnote() -> some View {
+        if let line = readiness.shortLine {
+            HStack(spacing: 8) {
+                if case .pending = readiness { BenchSpinner(size: 12) }
+                Text(line)
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
     /// What the chosen mode preserves, said plainly under the chips.
     ///
     /// This is the feature rather than a caveat attached to it: audio style
@@ -301,7 +326,9 @@ struct StyleTransferScreen: View {
                 .font(Bench.Typo.secondary)
                 .foregroundStyle(Bench.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let reason = model.mode.unavailableReason(models) {
+            if !knowsModels {
+                catalogFootnote()
+            } else if let reason = model.mode.unavailableReason(models) {
                 HStack(spacing: 10) {
                     Text(reason)
                         .font(Bench.Typo.caption)
@@ -533,7 +560,8 @@ struct StyleTransferScreen: View {
         @Bindable var model = model
         let eligible = model.mode.eligible(models)
         if eligible.isEmpty {
-            ActionNeedsModel(
+            ActionModelGate(
+                readiness: readiness,
                 title: "No installed model can do this yet",
                 detail: model.mode.unavailableReason(models)
                     ?? "Install a model that supports this transformation.",
@@ -605,8 +633,10 @@ struct StyleTransferScreen: View {
             title: model.mode.isChain ? "Run the chain" : "Transform",
             costLine: costLine,
             costSubline: "ORIGINAL IS NEVER MODIFIED",
-            isEnabled: model.canRun(in: models),
-            error: model.blockedReason(in: models) ?? jobs.lastError,
+            isEnabled: knowsModels && model.canRun(in: models),
+            error: knowsModels ? (model.blockedReason(in: models)
+                                    ?? jobs.lastError)
+                               : readiness.shortLine,
             queueTitle: nil,
             onCommit: { Task { await run() } })
     }

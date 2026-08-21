@@ -59,7 +59,8 @@ struct RenderActionView: View {
                 onChoose: { choosing = true },
                 onRemove: source == nil ? nil : { source = nil })
             if eligible.isEmpty {
-                ActionNeedsModel(
+                ActionModelGate(
+                    readiness: catalog.readiness,
                     title: "The note renderer is not installed",
                     detail: "Note renderer (SoundFont) turns MIDI parts back "
                         + "into audio with General MIDI instruments. It is free.",

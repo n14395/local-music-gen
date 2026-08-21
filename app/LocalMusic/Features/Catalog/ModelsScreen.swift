@@ -15,7 +15,6 @@ import SwiftUI
 struct ModelsScreen: View {
     let catalog: ModelCatalogStore
     let downloads: DownloadsStore
-    let backend: BackendStatusStore
     let telemetry: TelemetryStore
     /// Set when you arrived here from a gated feature: the list narrows to the
     /// models that would ungate it, and says so. A binding because dismissing
@@ -401,14 +400,14 @@ struct ModelsScreen: View {
 
     @ViewBuilder
     private var placeholder: some View {
-        switch catalog.placeholder(backend: backend.phase) {
-        case .loading(let detail):
+        switch catalog.readiness {
+        case .pending(let detail):
             LoadingPlaceholder(title: "Loading models…", detail: detail)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let message):
+        case .unavailable(let message):
             CatalogNotice(title: "CAN'T LOAD THE CATALOG", message: message,
                           tone: Bench.Palette.dangerText)
-        case .empty:
+        case .ready:
             CatalogNotice(title: "NO MODELS YET",
                           message: "The engine returned an empty catalog.",
                           tone: Bench.Palette.textFaint)

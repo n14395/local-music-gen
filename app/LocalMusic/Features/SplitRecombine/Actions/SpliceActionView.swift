@@ -41,7 +41,8 @@ struct SpliceActionView: View {
     var body: some View {
         ActionPage(recipe: recipe, onBack: onBack) {
             if spliceModel == nil {
-                ActionNeedsModel(
+                ActionModelGate(
+                    readiness: catalog.readiness,
                     title: "Token Splice is not installed",
                     detail: "A 76 MB EnCodec model does the encoding and the "
                         + "decoding. Nothing else on this page changes.",

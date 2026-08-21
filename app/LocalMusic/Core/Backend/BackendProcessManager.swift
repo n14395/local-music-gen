@@ -165,7 +165,8 @@ actor BackendProcessManager {
     // MARK: connect (shared by spawn and attach)
 
     private func connect(handshakeFile: URL) async {
-        let deadline = Date().addingTimeInterval(60)
+        let start = Date()
+        let deadline = start.addingTimeInterval(60)
         var handshake: Handshake?
         while Date() < deadline && !stopping {
             if let data = try? Data(contentsOf: handshakeFile),
@@ -179,7 +180,16 @@ actor BackendProcessManager {
                     break
                 }
             }
-            try? await Task.sleep(for: .milliseconds(250))
+            // A warm engine writes its handshake in well under a second, and
+            // every millisecond between it doing so and this loop noticing is
+            // a millisecond of launch where the model catalog is unknown and
+            // the screens that depend on it have to say so. Poll hard while
+            // that is plausible, then back off — a genuinely cold first run
+            // has uv fetching CPython and the supervisor's wheels, and there
+            // is no point re-reading a missing file forty times a second for
+            // the remaining minute of it.
+            let fast = Date().timeIntervalSince(start) < 2
+            try? await Task.sleep(for: .milliseconds(fast ? 25 : 250))
         }
         guard let hs = handshake else {
             if !stopping {

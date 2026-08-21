@@ -81,7 +81,8 @@ struct SplitActionView: View {
                 onChoose: { choosing = true },
                 onImport: { importing = true })
             if eligibleModels.isEmpty {
-                ActionNeedsModel(
+                ActionModelGate(
+                    readiness: catalog.readiness,
                     title: "No \(modelNoun) model installed",
                     detail: "Install one from Models and this action can run. "
                         + "Nothing else on this page changes.",

@@ -38,4 +38,18 @@ final class BackendStatusStore {
         stderrTail.append(line)
         if stderrTail.count > 200 { stderrTail.removeFirst(stderrTail.count - 200) }
     }
+
+    /// What the launcher shim says it is doing, if it has said anything.
+    ///
+    /// A first launch spends most of its time inside `engine-shim.sh` fetching
+    /// a Python and building a venv, long before there is a port to ask
+    /// anything about. `.launching` is the only phase the app has for all of
+    /// it, which is why the shim narrates itself — this is the app end of
+    /// that.
+    var setupLine: String? {
+        let marker = "engine-setup: "
+        guard let line = stderrTail.last(where: { $0.hasPrefix(marker) })
+        else { return nil }
+        return String(line.dropFirst(marker.count))
+    }
 }

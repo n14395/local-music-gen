@@ -5,11 +5,15 @@ import SwiftUI
 /// The complaint this answers is "no sense of progress". So: the take being
 /// made gets the whole top of the screen with a percentage you can read from
 /// across the room, the pipeline says which stage is running rather than
-/// hiding it in a message string, finished takes stay playable underneath, and
-/// the queue is a real list on the right instead of a spinner.
+/// hiding it in a message string, and finished takes stay playable underneath.
+///
+/// The queue used to be a rail down the right of this pane. It is the shell's
+/// panel now (`QueueRail`), which the transport bar opens from any screen and
+/// which opens itself when a batch starts — so it still arrives unasked when
+/// you press Generate, and it no longer disappears the moment you look at
+/// something else.
 struct StudioRenderingPane: View {
     let jobs: JobsStore
-    let downloads: DownloadsStore
     let library: LibraryStore
     let playback: PlaybackController
     let catalog: ModelCatalogStore
@@ -35,28 +39,22 @@ struct StudioRenderingPane: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let lead { heroCard(lead) }
-                    if !doneRecently.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("DONE").eyebrow()
-                            ForEach(doneRecently) { song in
-                                doneRow(song)
-                            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let lead { heroCard(lead) }
+                if !doneRecently.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("DONE").eyebrow()
+                        ForEach(doneRecently) { song in
+                            doneRow(song)
                         }
                     }
                 }
-                .padding(.horizontal, 30).padding(.vertical, 26)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            BenchInspector(width: Bench.Metrics.Inspector.queue) {
-                queueRail
-            }
+            .padding(.horizontal, 30).padding(.vertical, 26)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Hero
@@ -182,98 +180,6 @@ struct StudioRenderingPane: View {
         }
         .padding(16)
         .benchCard()
-    }
-
-    // MARK: - Queue rail
-
-    private var queueRail: some View {
-        VStack(spacing: 0) {
-            BenchPanelHeader {
-                Text("Queue")
-                    .font(Bench.Typo.sectionTitle)
-                    .foregroundStyle(Bench.Palette.textPrimary)
-                // "3 TAKES · 1 DOWNLOAD" — a four-take render is four pieces
-                // of work, however few jobs carry them.
-                Text(QueueLoad.of(jobs: jobs.displayJobs,
-                                  downloads: downloads.downloads.count)
-                        .headerLabel)
-                    .font(Bench.Typo.mono(11))
-                    .foregroundStyle(Bench.Palette.textFaintest)
-                Spacer()
-                pauseAllButton
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if jobs.queueHeld { holdNote }
-                    JobQueueSection(jobs: jobs, downloads: downloads,
-                                    modelName: { id in
-                                        catalog.models.first { $0.id == id }?.displayName ?? id
-                                    },
-                                    reorderable: true)
-                    Text("Downloads and renders share one queue so the Mac is never "
-                         + "asked for two big jobs at once.")
-                        .font(Bench.Typo.caption)
-                        .foregroundStyle(Bench.Palette.textFaintest)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                }
-                .padding(14)
-            }
-        }
-    }
-
-    /// One control over both halves of the queue: the engine's render hold
-    /// (§5.7) and every transfer (§4.2). Holding only one of them would leave
-    /// the Mac just as busy as before, which is the thing the button is for.
-    private var pauseAllButton: some View {
-        Button(jobs.queueHeld ? "Resume all" : "Pause all") {
-            let held = jobs.queueHeld
-            Task {
-                await jobs.holdQueue(!held)
-                // Only touch the transfers once the engine has taken the hold:
-                // half a pause is worse than none, and a refusal is already on
-                // jobs.lastError.
-                guard jobs.queueHeld == !held else { return }
-                if held { await downloads.resumeAll() }
-                else { await downloads.pauseAll() }
-            }
-        }
-        .buttonStyle(.bench(jobs.queueHeld ? .accent : .quiet))
-        .help(jobs.queueHeld
-              ? "Start the queue again"
-              : "Hold the queue and pause every transfer — the render already "
-                + "running finishes")
-    }
-
-    /// What a hold actually did. The running take cannot be suspended (there is
-    /// no engine verb for it and SIGSTOP inside a Metal command buffer is not
-    /// something that resumes), so this says which of the two situations the
-    /// user is in rather than letting "Paused" imply the render stopped.
-    private var holdNote: some View {
-        let running = jobs.runningWhileHeld
-        return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "pause.circle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Bench.Palette.warn)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("QUEUE PAUSED")
-                    .font(Bench.Typo.mono(10, .semibold))
-                    .foregroundStyle(Bench.Palette.warn)
-                // "No new renders" rather than "nothing": the engine's hold is
-                // over the job queue, and a download started from Models after
-                // this point still transfers.
-                Text(running == nil
-                     ? "No new renders will start until you resume."
-                     : "Finishing the current render — cancel it to stop now.")
-                    .font(Bench.Typo.caption)
-                    .foregroundStyle(Bench.Palette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .benchCard(fill: Bench.Palette.warn.opacity(0.08),
-                   stroke: Bench.Palette.warn.opacity(0.22), radius: 11)
     }
 }
 

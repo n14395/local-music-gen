@@ -167,6 +167,7 @@ struct WorkbenchScreen: View {
                 reimaginePrompt: $reimaginePrompt,
                 reimagineModelId: $reimagineModelId,
                 reimagineModels: reimagineModels,
+                readiness: catalog.readiness,
                 canReimagine: reimagineSource != nil,
                 onPreview: togglePreview,
                 onCreateMix: createMix,
@@ -400,6 +401,9 @@ struct WorkbenchScreen: View {
         guard let preset = StylePreset.preset(forRecipeId: "add-layer") else {
             return
         }
+        // Nothing to do until the catalog exists: routing to Models would be
+        // acting on "no model can do this" before anyone has said so.
+        guard catalog.readiness.knowsWhatIsInstalled else { return }
         guard !preset.mode.eligible(catalog.models).isEmpty else {
             onOpenModels()
             return
@@ -1452,6 +1456,9 @@ private struct WorkbenchCommitBar: View {
     @Binding var reimaginePrompt: String
     @Binding var reimagineModelId: String?
     let reimagineModels: [ModelInfo]
+    /// An empty `reimagineModels` means "install one" only once the engine has
+    /// said what is installed; before that it means nothing at all.
+    let readiness: CatalogReadiness
     let canReimagine: Bool
     let onPreview: () -> Void
     let onCreateMix: () -> Void
@@ -1595,7 +1602,13 @@ private struct WorkbenchCommitBar: View {
     /// chosen output.
     private var reimagineRow: some View {
         HStack(spacing: 12) {
-            if reimagineModels.isEmpty {
+            if let waiting = readiness.shortLine {
+                if case .pending = readiness { BenchSpinner(size: 12) }
+                Text(waiting)
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                Spacer(minLength: 0)
+            } else if reimagineModels.isEmpty {
                 Text("Needs an ACE-Step or Stable Audio model")
                     .font(Bench.Typo.small)
                     .foregroundStyle(Bench.Palette.textMuted)

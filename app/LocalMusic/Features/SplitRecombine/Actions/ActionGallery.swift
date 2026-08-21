@@ -12,6 +12,10 @@ struct ActionGallery: View {
     let recipes: [Recipe]
     /// Precomputed by `ActionsScreen`, which owns the model-availability rules.
     let states: [String: ActionsScreen.CardState]
+    /// Whether those rules had anything to work from. Passed in whole rather
+    /// than as a flag because the strip has to say *which* kind of "not yet"
+    /// this is — starting up and never starting look nothing alike to a user.
+    let readiness: CatalogReadiness
     let recent: [Recipe]
     @Binding var query: String
     @Binding var category: RecipeCategory?
@@ -28,6 +32,7 @@ struct ActionGallery: View {
         VStack(spacing: 0) {
             topBar
             filterBar
+            if let line = readiness.waitingLine { catalogStrip(line) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(visibleCategories) { section in
@@ -43,6 +48,41 @@ struct ActionGallery: View {
                 .padding(.horizontal, 20).padding(.vertical, 18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    // MARK: catalog strip
+
+    /// One line, once, instead of twenty-six spinning cards.
+    ///
+    /// The cards below already stop claiming anything while this is showing;
+    /// what they cannot do is explain themselves twenty-six times over without
+    /// becoming noise. So the shelves go quiet and the reason is said here.
+    private func catalogStrip(_ line: String) -> some View {
+        HStack(spacing: 10) {
+            if case .pending = readiness {
+                BenchSpinner(size: 13)
+                Text("Checking what's installed — \(line)")
+                    .font(Bench.Typo.secondary)
+                    .foregroundStyle(Bench.Palette.textMuted)
+            } else {
+                StatusDot(color: Bench.Palette.warn)
+                Text("The engine isn't running, so what you have installed "
+                     + "is unknown — \(line)")
+                    .font(Bench.Typo.secondary)
+                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Models", action: onOpenModels)
+                    .buttonStyle(.bench(.quiet))
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Bench.Palette.panel)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Bench.Palette.hairline).frame(height: 1)
         }
     }
 
@@ -171,8 +211,14 @@ struct ActionGallery: View {
     // MARK: filtering
 
     private var matchingSearch: [Recipe] {
-        recipes.filter { recipe in
-            guard onlyRunnable ? isRunnable(recipe) : true else { return false }
+        // "Only what my installed models can do" is unanswerable before the
+        // engine says what is installed, and answering it anyway empties every
+        // shelf — turning a one-second startup into a screen that says the
+        // user owns nothing. The switch stays where it is and simply doesn't
+        // bite until there is something to filter on.
+        let filterRunnable = onlyRunnable && readiness.knowsWhatIsInstalled
+        return recipes.filter { recipe in
+            guard filterRunnable ? isRunnable(recipe) : true else { return false }
             guard !query.isEmpty else { return true }
             return recipe.name.localizedCaseInsensitiveContains(query)
                 || recipe.tagline.localizedCaseInsensitiveContains(query)
@@ -220,6 +266,14 @@ private struct ActionCard: View {
         return false
     }
 
+    private var helpText: String {
+        if isComingSoon { return "Coming in a later update" }
+        if case .unknown = state {
+            return "Waiting for the engine to say what's installed"
+        }
+        return recipe.tagline
+    }
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
@@ -242,18 +296,23 @@ private struct ActionCard: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let footnote = state.footnote {
+                    // Amber means "you have to do something about this". A
+                    // card that is merely waiting on the engine has nothing
+                    // for the user to do, so it borrows the shape and drops
+                    // the alarm.
+                    let tone = state.footnoteIsWarning ? Bench.Palette.warn
+                                                       : Bench.Palette.textFaint
                     Text(footnote)
                         .font(Bench.Typo.micro)
-                        .foregroundStyle(Bench.Palette.warn)
+                        .foregroundStyle(tone)
                         .padding(.horizontal, 7).padding(.vertical, 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 5,
                                                      style: .continuous)
-                            .fill(Bench.Palette.warn.opacity(0.10)))
+                            .fill(tone.opacity(0.10)))
                         .overlay(RoundedRectangle(cornerRadius: 5,
                                                   style: .continuous)
-                            .strokeBorder(Bench.Palette.warn.opacity(0.2),
-                                          lineWidth: 1))
+                            .strokeBorder(tone.opacity(0.2), lineWidth: 1))
                 }
             }
             .padding(14)
@@ -268,9 +327,11 @@ private struct ActionCard: View {
         }
         .buttonStyle(.plain)
         // Gated cards stay ENABLED on purpose — clicking one is how you get to
-        // the model it needs. Only "coming soon" is genuinely inert.
-        .disabled(isComingSoon)
-        .opacity(isComingSoon ? 0.45 : 1)
-        .help(isComingSoon ? "Coming in a later update" : recipe.tagline)
+        // the model it needs. Inert is for the two states with nowhere to send
+        // you: "coming soon", and a card still waiting to hear what this Mac
+        // has installed.
+        .disabled(state.isInert)
+        .opacity(state.isInert ? 0.45 : 1)
+        .help(helpText)
     }
 }

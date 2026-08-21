@@ -5,10 +5,21 @@ import SwiftUI
 /// user to work out, from a list of sixty-four, which handful actually makes
 /// the thing work.
 ///
-/// Three states in one sheet: choose, watch, done.
+/// Three states in one sheet: choose, watch, done — with the engine's own
+/// setup in front of them.
+///
+/// The sheet used to wait for the catalog before appearing, which meant a
+/// genuine first run spent its slowest minute in front of a fully-drawn app
+/// whose every screen said nothing was installed, and only then said welcome.
+/// That wait is real work — a private Python runtime and the engine's
+/// dependencies, fetched once — and this is the honest place to spend it,
+/// because it is the one surface a first run was always going to see.
 struct OnboardingView: View {
     let catalog: ModelCatalogStore
     let downloads: DownloadsStore
+    /// The engine's own state. A first run reaches this sheet long before the
+    /// catalog exists — see `content` — and the wait it is showing is this.
+    let backend: BackendStatusStore
     let freeDiskBytes: Int64?
     /// Called once the user has either started the installs or waved the sheet
     /// away — either way onboarding is over and must not come back.
@@ -74,21 +85,35 @@ struct OnboardingView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(phase == .choosing ? "Welcome to LocalMusic" : "Setting up")
+            Text(headerTitle)
                 .font(Bench.Typo.inspectorTitle)
                 .foregroundStyle(Bench.Palette.textPrimary)
-            Text(phase == .choosing
-                 ? "Music models run on this Mac, so they have to be "
-                   + "downloaded first. Here's a set that makes everything "
-                   + "work — you can add or remove models any time."
-                 : "Downloads run one at a time. You can close this and carry "
-                   + "on; progress stays in the Models tab.")
+            Text(headerDetail)
                 .font(Bench.Typo.secondary)
                 .foregroundStyle(Bench.Palette.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20).padding(.vertical, 18)
+    }
+
+    private var headerTitle: String {
+        if phase == .installing { return "Setting up" }
+        return "Welcome to LocalMusic"
+    }
+
+    private var headerDetail: String {
+        if phase == .installing {
+            return "Downloads run one at a time. You can close this and carry "
+                + "on; progress stays in the Models tab."
+        }
+        if !catalog.readiness.knowsWhatIsInstalled {
+            return "One moment — the app is starting the engine that runs the "
+                + "models. The rest of the app works while it does."
+        }
+        return "Music models run on this Mac, so they have to be downloaded "
+            + "first. Here's a set that makes everything work — you can add "
+            + "or remove models any time."
     }
 
     // MARK: - Content
@@ -99,9 +124,10 @@ struct OnboardingView: View {
         // each model lands, and the sheet must keep showing the run it started.
         if phase == .installing {
             installingList
-        } else if !catalog.hasLoaded {
-            LoadingPlaceholder(title: "Loading models…", detail: nil)
-                .frame(maxWidth: .infinity, minHeight: 260)
+        } else if case .pending(let detail) = catalog.readiness {
+            engineSetupStep(detail)
+        } else if case .unavailable(let message) = catalog.readiness {
+            engineFailedStep(message)
         } else if plan.isEmpty {
             Text("Everything recommended is already installed.")
                 .font(Bench.Typo.body)
@@ -110,6 +136,71 @@ struct OnboardingView: View {
         } else {
             choosingList
         }
+    }
+
+    /// The wait, named. On the very first launch this is the engine fetching a
+    /// private Python runtime and building its dependency set — tens of
+    /// seconds, and it needs the internet. Saying so is the difference between
+    /// a slow start and an app that looks broken.
+    private func engineSetupStep(_ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 11) {
+                BenchSpinner(size: 18)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(backend.setupLine ?? detail)
+                        .font(Bench.Typo.bodyEmphasis)
+                        .foregroundStyle(Bench.Palette.textPrimary)
+                    Text("First launch only.")
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.textFaint)
+                }
+                Spacer(minLength: 0)
+            }
+            Text("LocalMusic runs every model on this Mac, in its own private "
+                 + "Python runtime. That runtime is fetched once, now, and "
+                 + "never again — it needs the internet, and it is the only "
+                 + "part of the app that does before you pick a model.")
+                .font(Bench.Typo.small)
+                .foregroundStyle(Bench.Palette.textQuaternary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Nothing is waiting on it except the model list. The "
+                 + "Library, playback and importing all work already.")
+                .font(Bench.Typo.small)
+                .foregroundStyle(Bench.Palette.textFaintest)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
+        .benchCard(radius: 13)
+    }
+
+    /// The engine answered with a failure, so this is not a wait — it is a
+    /// stop. Offering the model list here would be a lie: nothing on it could
+    /// be downloaded either.
+    private func engineFailedStep(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("The engine didn't start")
+                .font(Bench.Typo.sectionTitle)
+                .foregroundStyle(Bench.Palette.textPrimary)
+            Text(message)
+                .font(Bench.Typo.small)
+                .foregroundStyle(Bench.Palette.textQuaternary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The most common cause on a first launch is no internet "
+                 + "connection: the Python runtime the models need is fetched "
+                 + "once, at this point. Reconnect and reopen the app.")
+                .font(Bench.Typo.small)
+                .foregroundStyle(Bench.Palette.textFaintest)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
+        .benchCard(fill: Bench.Palette.warn.opacity(0.06),
+                   stroke: Bench.Palette.warn.opacity(0.22), radius: 13)
     }
 
     private var choosingList: some View {
@@ -293,11 +384,11 @@ struct OnboardingView: View {
         HStack(spacing: 12) {
             if phase == .choosing {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(selection.isEmpty ? "Nothing selected"
-                                           : "\(ByteFormat.gb(selectedBytes)) to download")
+                    Text(footerSummary)
                         .font(Bench.Typo.bodyEmphasis)
                         .foregroundStyle(Bench.Palette.textPrimary)
-                    if let disk = diskLine {
+                    if catalog.readiness.knowsWhatIsInstalled,
+                       let disk = diskLine {
                         Text(disk.text)
                             .font(Bench.Typo.caption)
                             .foregroundStyle(disk.isShort ? Bench.Palette.warn
@@ -315,11 +406,21 @@ struct OnboardingView: View {
 
             switch phase {
             case .choosing:
-                Button("Skip for now", action: onFinish)
-                    .buttonStyle(.benchSecondary)
-                Button("Install", action: startInstall)
-                    .buttonStyle(.benchPrimary)
-                    .disabled(selection.isEmpty || !catalog.hasLoaded)
+                // Nothing to install, either because the engine already had
+                // everything or because it never answered: in both cases the
+                // second button would be a disabled "Install" sitting next to
+                // a "Skip" the user has no reason not to press, which is two
+                // controls saying one thing.
+                if hasNothingToOffer {
+                    Button("Start making music", action: onFinish)
+                        .buttonStyle(.benchPrimary)
+                } else {
+                    Button("Skip for now", action: onFinish)
+                        .buttonStyle(.benchSecondary)
+                    Button("Install", action: startInstall)
+                        .buttonStyle(.benchPrimary)
+                        .disabled(selection.isEmpty)
+                }
             case .installing:
                 Button(isComplete ? "Start making music" : "Continue in the app",
                        action: onFinish)
@@ -327,6 +428,23 @@ struct OnboardingView: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
+    }
+
+    /// True when there is no choice left to make: the engine hasn't answered,
+    /// it failed, or everything recommended is already here.
+    private var hasNothingToOffer: Bool {
+        !catalog.readiness.knowsWhatIsInstalled || plan.isEmpty
+    }
+
+    private var footerSummary: String {
+        switch catalog.readiness {
+        case .pending: "Getting ready…"
+        case .unavailable: "Can't reach the engine"
+        case .ready:
+            plan.isEmpty ? "Everything recommended is here"
+                : selection.isEmpty ? "Nothing selected"
+                    : "\(ByteFormat.gb(selectedBytes)) to download"
+        }
     }
 
     private var diskLine: (text: String, isShort: Bool)? {

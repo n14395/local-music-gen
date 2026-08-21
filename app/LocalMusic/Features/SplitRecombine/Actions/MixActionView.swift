@@ -62,7 +62,8 @@ struct MixActionView: View {
     var body: some View {
         ActionPage(recipe: recipe, onBack: onBack) {
             if mixModel == nil {
-                ActionNeedsModel(
+                ActionModelGate(
+                    readiness: catalog.readiness,
                     title: "Mixdown & Align is not installed",
                     detail: "Every exact recombination is rendered by the "
                         + "Mixdown & Align DSP model. It is free and has no "

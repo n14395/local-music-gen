@@ -1,16 +1,12 @@
 DEVELOPER_DIR ?= /Applications/Xcode-beta.app
 
-.PHONY: stub verify-stub engine-dev verify-engine app-build app-test smoke package dmg verify-packaged
+# Build, packaging and .dmg creation live in ./build.sh — see `./build.sh --help`.
+# What is left here is the engine/contract tooling that build.sh does not cover.
+.PHONY: stub verify-stub engine-dev verify-engine app-test smoke verify-packaged
 
 smoke:           ## generate a short clip per fast model through the real engine
 	python3 scripts/smoke_test.py --model test-tiny --duration 2
 	python3 scripts/smoke_test.py --model musicgen-small --duration 5
-
-package:         ## build dist/LocalMusic.app (ad-hoc signed; IDENTITY=… for real)
-	./scripts/package_app.sh
-
-dmg: package     ## package + wrap dist/LocalMusic-<version>.dmg (production)
-	./scripts/make_dmg.sh
 
 verify-packaged: ## first-run test of the packaged engine
 	python3 scripts/verify_packaged.py
@@ -26,9 +22,6 @@ engine-dev:      ## run the real supervisor with dev paths
 
 verify-engine:   ## contract + engine checks against the real supervisor
 	python3 scripts/verify_engine.py
-
-app-build:
-	DEVELOPER_DIR=$(DEVELOPER_DIR) xcodebuild -project app/LocalMusic.xcodeproj -scheme LocalMusic -destination 'platform=macOS' build
 
 app-test:
 	DEVELOPER_DIR=$(DEVELOPER_DIR) xcodebuild -project app/LocalMusic.xcodeproj -scheme LocalMusic -destination 'platform=macOS' test

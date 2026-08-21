@@ -11,7 +11,9 @@ struct LocalMusicApp: App {
         }
         // No title bar and no system toolbar: the design draws its own 52 pt
         // bar per screen, and the traffic lights float over the reserved
-        // header at the top of the sidebar.
+        // header at the top of the sidebar. This gives the window a full-size
+        // content view but not the top of it — SwiftUI keeps a titlebar-sized
+        // safe area, which `MainWindow` ignores.
         .windowStyle(.hiddenTitleBar)
         Settings {
             SettingsView(env: appDelegate.env)

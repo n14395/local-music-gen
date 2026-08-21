@@ -4,28 +4,51 @@ import SwiftUI
 ///
 /// Two changes from the old player bar that the design is explicit about: the
 /// scrubber is the track's own waveform rather than a `Slider` (you can see
-/// where the drop is before you drag to it), and the right-hand slot carries
-/// whatever the app is busy with — the queue, a download, or the A/B switch —
-/// so background work is visible from every screen instead of only from the
-/// screen that started it.
+/// where the drop is before you drag to it), and the right-hand corner carries
+/// whatever the app is busy with, so background work is visible from every
+/// screen instead of only from the screen that started it.
+///
+/// That corner is two things, not one. The **queue** readout is always drawn,
+/// because it is also the button that opens the queue panel and a control that
+/// comes and goes is not somewhere you can learn to look. Anything else the
+/// bar has to say — the A/B switch, the workbench level meter — sits beside it
+/// rather than in its place, which it used to: comparing two takes hid whether
+/// anything was rendering at all.
 ///
 /// It spans the full window width, under the sidebar as well as the content.
 struct TransportBar: View {
     let playback: PlaybackController
+    /// What the *user* is doing. Exactly one at a time, decided by the shell.
     let slot: Slot
+    /// What the *machine* is doing.
+    let queue: Queue
+    /// What the *engine* is doing. The bar is the only chrome on screen from
+    /// every screen, which is the whole argument for it being here.
+    let engine: EngineStatus
+    var isQueueOpen = false
 
-    /// What occupies the right-hand corner. Exactly one thing at a time, in
-    /// this priority order, decided by the shell.
     enum Slot: Equatable {
-        case idle
-        case queue(count: Int)
-        case download(percent: Int)
+        /// Nothing to add — the queue readout has the corner to itself.
+        case none
         /// Two library rows are ticked: the bar becomes an A/B switch.
         case compare(isB: Bool)
-        /// The workbench rough preview shows level rather than a queue.
+        /// The workbench rough preview shows level.
         case level(db: Double)
     }
 
+    /// The queue capsule's three faces, in the shell's priority order: a
+    /// transfer beats a render, because a download is the slower and less
+    /// visible of the two. Both are in the panel the capsule opens.
+    enum Queue: Equatable {
+        case idle
+        /// Takes, not jobs: one submission of four takes is four tracks being
+        /// made, and reading "QUEUE 1" beside it was the counter disagreeing
+        /// with the number the user typed.
+        case working(takes: Int)
+        case downloading(percent: Int)
+    }
+
+    var onToggleQueue: (() -> Void)?
     var onToggleCompare: (() -> Void)?
 
     var body: some View {
@@ -55,6 +78,8 @@ struct TransportBar: View {
                 .fixedSize()
 
             slotView
+            engineButton
+            queueButton
         }
         .padding(.horizontal, 20)
         .frame(height: Bench.Metrics.transportHeight)
@@ -89,26 +114,8 @@ struct TransportBar: View {
     @ViewBuilder
     private var slotView: some View {
         switch slot {
-        case .idle:
-            capsule(tinted: false) {
-                Text("QUEUE EMPTY")
-                    .font(Bench.Typo.mono(11, .semibold))
-                    .foregroundStyle(Bench.Palette.textFaintest)
-            }
-        case .queue(let count):
-            capsule(tinted: true) {
-                BenchSpinner(size: 16)
-                Text("QUEUE \(count)")
-                    .font(Bench.Typo.mono(11, .semibold))
-                    .foregroundStyle(Bench.Palette.accent)
-            }
-        case .download(let percent):
-            capsule(tinted: true) {
-                BenchSpinner(size: 16)
-                Text("DOWNLOAD \(percent)%")
-                    .font(Bench.Typo.mono(11, .semibold))
-                    .foregroundStyle(Bench.Palette.accent)
-            }
+        case .none:
+            EmptyView()
         case .compare(let isB):
             HStack(spacing: 4) {
                 compareKey("A", active: !isB)
@@ -151,17 +158,120 @@ struct TransportBar: View {
         .help(active ? "Playing \(letter)" : "Switch to \(letter) — Tab")
     }
 
-    private func capsule<Content: View>(tinted: Bool,
+    // MARK: - Engine
+
+    /// Engine state, beside the queue readout rather than in Studio's top bar
+    /// where it used to live. Both are the machine talking rather than the
+    /// user, and "why is nothing happening" is a question you ask from
+    /// whatever screen you are on — which was rarely the one screen that
+    /// answered it.
+    private var engineButton: some View {
+        EngineStatusButton(engine: engine, arrowEdge: .top) {
+            capsule(tinted: false) {
+                StatusDot(color: engineColor, size: 7, glows: false)
+                Text(engine.status.phase.label.uppercased())
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(engineTextColor)
+                EngineStatusHint()
+            }
+        }
+    }
+
+    private var engineColor: Color {
+        switch engine.status.phase {
+        case .ready: engine.status.eventStreamConnected ? Bench.Palette.ok
+                                                        : Bench.Palette.warn
+        case .launching, .restarting, .degraded: Bench.Palette.warn
+        case .failed: Bench.Palette.danger
+        case .stopped: Bench.Palette.textMuted
+        }
+    }
+
+    /// Quiet as "QUEUE EMPTY" is quiet when there is nothing to say, and the
+    /// status colour when there is. A healthy engine should not compete with
+    /// the track title for attention; a stalled one should win.
+    private var engineTextColor: Color {
+        if case .ready = engine.status.phase, engine.status.eventStreamConnected {
+            return Bench.Palette.textFaintest
+        }
+        return engineColor
+    }
+
+    // MARK: - Queue
+
+    /// The queue readout, which is also the panel's switch. It used to be a
+    /// label, and clicking the one part of the window that names background
+    /// work and having nothing happen is the bug this answers.
+    private var queueButton: some View {
+        Button { onToggleQueue?() } label: { queueLabel }
+            .buttonStyle(.plain)
+            .help(isQueueOpen ? "Hide the queue" : queueHelp)
+    }
+
+    private var queueHelp: String {
+        switch queue {
+        case .idle: "Show the queue"
+        case .working: "Show what is rendering"
+        case .downloading: "Show the queue and the transfer"
+        }
+    }
+
+    @ViewBuilder
+    private var queueLabel: some View {
+        switch queue {
+        case .idle:
+            capsule(tinted: false, open: isQueueOpen) {
+                Text("QUEUE EMPTY")
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.textFaintest)
+                panelChevron(Bench.Palette.textFaintest)
+            }
+        case .working(let takes):
+            capsule(tinted: true, open: isQueueOpen) {
+                BenchSpinner(size: 16)
+                Text("QUEUE \(takes)")
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.accent)
+                panelChevron(Bench.Palette.accent.opacity(0.7))
+            }
+        case .downloading(let percent):
+            capsule(tinted: true, open: isQueueOpen) {
+                BenchSpinner(size: 16)
+                Text("DOWNLOAD \(percent)%")
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.accent)
+                panelChevron(Bench.Palette.accent.opacity(0.7))
+            }
+        }
+    }
+
+    /// Says which way the panel goes, and which way it would go next. Without
+    /// it the capsule is a readout that happens to be clickable.
+    private func panelChevron(_ color: Color) -> some View {
+        Image(systemName: isQueueOpen ? "chevron.right" : "chevron.left")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(color)
+    }
+
+    /// `open` is drawn rather than left to a press highlight: the panel it
+    /// opens is at the far side of the window from the button, so the button
+    /// has to say whether it is the thing that put it there.
+    private func capsule<Content: View>(tinted: Bool, open: Bool = false,
                                         @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 9) { content() }
+        let fill: Color = if tinted { Bench.Palette.accent.opacity(open ? 0.2 : 0.12) }
+                          else if open { Bench.Palette.control }
+                          else { Bench.Palette.raised }
+        let stroke: Color = if tinted { Bench.Palette.accent.opacity(open ? 0.5 : 0.26) }
+                            else if open { Bench.Palette.cardStroke }
+                            else { Bench.Palette.cardStrokeSoft }
+        return HStack(spacing: 9) { content() }
             .padding(.horizontal, 12).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
                                          style: .continuous)
-                .fill(tinted ? Bench.Palette.accent.opacity(0.12) : Bench.Palette.raised))
+                .fill(fill))
             .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
                                       style: .continuous)
-                .strokeBorder(tinted ? Bench.Palette.accent.opacity(0.26)
-                                     : Bench.Palette.cardStrokeSoft, lineWidth: 1))
+                .strokeBorder(stroke, lineWidth: 1))
             .fixedSize()
     }
 
