@@ -101,10 +101,26 @@ final class DownloadFlowTests: XCTestCase {
         env.startBackend()
         try await waitFor("catalog populated") { !env.catalog.models.isEmpty }
 
-        for id in ["musicgen-small", "acestep-base"] {
+        // Two models of different families, the second deliberately tiny.
+        //
+        // This used to queue `acestep-base` behind `musicgen-small`, and the
+        // engine's disk precheck (contract §4.2) refuses a download it cannot
+        // fit — 1.2x its declared size. So on any machine with less than ~9 GB
+        // free the second POST came back 409, one download appeared instead of
+        // two, and the test sat here for its full sixty seconds before failing
+        // with "timed out waiting for both downloads visible": a message about
+        // queueing, for a problem that was nothing to do with queueing. What
+        // is under test is that transfers run ONE AT A TIME, which no model's
+        // size has any bearing on.
+        for id in ["musicgen-small", "separation-stub"] {
             let model = try XCTUnwrap(env.catalog.models.first { $0.id == id })
             await env.catalog.startDownload(model)
         }
+        // Surfaced before the wait rather than after it: a refused download
+        // never arrives, and sixty seconds of silence is a worse way to learn
+        // that than the reason the engine already gave.
+        XCTAssertNil(env.catalog.lastError,
+                     "the engine refused a download before any queueing happened")
         try await waitFor("both downloads visible") {
             env.downloadsStore.downloads.count == 2
         }

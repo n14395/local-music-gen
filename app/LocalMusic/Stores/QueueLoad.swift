@@ -21,12 +21,33 @@ struct QueueLoad: Equatable {
     var takesLeft: Int = 0
     /// Transfers in flight or waiting.
     var downloads: Int = 0
+    /// Jobs that have finished and are still on the list — succeeded, failed
+    /// or cancelled, waiting for the user to dismiss them.
+    ///
+    /// Counted separately from `jobs` because the two answer different
+    /// questions. `jobs` is outstanding work, which is what the counters and
+    /// the "Rendering 3 takes" pill are about; this is how many ROWS the queue
+    /// has, which is what "is there anything to show" is about. Conflating
+    /// them is what made a failed render vanish: the job stayed in the store
+    /// with its error, the rail drew "Nothing queued" over the top of it, and
+    /// the card only reappeared once a later submission made the count
+    /// non-zero again.
+    var finished: Int = 0
+    /// …of which actually failed. Cancelling is something the user did and
+    /// needs no announcement; a failure is something that happened to them.
+    var failed: Int = 0
 
-    var isEmpty: Bool { jobs == 0 && downloads == 0 }
+    /// Nothing to draw — as opposed to nothing *running*.
+    var isEmpty: Bool { jobs == 0 && finished == 0 && downloads == 0 }
 
     static func of(jobs: [JobsStore.ActiveJob], downloads: Int = 0) -> QueueLoad {
         var load = QueueLoad(downloads: downloads)
-        for job in jobs where !job.status.isTerminal {
+        for job in jobs {
+            guard !job.status.isTerminal else {
+                load.finished += 1
+                if job.status == .failed { load.failed += 1 }
+                continue
+            }
             // `count` is 1 on anything that predates multi-take and on every
             // task job, so this is the same number as before for them.
             let count = max(1, job.info.count)
@@ -59,6 +80,11 @@ struct QueueLoad: Equatable {
         if downloads > 0 {
             parts.append("\(downloads) DOWNLOAD\(downloads == 1 ? "" : "S")")
         }
+        // Rows the user has not cleared yet are part of what the list holds,
+        // so the count that heads it says so — "EMPTY" above a failed render
+        // is the same denial the empty state used to make.
+        if failed > 0 { parts.append("\(failed) FAILED") }
+        if finished - failed > 0 { parts.append("\(finished - failed) FINISHED") }
         return parts.isEmpty ? "EMPTY" : parts.joined(separator: " · ")
     }
 }

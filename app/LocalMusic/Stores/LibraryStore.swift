@@ -81,6 +81,29 @@ final class LibraryStore {
     /// were handed, so they need the current row to write back.
     func song(id: String) -> SongRecord? { try? repo.song(id: id) }
 
+    /// What an ingredient's source track is called *now*.
+    ///
+    /// `songIngredient.sourceSongTitle` is a copy taken at the moment the mix
+    /// was rendered. It exists so a row still reads sensibly after its source
+    /// has been deleted — it is a tombstone, not the current name — so a mix
+    /// went on naming a track by whatever it was called on the day it was
+    /// built. Resolve it live while the source is still there, and fall back
+    /// to the stored copy only when it is not.
+    ///
+    /// The id may be a part or a whole song: `JobsStore.resolveIngredient`
+    /// accepts either, so this looks for both, in the same order.
+    func sourceTitle(for ingredient: SongIngredientRecord) -> String {
+        guard let sourceId = ingredient.partId else {
+            return ingredient.sourceSongTitle
+        }
+        if let part = try? partsRepo?.part(id: sourceId) ?? nil,
+           let song = try? repo.song(id: part.songId) {
+            return song.title
+        }
+        if let song = try? repo.song(id: sourceId) { return song.title }
+        return ingredient.sourceSongTitle
+    }
+
     /// Whether another song already has this name. Renames are refused on it —
     /// see `SongEditor.commitTitle`.
     func titleIsTaken(_ title: String, excluding songId: String) -> Bool {

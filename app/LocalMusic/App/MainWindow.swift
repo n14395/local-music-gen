@@ -321,7 +321,13 @@ struct MainWindow: View {
         // made, and reading "QUEUE 1" beside it was the counter disagreeing
         // with the number the user typed.
         let load = QueueLoad.of(jobs: Array(env.jobsStore.active.values))
-        return load.jobs == 0 ? .idle : .working(takes: load.takesLeft)
+        if load.jobs > 0 { return .working(takes: load.takesLeft) }
+        // Running work outranks a failure, because the render in front of you
+        // is the more useful thing to watch — but with nothing running, a
+        // failure nobody has dismissed is the truth about the queue and
+        // "QUEUE EMPTY" is not.
+        if load.failed > 0 { return .failed(count: load.failed) }
+        return .idle
     }
 
     // MARK: - Queue panel

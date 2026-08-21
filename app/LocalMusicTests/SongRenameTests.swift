@@ -166,3 +166,128 @@ final class SongRenameTests: XCTestCase {
         XCTAssertNil(editor.titleError)
     }
 }
+
+/// The two places a song's name was copied rather than resolved.
+///
+/// `songIngredient.sourceSongTitle` is written when a mix renders and is what
+/// the "Ingredients" list on a render prints. It has to stay — it is the only
+/// thing left to print once the source part has been deleted — but while the
+/// source *is* still there, the current name is the right one to show.
+final class IngredientTitleTests: XCTestCase {
+    private func song(id: String, title: String) -> SongRecord {
+        SongRecord(id: id, title: title, prompt: "", lyrics: nil,
+                   modelId: "m", modelName: "M", groupId: nil,
+                   paramsJSON: "{}", durationS: 10, sampleRate: 32000,
+                   fileName: id + ".wav", seedUsed: nil, createdAt: Date(),
+                   rating: 0, notes: "", favorite: false,
+                   origin: SongOrigin.generated.rawValue, artist: nil)
+    }
+
+    private func part(id: String, songId: String) -> PartRecord {
+        PartRecord(id: id, songId: songId, kind: "stem.vocals", name: "Vocals",
+                   fileName: id + ".wav", format: "wav", previewFileName: nil,
+                   modelId: "demucs", modelName: "Demucs 4-stem", jobId: nil,
+                   splitParamsJSON: "{}", durationS: 10, sampleRate: 44100,
+                   createdAt: Date())
+    }
+
+    private func ingredient(sourceId: String?, storedTitle: String)
+        -> SongIngredientRecord {
+        SongIngredientRecord(songId: "render1", slotId: "vocals-1",
+                             partId: sourceId, sourceSongTitle: storedTitle,
+                             transformJSON: "{}")
+    }
+
+    @MainActor
+    private func store() throws
+        -> (LibraryStore, LibraryRepository, PartsRepository) {
+        let db = try DatabaseManager.inMemory()
+        let library = LibraryRepository(db: db)
+        let parts = PartsRepository(db: db)
+        return (LibraryStore(repo: library, partsRepo: parts), library, parts)
+    }
+
+    /// The reported bug: rename the track a render was built from, and the
+    /// render kept naming it whatever it was called on the day it rendered.
+    @MainActor
+    func testAPartIngredientReportsTheRenamedTitle() throws {
+        let (store, library, parts) = try store()
+        try library.insert(song(id: "s1", title: "track01"))
+        try parts.insert(part(id: "p1", songId: "s1"))
+
+        var stored = try XCTUnwrap(library.song(id: "s1"))
+        stored.title = "track01-test"
+        try library.update(stored)
+
+        XCTAssertEqual(
+            store.sourceTitle(for: ingredient(sourceId: "p1",
+                                              storedTitle: "track01")),
+            "track01-test")
+    }
+
+    /// An ingredient can name a whole song rather than a part —
+    /// `JobsStore.resolveIngredient` accepts either.
+    @MainActor
+    func testAWholeSongIngredientAlsoResolvesLive() throws {
+        let (store, library, _) = try store()
+        try library.insert(song(id: "s1", title: "track01"))
+
+        var stored = try XCTUnwrap(library.song(id: "s1"))
+        stored.title = "track01-test"
+        try library.update(stored)
+
+        XCTAssertEqual(
+            store.sourceTitle(for: ingredient(sourceId: "s1",
+                                              storedTitle: "track01")),
+            "track01-test")
+    }
+
+    /// The tombstone still has to work: once the source is gone the stored
+    /// copy is all there is, and a render that names a deleted take reads far
+    /// better than one that names nothing.
+    @MainActor
+    func testADeletedSourceFallsBackToTheStoredName() throws {
+        let (store, _, _) = try store()
+        XCTAssertEqual(
+            store.sourceTitle(for: ingredient(sourceId: "gone",
+                                              storedTitle: "deleted take")),
+            "deleted take")
+    }
+
+    @MainActor
+    func testAnIngredientWithNoSourceIdUsesTheStoredName() throws {
+        let (store, _, _) = try store()
+        XCTAssertEqual(
+            store.sourceTitle(for: ingredient(sourceId: nil,
+                                              storedTitle: "whatever it was")),
+            "whatever it was")
+    }
+}
+
+/// Export copies the file, so the name it offers has to match what is actually
+/// written.
+final class ExportNameTests: XCTestCase {
+    func testTheRealExtensionIsKept() {
+        XCTAssertEqual(
+            SongDetailView.exportName(title: "Midnight Drive",
+                                      fileName: "abc123.mp3"),
+            "Midnight Drive.mp3")
+        XCTAssertEqual(
+            SongDetailView.exportName(title: "track01", fileName: "abc.flac"),
+            "track01.flac")
+    }
+
+    /// A slash in a title is a path separator in a filename.
+    func testSlashesInTheTitleAreNeutralised() {
+        XCTAssertEqual(
+            SongDetailView.exportName(title: "AC/DC bootleg",
+                                      fileName: "abc.wav"),
+            "AC-DC bootleg.wav")
+    }
+
+    func testAnExtensionlessFileGetsNoDot() {
+        XCTAssertEqual(
+            SongDetailView.exportName(title: "track01", fileName: "abc"),
+            "track01")
+    }
+}

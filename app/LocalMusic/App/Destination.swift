@@ -32,7 +32,7 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
         case .studio: "Studio"
         case .styleTransfer: "Style Transfer"
         case .actions: "Actions"
-        case .workbench: "Workbench"
+        case .workbench: "AI Workbench"
         case .library: "Library"
         case .models: "Models"
         }

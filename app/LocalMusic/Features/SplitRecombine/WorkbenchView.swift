@@ -198,7 +198,7 @@ struct WorkbenchScreen: View {
         @Bindable var model = model
         return BenchTopBar {
             HStack(spacing: 12) {
-                Text("Workbench")
+                Text("AI Workbench")
                     .font(Bench.Typo.screenTitle)
                     .tracking(-0.15)
                     .foregroundStyle(Bench.Palette.textPrimary)

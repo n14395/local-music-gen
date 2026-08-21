@@ -10,8 +10,10 @@ Usage: python3 scripts/verify_engine.py
 from __future__ import annotations
 
 import hashlib
+import glob
 import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -307,11 +309,66 @@ def check_catalog_curation() -> None:
           f"declares applies_when: {liars}")
 
 
+def check_adapter_binaries() -> None:
+    """Prebuilt helper executables load their libraries from beside themselves.
+
+    acestep.cpp is compiled by scripts/build_acestep_cpp.sh and shipped as
+    binaries in engine/adapters/acestepcpp/bin/. cmake bakes an ABSOLUTE
+    LC_RPATH pointing at its own build tree, and for a while only the three
+    executables were copied out — so they loaded libggml*.dylib across a path
+    in the developer's home directory. That works on the machine that compiled
+    them, right up until the checkout moves, and it has never worked inside the
+    .app at all. The symptom is a job that dies with `dyld: Library not loaded`
+    and exit -6, which reaches the user as a red queue row and nothing else.
+
+    Two invariants, both cheap: nothing in bin/ may name a path outside itself,
+    and the libraries it asks for have to be there.
+    """
+    print("• adapter binaries")
+    adapters = os.path.join(ROOT, "engine", "adapters")
+    if not os.path.isdir(adapters):
+        return
+    bins = sorted(glob.glob(os.path.join(adapters, "*", "bin", "*")))
+    machos, absolute, missing = [], [], []
+    for path in bins:
+        if os.path.basename(path).startswith("."):
+            continue
+        head = open(path, "rb").read(4)
+        if head not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"):
+            continue          # not Mach-O (a README, a revision stamp)
+        machos.append(path)
+        out = subprocess.run(["otool", "-l", path], capture_output=True,
+                             text=True).stdout
+        lines = out.splitlines()
+        for i, line in enumerate(lines):
+            if "LC_RPATH" not in line:
+                continue
+            for follow in lines[i:i + 4]:
+                parts = follow.split()
+                if len(parts) >= 2 and parts[0] == "path":
+                    if not parts[1].startswith("@"):
+                        absolute.append(f"{os.path.basename(path)} → {parts[1]}")
+                    break
+        deps = subprocess.run(["otool", "-L", path], capture_output=True,
+                              text=True).stdout
+        for dep in re.findall(r"@rpath/(\S+)", deps):
+            if not os.path.exists(os.path.join(os.path.dirname(path), dep)):
+                missing.append(f"{os.path.basename(path)} needs {dep}")
+
+    check("adapter bin/ holds Mach-O binaries to check", bool(machos),
+          "found none — has the acestep.cpp build been run?")
+    check("no adapter binary has an absolute rpath", not absolute,
+          f"{absolute[:4]}")
+    check("every @rpath library sits beside its binary", not missing,
+          f"{sorted(set(missing))[:4]}")
+
+
 def main() -> int:
     tmp = tempfile.mkdtemp(prefix="localmusic-verify-engine-")
     token = secrets.token_hex(16)
 
     check_catalog_curation()
+    check_adapter_binaries()
     check_warm_pool_logic()
 
     print("• bootstrap & system")

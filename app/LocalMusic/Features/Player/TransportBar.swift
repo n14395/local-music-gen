@@ -46,6 +46,12 @@ struct TransportBar: View {
         /// with the number the user typed.
         case working(takes: Int)
         case downloading(percent: Int)
+        /// Nothing is running, and something that ran did not work. Distinct
+        /// from `idle` because this capsule is the only always-visible report
+        /// on background work: a render that fails while you are on another
+        /// screen otherwise leaves the window saying QUEUE EMPTY, which is
+        /// how a failure came to look like a queue that quietly drained.
+        case failed(count: Int)
     }
 
     var onToggleQueue: (() -> Void)?
@@ -213,6 +219,7 @@ struct TransportBar: View {
         case .idle: "Show the queue"
         case .working: "Show what is rendering"
         case .downloading: "Show the queue and the transfer"
+        case .failed: "Show what went wrong"
         }
     }
 
@@ -242,6 +249,17 @@ struct TransportBar: View {
                     .foregroundStyle(Bench.Palette.accent)
                 panelChevron(Bench.Palette.accent.opacity(0.7))
             }
+        case .failed(let count):
+            capsule(tinted: true, open: isQueueOpen,
+                    tone: Bench.Palette.danger) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Bench.Palette.danger)
+                Text(count == 1 ? "1 FAILED" : "\(count) FAILED")
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.danger)
+                panelChevron(Bench.Palette.danger.opacity(0.7))
+            }
         }
     }
 
@@ -257,11 +275,12 @@ struct TransportBar: View {
     /// opens is at the far side of the window from the button, so the button
     /// has to say whether it is the thing that put it there.
     private func capsule<Content: View>(tinted: Bool, open: Bool = false,
+                                        tone: Color = Bench.Palette.accent,
                                         @ViewBuilder content: () -> Content) -> some View {
-        let fill: Color = if tinted { Bench.Palette.accent.opacity(open ? 0.2 : 0.12) }
+        let fill: Color = if tinted { tone.opacity(open ? 0.2 : 0.12) }
                           else if open { Bench.Palette.control }
                           else { Bench.Palette.raised }
-        let stroke: Color = if tinted { Bench.Palette.accent.opacity(open ? 0.5 : 0.26) }
+        let stroke: Color = if tinted { tone.opacity(open ? 0.5 : 0.26) }
                             else if open { Bench.Palette.cardStroke }
                             else { Bench.Palette.cardStrokeSoft }
         return HStack(spacing: 9) { content() }

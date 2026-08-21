@@ -270,7 +270,7 @@ struct SongDetailView: View {
                 ForEach(rows, id: \.slotId) { row in
                     HStack(spacing: 8) {
                         StemBar(kind: row.slotId, width: 4, height: 12)
-                        Text("\(row.slotId) · \(row.sourceSongTitle)")
+                        Text("\(row.slotId) · \(library.sourceTitle(for: row))")
                             .font(Bench.Typo.secondary)
                             .foregroundStyle(Bench.Palette.textSecondary)
                             .lineLimit(1)
@@ -348,10 +348,19 @@ struct SongDetailView: View {
         library.update(updated)
     }
 
+    /// Export is a copy, so the offered name has to carry the file's real
+    /// extension. It used to say `.wav` for everything, which renamed an
+    /// imported mp3 or flac into a lie that nothing downstream could open.
+    static func exportName(title: String, fileName: String) -> String {
+        let base = title.replacingOccurrences(of: "/", with: "-")
+        let ext = (fileName as NSString).pathExtension
+        return ext.isEmpty ? base : "\(base).\(ext)"
+    }
+
     private func exportSong() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = song.title
-            .replacingOccurrences(of: "/", with: "-") + ".wav"
+        panel.nameFieldStringValue = Self.exportName(title: song.title,
+                                                     fileName: song.fileName)
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             try? FileManager.default.removeItem(at: url)

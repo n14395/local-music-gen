@@ -118,3 +118,84 @@ final class QueueLoadTests: XCTestCase {
         XCTAssertEqual(job(count: 4, take: -1).takeLabel, "Take 1 of 4")
     }
 }
+
+/// The reported bug: a render fails, and the queue rail draws "Nothing queued"
+/// over a failed card that is still in the store — so the failure is invisible
+/// until a LATER submission makes the counter non-zero and the old card
+/// reappears underneath the new one.
+///
+/// The counters and the emptiness test had been the same number. They are not
+/// the same question: one is outstanding work, the other is how many rows
+/// there are to draw.
+final class QueueLoadFinishedTests: XCTestCase {
+    private func job(id: String = UUID().uuidString, count: Int = 1,
+                     status: JobStatus) -> JobsStore.ActiveJob {
+        let info = JobInfo(
+            jobId: id, groupId: "grp", modelId: "acestep-cpp-xl-sft",
+            task: "generate", status: status, prompt: "p", lyrics: nil,
+            durationS: 10, count: count, params: [:],
+            createdAt: "2026-08-21T17:00:00Z", progress: nil, result: nil,
+            error: nil)
+        return JobsStore.ActiveJob(info: info, progress: nil, status: status,
+                                   error: nil, preview: nil)
+    }
+
+    func testFailedJobIsNotAnEmptyQueue() {
+        let load = QueueLoad.of(jobs: [job(status: .failed)])
+        XCTAssertFalse(load.isEmpty, "a failed card still has to be drawn")
+        XCTAssertEqual(load.finished, 1)
+        XCTAssertEqual(load.failed, 1)
+        // …and it is not outstanding work: nothing is rendering.
+        XCTAssertEqual(load.jobs, 0)
+        XCTAssertEqual(load.takes, 0)
+        XCTAssertEqual(load.takesLeft, 0)
+    }
+
+    func testSucceededAndCancelledAlsoKeepTheListVisible() {
+        for status in [JobStatus.succeeded, .canceled] {
+            let load = QueueLoad.of(jobs: [job(status: status)])
+            XCTAssertFalse(load.isEmpty, "\(status) row still needs drawing")
+            XCTAssertEqual(load.finished, 1)
+            // Only a failure is a failure — cancelling is something the user
+            // did, and the transport must not shout about it.
+            XCTAssertEqual(load.failed, 0)
+        }
+    }
+
+    func testNothingAtAllIsStillEmpty() {
+        XCTAssertTrue(QueueLoad.of(jobs: []).isEmpty)
+        XCTAssertEqual(QueueLoad.of(jobs: []).headerLabel, "EMPTY")
+    }
+
+    /// A four-take job that failed contributes no takes to the header — the
+    /// count is work still to do, and there is none.
+    func testFailedMultiTakeJobContributesNoTakes() {
+        let load = QueueLoad.of(jobs: [job(count: 4, status: .failed)])
+        XCTAssertEqual(load.takes, 0)
+        XCTAssertEqual(load.headerLabel, "1 FAILED")
+    }
+
+    func testHeaderCountsRunningAndFinishedTogether() {
+        let load = QueueLoad.of(jobs: [job(count: 2, status: .generating),
+                                       job(status: .failed),
+                                       job(status: .succeeded)],
+                                downloads: 1)
+        XCTAssertEqual(load.headerLabel,
+                       "2 TAKES · 1 DOWNLOAD · 1 FAILED · 1 FINISHED")
+        XCTAssertFalse(load.isEmpty)
+    }
+
+    /// The transport capsule's priority: a render in flight is the more useful
+    /// thing to watch, but with nothing running the failure is the truth.
+    func testRunningWorkOutranksAFailureButIdleDoesNot() {
+        let both = QueueLoad.of(jobs: [job(status: .generating),
+                                       job(status: .failed)])
+        XCTAssertEqual(both.jobs, 1)
+        XCTAssertEqual(both.failed, 1)
+
+        let onlyFailed = QueueLoad.of(jobs: [job(status: .failed),
+                                             job(status: .failed)])
+        XCTAssertEqual(onlyFailed.jobs, 0)
+        XCTAssertEqual(onlyFailed.failed, 2)
+    }
+}
