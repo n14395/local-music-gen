@@ -88,7 +88,7 @@ final class LibraryOriginTests: XCTestCase {
     }
 
     func testGeneratedScopeIsLabelledAsSuch() {
-        XCTAssertEqual(LibraryScope.songs.title, "Generated Songs")
+        XCTAssertEqual(LibraryScope.songs.title, "Generated")
         XCTAssertEqual(LibraryScope.imported.title, "Imported")
     }
 

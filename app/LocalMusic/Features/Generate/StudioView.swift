@@ -388,10 +388,37 @@ struct StudioView: View {
                 }
             }
             BenchTextField(text: $name, placeholder: library.nextTrackName)
+            if let taken = nameCollision {
+                Text(taken)
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .benchCard()
+    }
+
+    /// Said before you generate, not after. A name identifies one track —
+    /// renaming to a taken name is refused outright — but a generation
+    /// cannot be refused at ingest, because by then the audio exists. So the
+    /// name is made free on the way in and this says it will be, while there
+    /// is still time to type a different one.
+    ///
+    /// Warn, not error: generating a second "warehouse jam" is a reasonable
+    /// thing to do, and the take letters already disambiguate a batch.
+    private var nameCollision: String? {
+        guard !isDefaultName else { return nil }
+        let names = SongRecord.takeNames(base: effectiveName, count: count)
+        let clashes = names.filter { library.titleIsTaken($0, excluding: "") }
+        guard let first = clashes.first else { return nil }
+        if clashes.count == names.count, names.count > 1 {
+            return "Those names are all taken — the takes will land as "
+                + "“\(library.uniqueTitle(first))” and so on."
+        }
+        return "“\(first)” is taken — it will land as "
+            + "“\(library.uniqueTitle(first))”."
     }
 
     /// The name a submission right now would use: what you typed, or the

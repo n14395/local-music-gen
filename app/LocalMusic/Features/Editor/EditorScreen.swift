@@ -86,6 +86,7 @@ struct EditorScreen: View {
                 .keyboardShortcut("c", modifiers: .command)
             Button("") { store.paste() }
                 .keyboardShortcut("v", modifiers: .command)
+                .disabled(!store.canPaste)
         }
         .opacity(0)
         .frame(width: 0, height: 0)
@@ -243,8 +244,9 @@ struct EditorScreen: View {
                 if showsApplyCard {
                     EditorApplyCard(store: store,
                                     onOpenLibrary: onOpenLibrary)
-                } else if previewCaveats.count > 0 {
-                    honestyBanner
+                } else {
+                    if let note = store.actionNote { noteBanner(note) }
+                    if previewCaveats.count > 0 { honestyBanner }
                 }
                 Group {
                     EditorOverviewStrip(store: store)
@@ -300,6 +302,25 @@ struct EditorScreen: View {
         if abs(store.document.pitchSemitones) > 1e-6 { out.append("pitch") }
         if !store.document.enabledEffects.isEmpty { out.append("effects") }
         return out
+    }
+
+    /// What an action did, when it would otherwise have done nothing
+    /// visible — an auto-trim that found no silence, say.
+    private func noteBanner(_ text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(Bench.Palette.textQuaternary)
+            Text(text)
+                .font(Bench.Typo.secondary)
+                .foregroundStyle(Bench.Palette.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 13).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Bench.Palette.card))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
     }
 
     private var honestyBanner: some View {
@@ -431,12 +452,23 @@ struct EditorScreen: View {
             Button("Copy") { store.copySelection() }
                 .disabled(store.selection == nil)
             Button("Paste") { store.paste() }
-                .disabled(store.clipboard.isEmpty)
+                .disabled(!store.canPaste)
+            // A copied slice points into the file it came from, so it cannot
+            // be pasted elsewhere. Said out loud: a greyed Paste with no
+            // explanation is a small mystery every time.
+            if !store.clipboard.isEmpty, !store.canPaste,
+               let from = store.clipboardSourceTitle {
+                Text("Copied from “\(from)” — paste works in that track")
+            }
             Divider()
             Button("Reverse selection") { store.reverseSelection() }
                 .disabled(store.selection == nil)
-            Button("Auto-trim silence…  −48 dB") {
-                Task { await store.autoTrimSilence() }
+            Menu("Auto-trim silence") {
+                ForEach(EditorStore.autoTrimThresholdsDb, id: \.self) { db in
+                    Button(String(format: "Below %.0f dB", db)) {
+                        Task { await store.autoTrimSilence(thresholdDb: db) }
+                    }
+                }
             }
             Divider()
             Toggle("Show beat grid", isOn: Binding(

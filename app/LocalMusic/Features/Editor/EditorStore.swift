@@ -114,6 +114,16 @@ final class EditorStore {
     var wellWidth: CGFloat = 0
 
     private(set) var clipboard: [EditSegment] = []
+    /// Which material the clipboard was cut from. A copied slice is a
+    /// reference into THAT source file, so pasting it into another track
+    /// would splice in whatever happens to sit at those seconds of a
+    /// different recording. The clipboard is kept across tracks anyway, so
+    /// the menu can say why it is unavailable rather than going quiet.
+    private(set) var clipboardSourceId: String?
+    private(set) var clipboardSourceTitle: String?
+    /// A one-line result from an action that would otherwise do nothing
+    /// visible. Cleared by the next edit, and after a few seconds.
+    private(set) var actionNote: String?
     var applyStage: ApplyStage = .idle
     var exportStage: ApplyStage = .idle
     /// The export dialog (E04) — opened from two places on the rail.
@@ -138,6 +148,7 @@ final class EditorStore {
     /// add exactly one however many frames it spans — see `perform`.
     private(set) var undoStepsRegistered = 0
     private var persistTask: Task<Void, Never>?
+    private var noteTask: Task<Void, Never>?
     private var hasPendingWrite = false
     /// Which material the in-flight apply belongs to. An apply survives
     /// navigating away and opening something else, so every write it makes
@@ -385,7 +396,6 @@ final class EditorStore {
         cursorS = 0
         visibleStartS = 0
         pxPerSecond = 0
-        clipboard = []
         // A render started for another track keeps its stage — it is still
         // running, and clearing it here made the progress card describe
         // whatever was opened next.
@@ -465,6 +475,7 @@ final class EditorStore {
             registerUndo(name, before: before, selectionBefore: selectionBefore)
         }
         interactionKey = key
+        actionNote = nil
         rebuild()
         schedulePersist()
         refreshPreviewAfterEdit()
@@ -599,6 +610,14 @@ final class EditorStore {
     func copySelection() {
         guard let selection else { return }
         clipboard = EditProgram.extract(segments, range: selection)
+        clipboardSourceId = material?.id
+        clipboardSourceTitle = material?.title
+    }
+
+    /// Whether the clipboard belongs to what is open. See
+    /// `clipboardSourceId` for why it is not simply cleared.
+    var canPaste: Bool {
+        !clipboard.isEmpty && clipboardSourceId == material?.id
     }
 
     func cutSelection() {
@@ -608,7 +627,7 @@ final class EditorStore {
     }
 
     func paste() {
-        guard !clipboard.isEmpty else { return }
+        guard canPaste else { return }
         let at = cursorS
         let slices = clipboard
         perform("Paste") {
@@ -895,10 +914,36 @@ final class EditorStore {
         return EditRange(start: start, end: end)
     }
 
-    func autoTrimSilence() async {
-        guard let keep = await detectEdgeSilence() else { return }
+    /// The thresholds the menu offers. A single hard-coded one is wrong for
+    /// real material at both ends: a quiet ambient intro sits above −48 dB
+    /// and never gets trimmed, a noisy take sits below it and loses its
+    /// first beat.
+    static let autoTrimThresholdsDb: [Double] = [-36, -42, -48, -54, -60]
+
+    func autoTrimSilence(thresholdDb: Double = -48) async {
+        guard let keep = await detectEdgeSilence(thresholdDb: thresholdDb)
+        else {
+            // Doing nothing silently is what makes a menu item feel broken.
+            note(String(format: "Nothing to trim — neither end is below "
+                        + "%.0f dB.", thresholdDb))
+            return
+        }
+        let trimmed = timelineDurationS - keep.length
         perform("Auto-trim Silence") {
             $0.ops.append(EditOp(kind: .trim(keep)))
+        }
+        note(String(format: "Trimmed %.2f s of silence at %.0f dB.",
+                    trimmed, thresholdDb))
+    }
+
+    /// Show a one-line result, and take it away again.
+    private func note(_ text: String) {
+        actionNote = text
+        noteTask?.cancel()
+        noteTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            if self?.actionNote == text { self?.actionNote = nil }
         }
     }
 

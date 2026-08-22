@@ -704,7 +704,10 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
         switch self {
         // "Songs" while imports had nowhere else to go; now that they do, the
         // distinction has to be on the label rather than implied by absence.
-        case .songs: "Generated Songs"
+        // The noun is dropped because the column of scopes supplies it — every
+        // one of these is a kind of thing in the library, and only this one was
+        // saying so.
+        case .songs: "Generated"
         case .imported: "Imported"
         case .parts: "Parts"
         case .renders: "Renders"

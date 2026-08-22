@@ -228,6 +228,35 @@ struct LibraryRepository: Sendable {
         return (files.count, bytes)
     }
 
+    /// `title`, or the first `title (2)`, `title (3)`… that no other song
+    /// answers to.
+    ///
+    /// The rename path REFUSES a duplicate, because there the user is looking
+    /// at the field and can pick again. Ingest cannot refuse: the audio
+    /// already exists, and throwing it away because a name was taken while it
+    /// rendered would be losing work over bookkeeping. So the name is made
+    /// free instead, the way a file manager does it.
+    ///
+    /// `reserved` covers the names allocated earlier in the same batch, which
+    /// are not in the database yet.
+    func uniqueTitle(_ title: String, reserved: Set<String> = []) throws -> String {
+        let lowerReserved = Set(reserved.map { $0.lowercased() })
+        func isFree(_ candidate: String) throws -> Bool {
+            if lowerReserved.contains(candidate.lowercased()) { return false }
+            return try !titleIsTaken(candidate, excluding: "")
+        }
+        if try isFree(title) { return title }
+        var suffix = 2
+        while true {
+            let candidate = "\(title) (\(suffix))"
+            if try isFree(candidate) { return candidate }
+            suffix += 1
+            // A library cannot hold this many collisions; the bound is here
+            // so a bug upstream cannot spin forever.
+            if suffix > 9999 { return "\(title) (\(UUID().uuidString.prefix(4)))" }
+        }
+    }
+
     /// Hearted songs of any origin — the song half of the Favourites scope.
     func favoriteCount() throws -> Int {
         try db.queue.read { database in

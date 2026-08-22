@@ -110,6 +110,11 @@ final class LibraryStore {
         (try? repo.titleIsTaken(title, excluding: songId)) ?? false
     }
 
+    /// `title` made free of collisions — see `LibraryRepository.uniqueTitle`.
+    func uniqueTitle(_ title: String, reserved: Set<String> = []) -> String {
+        (try? repo.uniqueTitle(title, reserved: reserved)) ?? title
+    }
+
     func tags(for songId: String) -> [String] {
         (try? repo.tags(for: songId)) ?? []
     }

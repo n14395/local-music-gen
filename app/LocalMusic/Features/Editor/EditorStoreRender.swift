@@ -546,7 +546,8 @@ extension EditorStore {
             return
         }
         let song = SongRecord(
-            id: songId, title: title, prompt: "", lyrics: nil,
+            id: songId, title: library.uniqueTitle(title),
+            prompt: "", lyrics: nil,
             modelId: job.modelId, modelName: "Editor selection",
             groupId: job.groupId, paramsJSON: "{}",
             durationS: artifact.durationS ?? 0,

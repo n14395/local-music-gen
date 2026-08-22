@@ -470,3 +470,68 @@ final class EditorAmplifyTests: XCTestCase {
         XCTAssertTrue(store.document.ops.isEmpty)
     }
 }
+
+/// The clipboard belongs to the track it was cut from, and auto-trim says
+/// what it did.
+@MainActor
+final class EditorClipboardAndTrimTests: XCTestCase {
+
+    private func makeEnv() throws -> AppEnvironment {
+        let env = AppEnvironment(database: try DatabaseManager.inMemory())
+        for (id, title) in [("s1", "One"), ("s2", "Two")] {
+            env.library.insert(SongRecord(
+                id: id, title: title, prompt: "", lyrics: nil, modelId: "m",
+                modelName: "M", groupId: nil, paramsJSON: "{}",
+                durationS: 100, sampleRate: 44100, fileName: "\(id).wav",
+                seedUsed: nil, createdAt: Date(), rating: 0, notes: "",
+                favorite: false))
+        }
+        return env
+    }
+
+    func testPasteIsOfferedOnlyInTheTrackTheCopyCameFrom() throws {
+        let env = try makeEnv()
+        let store = env.editor!
+        store.open(songId: "s1")
+        store.selection = EditRange(start: 10, end: 20)
+        store.copySelection()
+        XCTAssertTrue(store.canPaste)
+        XCTAssertEqual(store.clipboardSourceTitle, "One")
+
+        store.open(songId: "s2")
+        XCTAssertFalse(store.canPaste, "a slice points into the file it "
+                       + "was cut from")
+        // Kept, not discarded, so the menu can explain itself.
+        XCTAssertFalse(store.clipboard.isEmpty)
+        XCTAssertEqual(store.clipboardSourceTitle, "One")
+
+        let before = store.document.ops.count
+        store.paste()
+        XCTAssertEqual(store.document.ops.count, before, "and it refuses")
+
+        store.open(songId: "s1")
+        XCTAssertTrue(store.canPaste, "back where it came from")
+        store.paste()
+        XCTAssertEqual(store.document.ops.count, 1)
+    }
+
+    /// Auto-trim on material with no edge silence used to do nothing at all,
+    /// with nothing on screen to say so.
+    func testAutoTrimSaysWhenItFoundNothing() async throws {
+        let env = try makeEnv()
+        let store = env.editor!
+        store.open(songId: "s1")
+        // No file on disk, so detection finds nothing — the point is that
+        // the silence is reported rather than swallowed.
+        await store.autoTrimSilence(thresholdDb: -48)
+        XCTAssertNotNil(store.actionNote)
+        XCTAssertTrue(store.actionNote?.contains("Nothing to trim") ?? false,
+                      store.actionNote ?? "no note")
+        XCTAssertTrue(store.document.ops.isEmpty)
+    }
+
+    func testTheThresholdMenuOffersARange() {
+        XCTAssertEqual(EditorStore.autoTrimThresholdsDb,
+                       [-36, -42, -48, -54, -60])
+    }
+}

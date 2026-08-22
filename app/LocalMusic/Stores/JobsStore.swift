@@ -754,8 +754,9 @@ final class JobsStore {
         // the job was going to produce.
         var chosen: String?
         if case .generate(let name)? = pendingContext[job.jobId] { chosen = name }
-        let title = chosen ?? SongRecord.trackName(
+        let wanted = chosen ?? SongRecord.trackName(
             number: ((try? repo.highestTrackNumber()) ?? 0) + 1)
+        let title = (try? repo.uniqueTitle(wanted)) ?? wanted
         let paramsJSON = (try? String(
             decoding: BackendClient.encoder.encode(job.params),
             as: UTF8.self)) ?? "{}"
@@ -892,7 +893,17 @@ final class JobsStore {
         else { chosen = nil }
         let base = chosen ?? SongRecord.trackName(
             number: ((try? repo.highestTrackNumber()) ?? 0) + 1)
+        // A name identifies one track — the rule the rename path enforces by
+        // refusing. Ingest cannot refuse (the audio exists), so a name that
+        // was taken while this rendered is made free instead.
+        var reserved: Set<String> = []
         let names = SongRecord.takeNames(base: base, count: outputs.count)
+            .map { name -> String in
+                let unique = (try? repo.uniqueTitle(name, reserved: reserved))
+                    ?? name
+                reserved.insert(unique)
+                return unique
+            }
         for (take, output) in outputs.enumerated() {
             let songId = UUID().uuidString.lowercased()
             let fileName = songId + ".wav"
@@ -1136,7 +1147,8 @@ final class JobsStore {
             return
         }
         let song = SongRecord(
-            id: songId, title: title, prompt: "", lyrics: nil,
+            id: songId, title: (try? repo.uniqueTitle(title)) ?? title,
+            prompt: "", lyrics: nil,
             modelId: job.modelId, modelName: modelName(job.modelId),
             groupId: job.groupId, paramsJSON: "{}",
             durationS: mixdown.durationS ?? 0,
