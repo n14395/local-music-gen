@@ -23,6 +23,11 @@ struct LibrarySongList: View {
     @Binding var checked: Set<String>
     let actions: SongActions
     let onPlay: (SongRecord) -> Void
+    /// Scrubbing a row's waveform. Separate from `onPlay` because a scrub on a
+    /// track that is not the one playing has to start it *and* land at the
+    /// point you clicked, which is two calls into the transport rather than
+    /// one.
+    let onSeek: (SongRecord, Double) -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -40,7 +45,8 @@ struct LibrarySongList: View {
                             playback: playback,
                             onToggleCheck: { toggleCheck(song) },
                             onPlay: { onPlay(song) },
-                            onSelect: { selectedId = song.id })
+                            onSelect: { selectedId = song.id },
+                            onSeek: { onSeek(song, $0) })
                             .id(song.id)
                             .contextMenu { menu(for: song) }
                     }
@@ -128,12 +134,20 @@ struct LibrarySongList: View {
 
 // MARK: - Row
 
-/// checkbox · play · title block · stars · heart.
+/// checkbox · play · title block · waveform · stars · heart.
 ///
-/// The title block takes the slack the waveform used to: a row is read by its
-/// name and prompt, and forty little envelopes down a list told you far less
-/// than the words they were squeezing. Scrubbing lives on the detail pane's
-/// waveform, which is big enough to aim at.
+/// The strip is the same object the parts rows draw: one `BenchWaveformLoader`
+/// over the track's own cached peaks, tinted up to the play position and
+/// scrubbable where you click it. It sits in the same slot Parts puts it in,
+/// between the words and the trailing controls, so the two scopes read as one
+/// list with different material in them rather than as two designs.
+///
+/// It was dropped once, on the argument that forty little envelopes told you
+/// less than the words they were squeezing. What answers that is not the
+/// waveform being worth more than it was — it is that it no longer does the
+/// squeezing: the title block has a floor and a ceiling of its own, and in a
+/// pane too narrow to honour both, the ladder in `body` drops the strip and
+/// gives the words back every point of it.
 ///
 /// The stars keep a fixed trailing column and the heart its own slot after
 /// them, so both line up down the list whether or not a given track has one —
@@ -151,38 +165,50 @@ struct LibrarySongRow: View {
     let onToggleCheck: () -> Void
     let onPlay: () -> Void
     let onSelect: () -> Void
+    /// Scrubbing the strip.
+    let onSeek: (Double) -> Void
 
     private var isCurrent: Bool { playback.currentSongId == song.id }
 
+    /// `currentSongId` is read first and the guard returns before
+    /// `currentTime` on every row that is not the one playing. SwiftUI tracks
+    /// the properties a body actually reads, so the order here is the
+    /// difference between one row redrawing on each transport tick and every
+    /// visible row doing it.
+    private var playedFraction: Double {
+        guard isCurrent, song.durationS > 0 else { return 0 }
+        return playback.currentTime / song.durationS
+    }
+
+    /// Under this a strip is bars of noise rather than something you can tell
+    /// two takes apart by. Read from the parts row rather than retyped: it is
+    /// the same judgement about the same drawing, and two copies of it would
+    /// drift the moment either list was tuned.
+    static let minStripWidth = LibraryPartRow.minStripWidth
+
+    /// The title block's floor and ceiling.
+    ///
+    /// The floor is deliberately tight, and the number is not a taste: at the
+    /// window's 1100 pt floor the library pane is 442 pt, and a row that wants
+    /// one point more than that is a row whose waveform nobody ever sees.
+    /// `SongRowFitTests` measures the whole row against that budget, which is
+    /// what this figure is left over from. It only ever binds at that width
+    /// anyway, and there a truncated prompt beside a waveform reads better
+    /// than a roomy prompt beside nothing.
+    ///
+    /// The ceiling is where a prompt pasted out of the Studio stops being
+    /// worth more row than the sound it describes.
+    static let minTitleWidth: CGFloat = 122
+    static let maxTitleWidth: CGFloat = 480
+
     var body: some View {
-        HStack(spacing: 12) {
-            if showsCheckbox {
-                LibraryCheckbox(isOn: isChecked, action: onToggleCheck)
-            }
-            BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
-                            isCurrent: isCurrent, size: 26, action: onPlay)
-            VStack(alignment: .leading, spacing: 3) {
-                TrackTitle(song: song, font: Bench.Typo.body, weight: .semibold)
-                Text(LibrarySongRow.metaLine(for: song, partCount: partCount))
-                    .metaLine()
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if isSplitting {
-                HStack(spacing: 6) {
-                    BenchSpinner(size: 12)
-                    Text("SPLITTING")
-                        .font(Bench.Typo.mono(10, .semibold))
-                        .foregroundStyle(Bench.Palette.accent)
-                }
-                .fixedSize()
-            }
-            if let count = LibrarySongRow.editCount(of: song), count > 0 {
-                EditsBadge(count: count, isCurrent: isCurrent)
-            }
-            RatingStars(rating: song.rating, size: 12)
-                .frame(width: 70, alignment: .trailing)
-            FavouriteHeart(isFavourite: song.favorite)
+        // The same ladder the parts rows climb, in the same order: the strip
+        // is the one thing in the row that degrades to nothing gracefully —
+        // the detail pane draws the same signal at a size worth aiming at —
+        // while half a title identifies nothing.
+        ViewThatFits(in: .horizontal) {
+            content(showsStrip: true)
+            content(showsStrip: false)
         }
         .padding(.horizontal, 12).padding(.vertical, 11)
         .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
@@ -195,6 +221,76 @@ struct LibrarySongRow: View {
         .contentShape(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                        style: .continuous))
         .onTapGesture(perform: onSelect)
+    }
+
+    private func content(showsStrip: Bool) -> some View {
+        HStack(spacing: 12) {
+            if showsCheckbox {
+                LibraryCheckbox(isOn: isChecked, action: onToggleCheck)
+            }
+            BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
+                            isCurrent: isCurrent, size: 26, action: onPlay)
+            titleBlock
+                // With no strip beside it the block takes all the slack, which
+                // is what this row did before it had one. With a strip it is
+                // bounded at both ends: the ideal is pinned to the floor so the
+                // variant measures at a width that does not depend on how long
+                // this particular prompt happens to be — otherwise one pasted
+                // paragraph would decide that no row in the list gets a
+                // waveform.
+                .frame(minWidth: showsStrip ? Self.minTitleWidth : nil,
+                       idealWidth: showsStrip ? Self.minTitleWidth : nil,
+                       maxWidth: showsStrip ? Self.maxTitleWidth : .infinity,
+                       alignment: .leading)
+            if showsStrip {
+                // The floor is what makes this a choice rather than a
+                // formality: the loader is a `GeometryReader`, so its ideal
+                // width is nearly nothing, and without one both variants would
+                // measure as fitting and the first would always win.
+                strip
+                    .frame(height: 28)
+                    .frame(minWidth: Self.minStripWidth, maxWidth: .infinity)
+            }
+            if isSplitting {
+                HStack(spacing: 6) {
+                    BenchSpinner(size: 12)
+                    Text("SPLITTING")
+                        .font(Bench.Typo.mono(10, .semibold))
+                        .foregroundStyle(Bench.Palette.accent)
+                }
+                .fixedSize()
+            }
+            if let count = LibrarySongRow.editCount(of: song), count > 0 {
+                EditsBadge(count: count, isCurrent: isCurrent)
+            }
+            // 76, not 70: five stars at this size measure 73.5 pt, and
+            // `RatingStars` is `.fixedSize()`, so a 70 pt column did not clip
+            // them — it let them hang 3.5 pt out over whatever was to their
+            // left. That was invisible while the neighbour was a text block
+            // whose words stopped short of their own frame. The waveform fills
+            // its frame exactly, so the same overhang now reads as bars
+            // touching the first star.
+            RatingStars(rating: song.rating, size: 12)
+                .frame(width: 76, alignment: .trailing)
+            FavouriteHeart(isFavourite: song.favorite)
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            TrackTitle(song: song, font: Bench.Typo.body, weight: .semibold)
+            Text(LibrarySongRow.metaLine(for: song, partCount: partCount))
+                .metaLine()
+                .lineLimit(1)
+        }
+    }
+
+    /// The track's own waveform. A whole track is always audio — there is no
+    /// silent case to draw around, which is the one thing this slot has
+    /// simpler than the parts row's.
+    private var strip: some View {
+        BenchWaveformLoader(audioURL: song.fileURL, cacheURL: song.waveformURL,
+                            playedFraction: playedFraction, onSeek: onSeek)
     }
 
     private var fill: Color {

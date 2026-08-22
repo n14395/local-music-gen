@@ -11,6 +11,12 @@ import XCTest
 /// it, because the alternative (denormalising the title onto `part`) is an
 /// easy-looking change that would silently break it.
 ///
+/// A part's own *name* ends with a slug of that title — `vocals-track042` —
+/// but that is a name, not a cached copy: nothing reads the source back out of
+/// it, and a rename rewrites it through `PartsRepository.renameDefaults`. The
+/// distinction is what `testAPartStoresNoCopyOfItsSourceTitle` below is
+/// guarding, and `PartNamingTests` covers the rewrite.
+///
 /// The second group is the reason names have to be unique: those same readouts
 /// print a title alone, with no id beside it, so two tracks called the same
 /// thing make the Parts list unreadable.

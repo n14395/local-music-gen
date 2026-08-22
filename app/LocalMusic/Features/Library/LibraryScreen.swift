@@ -423,7 +423,7 @@ struct LibraryScreen: View {
                 songs: songs, partCounts: partCounts, splitting: splittingSongs,
                 playback: playback, showsCheckboxes: true,
                 selectedId: $selectedSongId, checked: $checked,
-                actions: actions, onPlay: playSong)
+                actions: actions, onPlay: playSong, onSeek: seekSong)
         }
     }
 
@@ -458,7 +458,8 @@ struct LibraryScreen: View {
                             onSelect: {
                                 selectedSongId = song.id
                                 selectedPartId = nil
-                            })
+                            },
+                            onSeek: { seekSong(song, $0) })
                     }
                 }
                 if !parts.results.isEmpty {
@@ -569,6 +570,17 @@ struct LibraryScreen: View {
                       duration: song.durationS,
                       subtitle: box.isActive ? box.subtitle
                                              : SongDetailView.subtitle(for: song))
+    }
+
+    /// Scrub a row's waveform.
+    ///
+    /// Load first, seek second: seeking before the item is replaced moves
+    /// whatever was playing before. It goes through `playSong` rather than
+    /// straight to the transport so a scrub keeps the A/B pair and the
+    /// inspector honest in exactly the way a click on the play button does.
+    private func seekSong(_ song: SongRecord, _ fraction: Double) {
+        if playback.currentSongId != song.id { playSong(song) }
+        playback.seek(to: fraction * song.durationS)
     }
 
     private func playPart(_ part: PartRecord) {

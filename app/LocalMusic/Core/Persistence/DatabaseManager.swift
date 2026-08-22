@@ -170,6 +170,90 @@ final class DatabaseManager: Sendable {
                 t.add(column: "backupFileName", .text)
             }
         }
+        // Parts get names of their own.
+        //
+        // `part.name` held the separator's label — "Vocals", "Drums" — so a
+        // library with a dozen split songs showed a dozen rows called Vocals,
+        // and not one of them identified anything. Songs of every origin have
+        // had a real name since v1; parts now get the same, in the same
+        // identifier style: `track042-vocals`. (v8 puts the two halves the
+        // other way round; this one is left as it was written.)
+        //
+        // Every existing row is rewritten rather than only the ones that look
+        // automatic, because until this migration there was no field anywhere
+        // in the app to type a part name into. There is no user intent here to
+        // preserve — after it, `PartNaming.isDefault` is what protects one.
+        //
+        // Ordered by creation so that when two parts want one name, the `-2`
+        // lands on the later one, which is the one that reads as the duplicate.
+        migrator.registerMigration("v7") { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT part.id AS id, part.kind AS kind, song.title AS title
+                FROM part JOIN song ON song.id = part.songId
+                ORDER BY part.createdAt, part.id
+                """)
+            // Seeded empty because every row is about to be rewritten, so
+            // nothing in the table is a name anyone still holds.
+            var taken: Set<String> = []
+            for row in rows {
+                let id: String = row["id"] ?? ""
+                guard !id.isEmpty else { continue }
+                let wanted = PartNaming.defaultName(
+                    songTitle: row["title"] ?? "", kind: row["kind"] ?? "")
+                let name = PartNaming.firstFree(wanted) {
+                    taken.contains($0.lowercased())
+                }
+                taken.insert(name.lowercased())
+                try db.execute(sql: "UPDATE part SET name = ? WHERE id = ?",
+                               arguments: [name, id])
+            }
+        }
+        // The two halves of a part's name change places: `vocals-track042`
+        // rather than `track042-vocals`.
+        //
+        // A separate migration rather than an edit to v7, because a database
+        // that already reached v7 will never run it again — GRDB records
+        // migrations by name, not by content — and editing it in place would
+        // leave those libraries on the old order forever while every new part
+        // took the new one.
+        //
+        // Unlike v7 this does NOT rewrite everything. v7 could, because until
+        // it ran there was nowhere in the app to type a part name; by now
+        // there is, so only names still in v7's own shape are moved and
+        // anything the user has typed since is left exactly where it is.
+        migrator.registerMigration("v8") { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT part.id AS id, part.kind AS kind, part.name AS name,
+                       song.title AS title
+                FROM part JOIN song ON song.id = part.songId
+                ORDER BY part.createdAt, part.id
+                """)
+            // Seeded with the names that are staying put, so a reorder can
+            // never land on top of one the user chose.
+            var taken = Set(rows.compactMap { row -> String? in
+                let name: String = row["name"] ?? ""
+                let stale = PartNaming.isSongFirst(name,
+                                                   songTitle: row["title"] ?? "",
+                                                   kind: row["kind"] ?? "")
+                return stale ? nil : name.lowercased()
+            })
+            for row in rows {
+                let id: String = row["id"] ?? ""
+                let name: String = row["name"] ?? ""
+                let kind: String = row["kind"] ?? ""
+                let title: String = row["title"] ?? ""
+                guard !id.isEmpty,
+                      PartNaming.isSongFirst(name, songTitle: title, kind: kind)
+                else { continue }
+                let wanted = PartNaming.defaultName(songTitle: title, kind: kind)
+                let free = PartNaming.firstFree(wanted) {
+                    taken.contains($0.lowercased())
+                }
+                taken.insert(free.lowercased())
+                try db.execute(sql: "UPDATE part SET name = ? WHERE id = ?",
+                               arguments: [free, id])
+            }
+        }
         return migrator
     }
 }

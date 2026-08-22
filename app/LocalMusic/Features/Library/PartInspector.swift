@@ -41,6 +41,19 @@ struct PartInspector: View {
     let onDeleted: () -> Void
 
     @State private var confirmDelete = false
+    /// The buffered name and the part it was typed for.
+    ///
+    /// Keyed by id rather than read straight off `part`, for the reason
+    /// `SongEditor` documents at length: a macOS field commits on Return *and*
+    /// on losing focus, so a commit can land after the list selection has
+    /// already moved. Writing to "the part the pane is showing now" would put
+    /// the typed name on the neighbouring stem. Empty id means nothing is
+    /// buffered and the field shows what is stored.
+    @State private var draft: (id: String, text: String) = ("", "")
+    /// Why the last rename was refused, cleared as soon as one succeeds or the
+    /// pane moves to another part. The field reverts on refusal, so without
+    /// this the name would simply spring back with no explanation.
+    @State private var renameError: String?
 
     private var stem: Color { Bench.Palette.stem(part.kind) }
     private var isCurrent: Bool { playback.currentSongId == part.id }
@@ -75,8 +88,13 @@ struct PartInspector: View {
                                         onSelectSibling(sibling.id)
                                     } label: {
                                         BenchTag(
-                                            text: LibraryPartRow
-                                                .split(name: sibling.name).base,
+                                            // The kind, not the name: every
+                                            // sibling here came out of the
+                                            // song this pane is already about,
+                                            // so their names all start with
+                                            // the same forty characters.
+                                            text: PartNaming
+                                                .label(kind: sibling.kind),
                                             color: Bench.Palette.stem(sibling.kind),
                                             fill: Bench.Palette.stem(sibling.kind)
                                                 .opacity(0.12))
@@ -108,13 +126,53 @@ struct PartInspector: View {
     // MARK: header
 
     private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            headerRow
+            if let renameError {
+                // The field has already sprung back to the stored name by the
+                // time this is read; this says why rather than leaving the
+                // revert looking like dropped input.
+                Text(renameError)
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        // Commit for the part it was typed for, then clear, so the field falls
+        // back to whatever is stored — the new name on success, the old one on
+        // a refusal.
+        .onChange(of: part.id) { commitName() }
+        .onDisappear { commitName() }
+    }
+
+    /// A part's name is its own, editable here exactly as a track's title is
+    /// in `SongDetailView`. What KIND of part it is stays on the badge beside
+    /// it and in the colour of the bar, so renaming can never cost the reader
+    /// the one thing the row has to say.
+    private var nameField: some View {
+        TextField("Name", text: Binding(
+            get: { draft.id == part.id ? draft.text : part.name },
+            set: { draft = (part.id, $0) }),
+            onCommit: { commitName() })
+            .textFieldStyle(.plain)
+            .font(Bench.Typo.inspectorTitle)
+            .tracking(-0.17)
+            .foregroundStyle(Bench.Palette.textPrimary)
+            .lineLimit(1)
+    }
+
+    private func commitName() {
+        let target = draft.id
+        guard !target.isEmpty else { renameError = nil; return }
+        let typed = draft.text
+        draft = ("", "")
+        renameError = parts.rename(id: target, to: typed)
+    }
+
+    private var headerRow: some View {
         HStack(spacing: 10) {
             StemBar(kind: part.kind, width: 8, height: 22)
-            Text(LibraryPartRow.split(name: part.name).base)
-                .font(Bench.Typo.inspectorTitle)
-                .tracking(-0.17)
-                .foregroundStyle(Bench.Palette.textPrimary)
-                .lineLimit(1)
+            nameField
             LibraryStemBadge(text: kindLabel, color: stem)
             Spacer(minLength: 4)
             Button {
@@ -356,7 +414,9 @@ struct PartInspector: View {
         default: ext = "wav"
         }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(sourceTitle) — \(part.name)"
+        // The name carries its source now, so prefixing the song title again
+        // would export `track042 — vocals-track042.wav`.
+        panel.nameFieldStringValue = part.name
             .replacingOccurrences(of: "/", with: "-") + ".\(ext)"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }

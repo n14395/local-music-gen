@@ -211,8 +211,12 @@ enum MatchRanking {
         if let part = ((try? parts.repository.part(id: id)) ?? nil) {
             let title = ((try? library.repository.song(id: part.songId))
                          ?? nil)?.title ?? part.modelName
-            return PickedMaterial(part: part,
-                                  sourceTitle: "\(part.name) — \(title)")
+            return PickedMaterial(
+                part: part,
+                // What it is, then where it came from. The part's own name
+                // opens with a slug of that same title, so using it here would
+                // say the song twice.
+                sourceTitle: "\(PartNaming.label(kind: part.kind)) — \(title)")
         }
         if let song = ((try? library.repository.song(id: id)) ?? nil) {
             return PickedMaterial(song: song)

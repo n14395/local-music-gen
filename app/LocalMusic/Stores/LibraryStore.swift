@@ -150,6 +150,25 @@ final class LibraryStore {
         refreshRecent()
     }
 
+    /// Announced when a song's rename moved its parts' names with it, so the
+    /// parts store can republish. A callback rather than a return value
+    /// because the two caches belong to different stores.
+    var onPartsRenamed: () -> Void = {}
+
+    /// Carry a track's rename onto the parts cut from it.
+    ///
+    /// Parts are named after their source — `vocals-track042` — while the meta
+    /// line beside them resolves that source live, so leaving the names behind
+    /// would put two different names for one song in one row. Parts the user
+    /// has renamed themselves are left alone; `PartsRepository.renameDefaults`
+    /// draws that line.
+    func renameParts(ofSong songId: String, from old: String, to new: String) {
+        guard let partsRepo else { return }
+        let moved = (try? partsRepo.renameDefaults(ofSong: songId,
+                                                   from: old, to: new)) ?? 0
+        if moved > 0 { onPartsRenamed() }
+    }
+
     /// The Editor's own files for a track: the stashed original and the
     /// peak cache drawn from it. Matched on the id prefix rather than a
     /// recomputed name — an applied track's file has been renamed, and the

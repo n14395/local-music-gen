@@ -353,7 +353,10 @@ final class StyleTransferModel {
             .filter { $0.format == "wav" }
             .sorted { $0.createdAt > $1.createdAt }
             .filter { seen.insert($0.kind).inserted }
-            .map { .init(id: $0.id, kind: $0.kind, name: $0.name,
+            // The chip's label is the kind: these are the stems of one song,
+            // named for it, so their full names differ only in the last word.
+            .map { .init(id: $0.id, kind: $0.kind,
+                         name: PartNaming.label(kind: $0.kind),
                          durationS: $0.durationS) }
     }
 

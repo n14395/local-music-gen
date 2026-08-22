@@ -70,6 +70,51 @@ final class PartRowFitTests: XCTestCase {
         }
     }
 
+    /// A part's name is now as long as its song's title makes it, and the row
+    /// still has to be one line at every width. The old column was a flat
+    /// 132 pt and could not push on anything; the new one can, so this is the
+    /// case that would break first.
+    func testALongNameStaysOneLineToo() {
+        let long = part(name: "a-lonely-trumpet-over-rain-slicked-neon-vocals")
+        for width in stride(from: 320.0, through: 900.0, by: 20.0) {
+            let h = height(at: width, part: long)
+            XCTAssertLessThan(h, oneLineCeiling,
+                              "long-named row wrapped at \(width) pt (\(h))")
+        }
+    }
+
+    /// The row laid out with no width imposed on it — what it would like.
+    private func idealWidth(part: PartRecord) -> CGFloat {
+        let row = LibraryPartRow(
+            part: part, analysis: analysis(), isZebra: false, isSelected: false,
+            playback: PlaybackController(),
+            onPlay: {}, onSelect: {}, onSeek: { _ in },
+            onAddToWorkbench: {}, onRenderNotes: {})
+        let host = NSHostingView(rootView: row)
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize.width
+    }
+
+    /// The column grows for a name that needs it, and stops.
+    ///
+    /// Both halves matter. Without the growth `vocals-warehouse-jam` — 144 pt
+    /// at the selected row's weight — reads as `vocals-warehous…` on every
+    /// row of the list. Without the ceiling a title pasted from a prompt takes
+    /// the whole row and leaves no waveform, no badges and no button.
+    func testTheNameColumnGrowsForALongNameAndThenStops() {
+        // Under the floor: the column sits at its minimum, so short names
+        // still line up down the list.
+        let short = idealWidth(part: part(name: "vocals-track042"))
+        let long = idealWidth(part: part(name: "vocals-warehouse-jam"))
+        XCTAssertGreaterThan(long, short,
+                             "a name past the floor has to be given the room")
+
+        let pasted = idealWidth(part: part(name: String(repeating: "x", count: 200)))
+        let slack = LibraryPartRow.maxNameWidth - LibraryPartRow.minNameWidth
+        XCTAssertLessThanOrEqual(pasted - short, slack + 1,
+                                 "the column must not grow past its ceiling")
+    }
+
     /// The point of the fallback is that it is a fallback: given room, the row
     /// still draws the waveform. A row that had quietly stopped showing one at
     /// every width would pass the two tests above and be useless.

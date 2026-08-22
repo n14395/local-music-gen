@@ -48,6 +48,88 @@ struct PartsRepository: Sendable {
         try db.queue.write { try part.update($0) }
     }
 
+    // MARK: names
+
+    /// Whether another part already answers to `name`.
+    ///
+    /// The same rule songs have had since v1 (`LibraryRepository
+    /// .titleIsTaken`), case-insensitively for the same reason: two rows a
+    /// reader cannot tell apart are the same name. `excluding` is the part
+    /// being renamed, so committing a name unchanged — or changed only in
+    /// case — does not collide with itself.
+    func nameIsTaken(_ name: String, excluding partId: String) throws -> Bool {
+        try db.queue.read { database in
+            try Bool.fetchOne(
+                database,
+                sql: "SELECT EXISTS(SELECT 1 FROM part "
+                    + "WHERE name = ? COLLATE NOCASE AND id <> ?)",
+                arguments: [name, partId]) ?? false
+        }
+    }
+
+    /// `name`, or the first `name-2`, `name-3`… no other part answers to.
+    ///
+    /// Ingest cannot refuse a duplicate: the stem already exists on disk, and
+    /// throwing it away because a name was taken while it rendered would be
+    /// losing work over bookkeeping. So it makes a free one instead. The
+    /// inspector's rename field refuses, because there the user is looking at
+    /// the field and can pick again — the same split `LibraryRepository
+    /// .uniqueTitle` documents for songs.
+    ///
+    /// `reserved` covers names handed out earlier in the same batch that are
+    /// not in the database yet.
+    func uniqueName(_ name: String, reserved: Set<String> = []) throws -> String {
+        let lowerReserved = Set(reserved.map { $0.lowercased() })
+        var thrown: (any Error)?
+        let free = PartNaming.firstFree(name) { candidate in
+            if lowerReserved.contains(candidate.lowercased()) { return true }
+            do { return try nameIsTaken(candidate, excluding: "") }
+            // A failed read must not read as "free": that would hand out a
+            // name already in use and fail again, less legibly, at insert.
+            catch { thrown = error; return true }
+        }
+        if let thrown { throw thrown }
+        return free
+    }
+
+    /// Narrow write for the one column the inspector's Name field owns — as
+    /// `setEdits`, and for the same reason: a full row update re-queries the
+    /// parts list on every keystroke that commits.
+    func setName(id: String, to name: String) throws {
+        try db.queue.write { database in
+            try database.execute(
+                sql: "UPDATE part SET name = ? WHERE id = ?",
+                arguments: [name, id])
+        }
+    }
+
+    /// Re-derive the names of a song's parts after the song itself was
+    /// renamed, and report how many moved.
+    ///
+    /// Only the parts still answering to the name they were given. A part the
+    /// user has typed a name into is theirs, and renaming the song is not
+    /// permission to overwrite it — `PartNaming.isDefault` is what tells the
+    /// two apart.
+    ///
+    /// Without this a part's name would keep pointing at a title that no
+    /// longer exists, while the meta line beside it — which resolves the
+    /// source live — showed the new one. Two names for one song, in one row.
+    @discardableResult
+    func renameDefaults(ofSong songId: String, from oldTitle: String,
+                        to newTitle: String) throws -> Int {
+        var moved = 0
+        for part in try allParts(forSong: songId)
+        where PartNaming.isDefault(part.name, songTitle: oldTitle,
+                                   kind: part.kind) {
+            let wanted = PartNaming.defaultName(songTitle: newTitle,
+                                                kind: part.kind)
+            guard wanted != part.name else { continue }
+            try setName(id: part.id, to: try uniqueName(wanted))
+            moved += 1
+        }
+        return moved
+    }
+
     /// Hearted parts, for the Library's Favourites scope. Ordered like the
     /// parts list itself so the two read the same way.
     func favorites() throws -> [PartRecord] {

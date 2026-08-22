@@ -167,7 +167,10 @@ final class GenerativeFlowTests: XCTestCase {
         createdFiles.append(part.fileURL)
         XCTAssertEqual(part.kind, "stem.vocals")
         XCTAssertEqual(part.songId, "song1")
-        XCTAssertEqual(part.name, "AI Vocals")
+        // Named like every other part — after its source song and its kind.
+        // "AI Vocals" is the queue card's title, written for a job that is
+        // running; the part it leaves behind is a part of Source.
+        XCTAssertEqual(part.name, "vocals-source")
         XCTAssertEqual(part.modelId, "acestep-15-dit-base")
         XCTAssertTrue(FileManager.default.fileExists(atPath: part.fileURL.path))
         XCTAssertFalse(part.splitParamsJSON.contains("/resolved"),

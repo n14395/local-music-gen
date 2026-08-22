@@ -221,7 +221,13 @@ final class WorkbenchModel {
     /// (stack two stems, hit Create Mix) is exactly what it always was.
     @discardableResult
     func add(material: PickedMaterial, parts: PartsStore?) -> Clip {
-        let lane = Lane(name: material.name)
+        // A lane is named for what is in it, so a part contributes its kind
+        // rather than its full name: the lane header has no room for
+        // `vocals-track042`, and `slugged` turns the lane name into the
+        // `vocals-1` the provenance list prints.
+        let lane = Lane(name: material.isPart
+                        ? PartNaming.label(kind: material.kind)
+                        : material.name)
         lanes.append(lane)
         var clip = Self.makeClip(material: material, laneId: lane.id,
                                  parts: parts)

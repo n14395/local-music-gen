@@ -152,6 +152,12 @@ struct LibraryPartRow: View {
     /// signal and is only taking room from the label beside it.
     static let minStripWidth: CGFloat = 96
 
+    /// The name column's floor and ceiling. The floor is what keeps the
+    /// column a column; the ceiling is where a name stops being worth more
+    /// row than the signal beside it.
+    static let minNameWidth: CGFloat = 132
+    static let maxNameWidth: CGFloat = 220
+
     var body: some View {
         // The flexible middle is the first thing to spend.
         //
@@ -196,7 +202,17 @@ struct LibraryPartRow: View {
             }
             StemBar(kind: part.kind, width: 6, height: 26)
             name
-                .frame(width: 132, alignment: .leading)
+                // Was a flat 132, which was sized for "Vocals" and truncates
+                // almost every real name: `vocals-warehouse-jam` measures 144
+                // pt at the selected row's weight. So the column has a floor
+                // (short names still line up down the list) and a ceiling (a
+                // title pasted from a prompt cannot eat the row), and takes
+                // its space before the waveform does — the strip degrades to
+                // nothing gracefully and the inspector draws it properly
+                // anyway, while half a name identifies nothing.
+                .frame(minWidth: Self.minNameWidth,
+                       maxWidth: Self.maxNameWidth, alignment: .leading)
+                .layoutPriority(1)
             if showsStrip {
                 // The minimum is what makes this a choice rather than a
                 // formality: a `maxWidth: .infinity` frame has an ideal width
@@ -239,6 +255,12 @@ struct LibraryPartRow: View {
     private var qualifier: String? {
         if let parenthetical = LibraryPartRow.split(name: part.name).qualifier {
             return parenthetical
+        }
+        // `other-track042` does not explain itself the way the old
+        // `Other (keys, synths, rest)` name did, and the residual stem is
+        // exactly the one whose name needs the explanation.
+        if let fromKind = PartNaming.qualifier(kind: part.kind) {
+            return fromKind
         }
         switch part.format {
         case "midi": return "MIDI"

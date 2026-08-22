@@ -95,11 +95,18 @@ final class PartIngestTests: XCTestCase {
 
         let vocal = ingested.first { $0.kind == "stem.vocals" }
         XCTAssertNotNil(vocal)
-        XCTAssertEqual(vocal?.name, "Vocals")
+        // A part is named after the song it was cut from and what it is —
+        // "Vocals" alone named a kind, and every song in the library had one.
+        XCTAssertEqual(vocal?.name, "vocals-source")
         XCTAssertTrue(FileManager.default.fileExists(atPath: vocal!.fileURL.path))
 
         let piano = ingested.first { $0.kind == "notes.piano" }
         XCTAssertEqual(piano?.format, "midi")
+        // Notes carry their family, so the audio a later render makes from
+        // them has a name left to take.
+        XCTAssertEqual(piano?.name, "piano-notes-source")
+        XCTAssertEqual(Set(ingested.map(\.name)).count, ingested.count,
+                       "one split must not hand out one name twice")
         XCTAssertNotNil(piano?.previewFileName, "preview must pair to the midi part")
         XCTAssertTrue(FileManager.default.fileExists(atPath: piano!.previewURL!.path))
 

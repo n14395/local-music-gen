@@ -68,8 +68,12 @@ final class SongEditor {
             return
         }
         titleError = nil
+        let previous = stored.title
         stored.title = trimmed
         library.update(stored)
+        // The parts are named after this track. They follow it, unless the
+        // user has named one of them by hand.
+        library.renameParts(ofSong: songId, from: previous, to: trimmed)
     }
 
     func commitTags(in library: LibraryStore) {

@@ -1043,6 +1043,12 @@ final class EditorStore {
 
     var isPlaying: Bool { player.isPlaying }
 
+    /// True while the preview is playing, or paused part-way through — i.e.
+    /// while the Editor is the thing the system transport should be about. A
+    /// track that is merely loaded has not "played", and must not take the Now
+    /// Playing tile off a song that has.
+    var previewEngaged: Bool { player.state != .stopped }
+
     func togglePlayback() {
         switch player.state {
         case .playing:

@@ -332,8 +332,10 @@ final class JobsStore {
                 ?? part.modelName
             let summary = AnalysisSummary(
                 record: (try? partsRepo.analysis(ownerId: part.id)) ?? nil)
-            let role = part.kind.split(separator: ".").last.map(String.init)
-                ?? part.name.lowercased()
+            // The kind's leaf, and only the kind's leaf: `role` names the
+            // file `keep_tracks` writes and the progress line the engine
+            // prints, so a renamed part must not be able to change it.
+            let role = PartNaming.leaf(kind: part.kind)
             return ResolvedIngredient(
                 submission: sub, kind: part.kind, role: role,
                 fileURL: part.fileURL, sampleRate: part.sampleRate,
@@ -584,7 +586,10 @@ final class JobsStore {
             inputKey: "midi_file",
             context: .generativePart(
                 songId: part.songId, sourceTitle: sourceTitle,
-                kind: "layer.\(part.name.lowercased())",
+                // From the kind, never from the name: a name is now
+                // `piano-notes-track042` and is about to become whatever the
+                // user retypes it as, and neither is a taxonomy.
+                kind: "layer.\(PartNaming.leaf(kind: part.kind))",
                 name: "Render: \(part.name)"))
     }
 
@@ -864,12 +869,12 @@ final class JobsStore {
         let jobId = job.jobId
         // Reimagine recipes that produce material, not songs (AI extract,
         // lego layers): route the take into the Parts library.
-        if case .generativePart(let songId, _, let kind, let name)? =
+        if case .generativePart(let songId, _, let kind, _)? =
             pendingContext[jobId] {
             var parts: [PartRecord] = []
             if let output = (result.outputs ?? []).first {
                 if let part = insertGenerativePart(
-                    songId: songId, kind: kind, name: name,
+                    songId: songId, kind: kind,
                     filePath: output.path, sampleRate: output.sampleRate,
                     durationS: output.durationS, job: job) {
                     parts.append(part)
@@ -1007,13 +1012,13 @@ final class JobsStore {
             active[jobId]?.progress = nil
             finish(jobId)
             return
-        case .generativePart(let ownerSongId, _, let kind, let name):
+        case .generativePart(let ownerSongId, _, let kind, _):
             // Render task jobs (notes → SoundFont audio): the single audio
             // artifact becomes a part of the source song.
             var parts: [PartRecord] = []
             if let artifact = artifacts.first(where: { $0.kind == "audio" }),
                let part = insertGenerativePart(
-                   songId: ownerSongId, kind: kind, name: name,
+                   songId: ownerSongId, kind: kind,
                    filePath: artifact.path, sampleRate: artifact.sampleRate,
                    durationS: artifact.durationS, job: job) {
                 parts.append(part)
@@ -1047,6 +1052,10 @@ final class JobsStore {
             decoding: BackendClient.encoder.encode(provenanceParams),
             as: UTF8.self)) ?? "{}"
 
+        // Read once, not per stem: every part of this split is named after
+        // the same song, and the name is the only thing the row needs it for.
+        let songTitle = ((try? repo.song(id: songId)) ?? nil)?.title ?? ""
+
         var parts: [PartRecord] = []
         for artifact in artifacts {
             switch artifact.kind {
@@ -1079,7 +1088,9 @@ final class JobsStore {
                     : "notes.\(Self.sanitize(label))"
                 let part = PartRecord(
                     id: partId, songId: songId, kind: kind,
-                    name: Self.partDisplayName(for: label), fileName: fileName,
+                    name: partName(songTitle: songTitle, kind: kind,
+                                   repo: partsRepo),
+                    fileName: fileName,
                     format: artifact.kind == "midi" ? "midi" : "wav",
                     previewFileName: previewFileName, modelId: job.modelId,
                     modelName: modelName(job.modelId), jobId: jobId,
@@ -1185,10 +1196,12 @@ final class JobsStore {
             guard (try? fm.moveItem(at: URL(fileURLWithPath: artifact.path),
                                     to: partDest)) != nil else { continue }
             let label = artifact.label.isEmpty ? "track" : artifact.label
+            let kind = "stem.\(Self.sanitize(label))"
             let part = PartRecord(
                 id: partId, songId: songId,
-                kind: "stem.\(Self.sanitize(label))",
-                name: Self.partDisplayName(for: label),
+                kind: kind,
+                name: partName(songTitle: song.title, kind: kind,
+                               repo: partsRepo),
                 fileName: partFile, format: "wav", previewFileName: nil,
                 modelId: job.modelId, modelName: modelName(job.modelId),
                 jobId: jobId, splitParamsJSON: "{}",
@@ -1226,8 +1239,16 @@ final class JobsStore {
     }
 
     /// Move one generative output/artifact into the Parts library.
+    ///
+    /// The context's `name` is deliberately not used for the row: it is the
+    /// queue card's title ("AI Vocals"), written for a job that is running,
+    /// while the part it leaves behind is named like every other part — after
+    /// its source song and its kind. Where that collides with a stem the
+    /// separator already cut, the `-2` is the honest reading: they are two
+    /// versions of the same thing, told apart by the model badge beside them
+    /// and renameable to whatever the user prefers.
     private func insertGenerativePart(songId: String, kind: String,
-                                      name: String, filePath: String,
+                                      filePath: String,
                                       sampleRate: Int?, durationS: Double?,
                                       job: JobInfo) -> PartRecord? {
         guard let partsRepo else { return nil }
@@ -1251,8 +1272,10 @@ final class JobsStore {
         let paramsJSON = (try? String(
             decoding: BackendClient.encoder.encode(provenance),
             as: UTF8.self)) ?? "{}"
+        let songTitle = ((try? repo.song(id: songId)) ?? nil)?.title ?? ""
         let part = PartRecord(
-            id: partId, songId: songId, kind: kind, name: name,
+            id: partId, songId: songId, kind: kind,
+            name: partName(songTitle: songTitle, kind: kind, repo: partsRepo),
             fileName: fileName, format: "wav", previewFileName: nil,
             modelId: job.modelId, modelName: modelName(job.modelId),
             jobId: job.jobId, splitParamsJSON: paramsJSON,
@@ -1266,11 +1289,17 @@ final class JobsStore {
         }
     }
 
-    /// Display name for a stem/track label. "other" is separation jargon for
-    /// the residual — spell out what actually lives in it.
-    static func partDisplayName(for label: String) -> String {
-        label.lowercased() == "other" ? "Other (keys, synths, rest)"
-                                      : label.capitalized
+    /// The name a freshly cut part is filed under: `vocals-track042`, made
+    /// free of whatever the library already holds.
+    ///
+    /// Ingest never refuses a name — see `PartsRepository.uniqueName` — so the
+    /// fallback here is the unresolved default rather than nothing. A part
+    /// whose name collides is still a part the user can hear and rename; a
+    /// part that failed to be written is work thrown away.
+    private func partName(songTitle: String, kind: String,
+                          repo: PartsRepository) -> String {
+        let wanted = PartNaming.defaultName(songTitle: songTitle, kind: kind)
+        return (try? repo.uniqueName(wanted)) ?? wanted
     }
 
     private static func sanitize(_ label: String) -> String {

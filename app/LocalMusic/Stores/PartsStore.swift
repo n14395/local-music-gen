@@ -39,6 +39,38 @@ final class PartsStore {
         }
     }
 
+    /// Rename a part, or say why not.
+    ///
+    /// Returns the message the field should show, and nil when there is
+    /// nothing to say. A blank name is dropped without comment — it reads as
+    /// "I have changed my mind", not as a request — and a taken one is
+    /// refused, which is the choice `SongEditor.commitTitle` makes for a
+    /// track's title and for the same reason: the user is looking at the field
+    /// and can pick again.
+    /// Takes an id and re-reads the stored row rather than taking a record,
+    /// because the pane that calls it may have moved on to another part
+    /// between the keystroke and the commit — see `PartInspector`.
+    func rename(id: String, to name: String) -> String? {
+        guard let part = (try? repo.part(id: id)) ?? nil else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != part.name else { return nil }
+        if (try? repo.nameIsTaken(trimmed, excluding: part.id)) ?? false {
+            return "Another part is already called \u{201C}\(trimmed)\u{201D}."
+        }
+        do {
+            try repo.setName(id: part.id, to: trimmed)
+        } catch {
+            return "Could not rename: \(error.localizedDescription)"
+        }
+        // Patched in place rather than re-queried, as `noteEdits` does: the
+        // row's position in the list has not changed, and a refresh here would
+        // re-read every analysis attachment to move one string.
+        for index in results.indices where results[index].id == part.id {
+            results[index].name = trimmed
+        }
+        return nil
+    }
+
     func analysis(for partId: String) -> AnalysisRecord? {
         analyses[partId] ?? (try? repo.analysis(ownerId: partId)) ?? nil
     }

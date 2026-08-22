@@ -55,6 +55,9 @@ final class AppEnvironment {
     let partsRepo: PartsRepository
     let jobsStore: JobsStore
     let playback: PlaybackController
+    /// The system transport — media keys, Control Centre, the Now Playing
+    /// widget — pointed at whichever player is sounding.
+    let nowPlaying = NowPlayingBridge()
     let telemetry = TelemetryStore()
     let storage = StorageStore()
     /// The bench is a destination now rather than a pane inside Split &
@@ -137,6 +140,9 @@ final class AppEnvironment {
         library.onSongsImported = { [weak self] songs in
             for song in songs { self?.autoAnalyze(song: song) }
         }
+        library.onPartsRenamed = { [weak self] in
+            self?.partsStore.refresh()
+        }
         jobsStore.onEditorArtifact = { [weak self] job, result, purpose in
             self?.editor.handleArtifact(job: job, result: result,
                                         purpose: purpose)
@@ -150,6 +156,38 @@ final class AppEnvironment {
             }
             playback.toggle()
         }
+        // The system transport speaks for whichever player is making sound. Both
+        // sources answer nil when they are not a candidate, and the bridge
+        // leaves the Now Playing slot alone until one of them is.
+        nowPlaying.songSource = { [weak self] in
+            guard let playback = self?.playback,
+                  playback.currentSongId != nil else { return nil }
+            return NowPlayingBridge.Source(
+                title: playback.currentTitle,
+                subtitle: playback.currentSubtitle,
+                durationS: playback.duration,
+                elapsedS: playback.currentTime,
+                isPlaying: playback.isPlaying,
+                toggle: { playback.toggle() },
+                stop: { playback.stop() },
+                seek: { playback.seek(to: $0) })
+        }
+        nowPlaying.editorSource = { [weak self] in
+            guard let editor = self?.editor, let material = editor.material,
+                  editor.previewEngaged else { return nil }
+            let source = material.songTitle.map { "Editing · \($0)" } ?? "Editing"
+            return NowPlayingBridge.Source(
+                title: material.title,
+                subtitle: source,
+                durationS: editor.timelineDurationS,
+                elapsedS: editor.playheadS,
+                isPlaying: editor.isPlaying,
+                toggle: { editor.togglePlayback() },
+                stop: { editor.stopPreview() },
+                seek: { editor.seekPreview(to: $0) })
+        }
+        nowPlaying.start()
+
         editor.notifyApplied = { [weak self] title in
             self?.notifications.notifyIfInactive(
                 title: "Edits applied",
@@ -338,6 +376,9 @@ final class AppEnvironment {
     }
 
     func shutdown() async {
+        // Hand the Now Playing tile back before the process goes, or the widget
+        // keeps offering a transport for an app that is no longer there.
+        nowPlaying.relinquish()
         await backendManager.stop()
     }
 }
