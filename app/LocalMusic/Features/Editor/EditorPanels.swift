@@ -8,13 +8,22 @@ import SwiftUI
 
 struct EditorEmptyState: View {
     @Bindable var store: EditorStore
+    let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
-    var onOpenLibrary: () -> Void
+    let jobs: JobsStore
+    let playback: PlaybackController
+    var onOpenModels: () -> Void
     @Binding var showImporter: Bool
     @Binding var isDropTargeted: Bool
 
     @State private var query = ""
+    /// Choosing something to edit used to switch the app to the Library tab
+    /// and leave you there — a navigation, not a choice, with nothing tying
+    /// the two screens together and no way back but the sidebar. Every other
+    /// slot in the app fills from `PartPickerSheet`, which searches, auditions
+    /// and filters by origin without taking the screen away.
+    @State private var picking = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +44,18 @@ struct EditorEmptyState: View {
             }
         }
         .contentShape(Rectangle())
+        .sheet(isPresented: $picking) {
+            PartPickerSheet(
+                slotLabel: "Any part or song",
+                // Audio only, declared next to the method that enforces it.
+                accepts: EditorStore.pickerAccepts,
+                // Nothing to derive: songs are directly editable, so there is
+                // no unfillable row here to offer a split for.
+                autoDerive: nil,
+                catalog: catalog, library: library, parts: parts, jobs: jobs,
+                playback: playback, onOpenModels: onOpenModels,
+                onPick: { store.open($0) })
+        }
         .dropDestination(for: URL.self) { urls, _ in
             let audio = AudioDrop.audioFiles(in: urls)
             guard let first = audio.first else { return false }
@@ -94,7 +115,7 @@ struct EditorEmptyState: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Bench.Palette.textPrimary)
             HStack(spacing: 9) {
-                Button("Choose from Library…") { onOpenLibrary() }
+                Button("Choose from Library…") { picking = true }
                     .buttonStyle(BenchPrimaryButtonStyle(size: .compact,
                                                          glows: false))
                 Button("Import a file…") { showImporter = true }
@@ -175,7 +196,10 @@ struct EditorEmptyState: View {
             HStack {
                 Text(query.isEmpty ? "RECENT" : "MATCHES").eyebrow()
                 Spacer()
-                Button("All \(library.results.count) ›") { onOpenLibrary() }
+                // Same sheet. This is the "what I want isn't in RECENT"
+                // affordance, which is a choice too — and the ellipsis is
+                // this app's mark for one that opens rather than navigates.
+                Button("Browse all \(library.results.count)…") { picking = true }
                     .buttonStyle(.plain)
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(Bench.Palette.textQuaternary)

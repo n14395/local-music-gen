@@ -128,6 +128,11 @@ extension ButtonStyle where Self == BenchSecondaryButtonStyle {
 struct BenchSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Option]
+    /// Share the full width between the segments instead of each taking only
+    /// what its label needs. For a strip that heads a list rather than sitting
+    /// in a toolbar: given the whole line it has nothing to crowd, and the
+    /// text beside it stops being squeezed onto three lines.
+    var fills = false
 
     struct Option: Identifiable {
         let value: Value
@@ -155,7 +160,19 @@ struct BenchSegmented<Value: Hashable>: View {
                     .font(isOn ? Bench.Typo.secondaryEmphasis : Bench.Typo.secondary)
                     .foregroundStyle(isOn ? Bench.Palette.textPrimary
                                           : Bench.Palette.textQuaternary)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    // A segment squeezed below its label's width should shorten
+                    // it, not stack it: two lines of "Gener/ated" inside a pill
+                    // reads as a broken control rather than a tight one.
+                    .lineLimit(1)
+                    // 12 pt separates pills that hug their labels; a filling
+                    // strip already has the whole share between them, so the
+                    // inset is only stealing width from the word — and at five
+                    // tabs across a 560 pt sheet those last 8 pt are the
+                    // difference between "Generated" and "Generat…".
+                    .padding(.horizontal, fills ? 8 : 12).padding(.vertical, 5)
+                    // After the padding, before the fill: the segment's own
+                    // pill has to grow with it, not float in the middle of it.
+                    .frame(maxWidth: fills ? .infinity : nil)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isOn ? Bench.Palette.segmentedSelected : .clear))
                     .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

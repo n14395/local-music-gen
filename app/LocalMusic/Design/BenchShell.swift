@@ -28,7 +28,7 @@ struct BenchNavGlyph: View {
             case .styleTransfer: transfer
             case .actions: grid
             case .workbench: rules(heights: [3, 3, 3], widths: [1, 0.69, 1], spacing: 2)
-            case .editor: razor
+            case .editor: waveform
             case .library: rules(heights: [2, 2, 2, 2], widths: [1, 1, 1, 0.62],
                                  spacing: 2.5)
             case .models: chip
@@ -114,20 +114,29 @@ struct BenchNavGlyph: View {
         }
     }
 
-    /// The Editor's mark: one rule, two cut marks of different depths —
-    /// a waveform and the razor that goes through it.
-    private var razor: some View {
-        ZStack {
-            Rectangle().fill(color).frame(width: size, height: 2)
-            Rectangle().fill(color)
-                .frame(width: 2, height: size * 11 / 13)
-                .offset(x: -size * 4.5 / 13)
-            Rectangle().fill(color)
-                .frame(width: 2, height: size * 7 / 13)
-                .offset(x: size * 4.5 / 13, y: size * 1 / 13)
+    /// The Editor's mark: the app icon's punch-out waveform without its
+    /// circle — six capsules centred on one axis. Studio's bars stand on a
+    /// baseline and climb; a waveform is symmetric about its middle, and that
+    /// difference is what tells the two apart at 13 pt.
+    private var waveform: some View {
+        let bar = size * 1.5 / 13          // 6 bars + 5 gaps fill the box
+        return HStack(spacing: size * 0.8 / 13) {
+            ForEach(Array(Self.waveformBars.enumerated()), id: \.offset) { _, height in
+                Capsule()
+                    .fill(color)
+                    .frame(width: bar, height: max(bar, size * height))
+            }
         }
         .frame(width: size, height: size)
     }
+
+    /// Bar heights as a fraction of the box, in the icon's own proportions
+    /// (icons-ideas/icon-punchout.svg), with the tallest filling the glyph.
+    static let waveformBars: [CGFloat] = {
+        let source: [CGFloat] = [174.55, 337.45, 500.36, 256, 395.64, 128]
+        let tallest = source.max() ?? 1
+        return source.map { $0 / tallest }
+    }()
 
     private var grid: some View {
         VStack(spacing: 2) {

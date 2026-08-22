@@ -148,7 +148,42 @@ struct LibraryPartRow: View {
         return playback.currentTime / duration
     }
 
+    /// Under this, a waveform is thirty bars of noise: it has stopped being a
+    /// signal and is only taking room from the label beside it.
+    static let minStripWidth: CGFloat = 96
+
     var body: some View {
+        // The flexible middle is the first thing to spend.
+        //
+        // `strip` asks for `maxWidth: .infinity`, and in a pane that has run
+        // out of room SwiftUI honours that by taking the space back from the
+        // only child left that can yield — the button's label, which wraps to
+        // `＋ / Be / nc / h` down the whole list. Dropping the waveform is the
+        // right trade: it is the one thing in the row that degrades to nothing
+        // gracefully, and the inspector to the right draws the same signal at
+        // a size actually worth looking at.
+        ViewThatFits(in: .horizontal) {
+            content(showsStrip: true, showsBadges: true)
+            content(showsStrip: false, showsBadges: true)
+            // Narrower still. The key and the tempo are on the part's own
+            // badge row in the inspector; the name and the action are not
+            // repeated anywhere, so they are what the row keeps.
+            content(showsStrip: false, showsBadges: false)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
+                                     style: .continuous)
+            .fill(isSelected ? Bench.Palette.rowSelected
+                             : (isZebra ? Bench.Palette.rowZebra : .clear)))
+        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
+                                  style: .continuous)
+            .strokeBorder(isSelected ? stem.opacity(0.3) : .clear, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
+                                       style: .continuous))
+        .onTapGesture(perform: onSelect)
+    }
+
+    private func content(showsStrip: Bool, showsBadges: Bool) -> some View {
         HStack(spacing: 12) {
             if part.auditionURL != nil {
                 BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
@@ -162,24 +197,26 @@ struct LibraryPartRow: View {
             StemBar(kind: part.kind, width: 6, height: 26)
             name
                 .frame(width: 132, alignment: .leading)
-            strip
-                .frame(height: 24)
-                .frame(maxWidth: .infinity)
+            if showsStrip {
+                // The minimum is what makes this a choice rather than a
+                // formality: a `maxWidth: .infinity` frame has an ideal width
+                // of nearly nothing, so without a floor every variant would
+                // measure as fitting and the first would always win.
+                strip
+                    .frame(height: 24)
+                    .frame(minWidth: Self.minStripWidth, maxWidth: .infinity)
+            } else {
+                // Still flexible, so the row fills its pane and the trailing
+                // controls stay against the right edge rather than bunching
+                // up behind the name.
+                Spacer(minLength: 0)
+            }
             FavouriteHeart(isFavourite: part.favorite, size: 10)
-            badges
-            action
+            if showsBadges { badges }
+            // Never wraps, whichever variant is chosen. This is the label the
+            // squeeze actually landed on.
+            action.fixedSize()
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
-                                     style: .continuous)
-            .fill(isSelected ? Bench.Palette.rowSelected
-                             : (isZebra ? Bench.Palette.rowZebra : .clear)))
-        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
-                                  style: .continuous)
-            .strokeBorder(isSelected ? stem.opacity(0.3) : .clear, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
-                                       style: .continuous))
-        .onTapGesture(perform: onSelect)
     }
 
     private var name: some View {

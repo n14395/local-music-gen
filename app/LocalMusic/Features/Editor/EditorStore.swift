@@ -324,6 +324,30 @@ final class EditorStore {
         finishOpen()
     }
 
+    /// What the editor can open, as the material picker's filter.
+    ///
+    /// Kept beside `open(partId:)` because it has to stay in step with it:
+    /// that method turns away anything whose format is not `wav`, so a notes
+    /// part offered here would be picked and then silently ignored — a row
+    /// that does nothing is worse than a row that was never shown. Audio
+    /// kinds only, and songs are always their full mix.
+    static let pickerAccepts = [KindPattern(pattern: "song.mix"),
+                                KindPattern(pattern: "stem.*"),
+                                KindPattern(pattern: "layer.*")]
+
+    /// Open whatever the material picker handed back.
+    ///
+    /// `PickedMaterial` already carries the kind, so this costs no lookup —
+    /// unlike routing by bare id, which has to ask the parts table whether the
+    /// id is a part before it can tell the two apart.
+    func open(_ picked: PickedMaterial) {
+        if picked.kind == "song.mix" {
+            open(songId: picked.id)
+        } else {
+            open(partId: picked.id)
+        }
+    }
+
     func open(partId: String) {
         guard let part = ((try? partsRepo.part(id: partId)) ?? nil),
               part.format == "wav" else { return }

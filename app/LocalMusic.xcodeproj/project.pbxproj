@@ -102,6 +102,7 @@
 		87ECE7F3245319AC206B431B /* EditorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07E004565943D34735A1B87B /* EditorScreen.swift */; };
 		88486632E1C4C2B590CEC429 /* WorkbenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A689FCE0B035B2DDE2830F52 /* WorkbenchView.swift */; };
 		89216213174EDC8207E13CD2 /* TrackTitleLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A180014694B13DF4FE3E0A74 /* TrackTitleLayoutTests.swift */; };
+		89AD8E6304198EBB8C16AD6D /* EditorPickerAcceptsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C19F324AE7CD95226C55614 /* EditorPickerAcceptsTests.swift */; };
 		8A3BA99CBC704210E3590847 /* ModelBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37F47D089E7357A50305D671 /* ModelBadgeTests.swift */; };
 		8B1B306807335FBE3DAEA933 /* PartsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CED74CCF48FA8B487CEA9CE /* PartsStore.swift */; };
 		8C264DA5F48FBF3A33F4D70C /* ModelTagFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5307DBDA3F48CFDA2DF8DD7 /* ModelTagFilterTests.swift */; };
@@ -117,13 +118,16 @@
 		923F8F41A8C13893DF90893B /* CatalogReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06062416D82B77CC7403E86 /* CatalogReadiness.swift */; };
 		9329CC4EA2A0907933988CCD /* PinFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D63EA4323AF406721531A466 /* PinFlowTests.swift */; };
 		96FF7793F6EDE749935C46C6 /* WaveformExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2791502C7F47E67857657CB /* WaveformExtractor.swift */; };
+		97DC516244E15C87BDAC2D44 /* RecipeSlotAcceptsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDEBE7CF6BC852AAED2D4960 /* RecipeSlotAcceptsTests.swift */; };
 		9931B8E4D90186A1C3916705 /* TimelineMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C96FFCD9E1981C519368EAF /* TimelineMathTests.swift */; };
 		9C9028DF0B14729A8A72F109 /* RenderWellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA204BDD1FDD70FAA11441E /* RenderWellTests.swift */; };
+		9CF06A0541F701D498601BB1 /* PartRowFitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7EA3AA128908B6A6B5A7B6B /* PartRowFitTests.swift */; };
 		9D31ACADFE77CBC9C1867547 /* SongEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66A4E9F156E5F7E2407700B7 /* SongEditor.swift */; };
 		9F98E1891E6964A07662CCF0 /* SplitActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DADE7206384EEB4E2415424 /* SplitActionView.swift */; };
 		A07076C4A4D8D98568F35A28 /* SpliceActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2CEDB55340FB87C6482366 /* SpliceActionView.swift */; };
 		A187417A8EAE7897E767DA01 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 754F1316710B439B1AF9710E /* GRDB */; };
 		A62FD2150636737E5FDC3298 /* ModelBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FAFEF61F4D33FD7493174A9 /* ModelBadges.swift */; };
+		A6C72D048E22A091EF243470 /* PickerTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 315A22FE93DF54A13804C7EC /* PickerTabTests.swift */; };
 		AAB837A63C2766CE8A31CD60 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 092D5602518408CC0C037F11 /* LibraryStore.swift */; };
 		AB064A8D17F6F982ABF462D4 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF9587CEE722A4A371DDA06 /* APIError.swift */; };
 		AB66B26F5D1D6176C642CD08 /* ParameterGroupsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABEB0392DF0A016EEFA4466B /* ParameterGroupsTests.swift */; };
@@ -233,9 +237,11 @@
 		230CFED4A4EB25610A6E3EDF /* ModelRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRowView.swift; sourceTree = "<group>"; };
 		23DA3CC437A510185AD90101 /* ParameterFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterFormView.swift; sourceTree = "<group>"; };
 		2678E45991EFA58CD1BB26B0 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
+		2C19F324AE7CD95226C55614 /* EditorPickerAcceptsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPickerAcceptsTests.swift; sourceTree = "<group>"; };
 		2E45943EEF3665533186C435 /* EditMixPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditMixPlan.swift; sourceTree = "<group>"; };
 		2F00900231D382E46E6A4074 /* ModelRuntimeStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRuntimeStateTests.swift; sourceTree = "<group>"; };
 		2F35C81E7B0C2FB3B2C244CA /* BenchDesignTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchDesignTests.swift; sourceTree = "<group>"; };
+		315A22FE93DF54A13804C7EC /* PickerTabTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickerTabTests.swift; sourceTree = "<group>"; };
 		31BA2316AA94E4EAF57BC436 /* ClipView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipView.swift; sourceTree = "<group>"; };
 		327EFB5E6598126FF7B8B632 /* EditModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditModel.swift; sourceTree = "<group>"; };
 		3385A129901ADC5928CB3574 /* StyleTransferScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleTransferScreen.swift; sourceTree = "<group>"; };
@@ -356,9 +362,11 @@
 		CBA5B1DFCE0381495AFDC95C /* LibraryOriginTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryOriginTests.swift; sourceTree = "<group>"; };
 		CCCAF5D7307162C15DBB2D35 /* GenerativeFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenerativeFlowTests.swift; sourceTree = "<group>"; };
 		CCCC52B58013A3ABDDEC29EE /* BackendProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcessManager.swift; sourceTree = "<group>"; };
+		CDEBE7CF6BC852AAED2D4960 /* RecipeSlotAcceptsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipeSlotAcceptsTests.swift; sourceTree = "<group>"; };
 		D00F6464D1CDC41F35626993 /* TimelineGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineGeometry.swift; sourceTree = "<group>"; };
 		D2646E8B3050145A9BF46A60 /* FlowLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayoutTests.swift; sourceTree = "<group>"; };
 		D63EA4323AF406721531A466 /* PinFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinFlowTests.swift; sourceTree = "<group>"; };
+		D7EA3AA128908B6A6B5A7B6B /* PartRowFitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PartRowFitTests.swift; sourceTree = "<group>"; };
 		D88DFC8C33AF2875FB549EF0 /* StudioRenderingPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioRenderingPane.swift; sourceTree = "<group>"; };
 		DC5A4E7FB7A98F925B4FDA9E /* StorageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageStore.swift; sourceTree = "<group>"; };
 		DE0A14CA589CA561CC0D973C /* SplitFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitFlowTests.swift; sourceTree = "<group>"; };
@@ -520,6 +528,7 @@
 				87619ED8F62E2EBB008A4B68 /* EditModelTests.swift */,
 				0BE4867398BEDA6BCBB4934C /* EditorFlowTests.swift */,
 				E7CAED87C421FFEE6C32C6D5 /* EditorGeometryTests.swift */,
+				2C19F324AE7CD95226C55614 /* EditorPickerAcceptsTests.swift */,
 				D2646E8B3050145A9BF46A60 /* FlowLayoutTests.swift */,
 				C9522B1297187045B68C0038 /* GenerationFlowTests.swift */,
 				CCCAF5D7307162C15DBB2D35 /* GenerativeFlowTests.swift */,
@@ -541,11 +550,14 @@
 				C62B86D96BC27F8EF99948E3 /* ParameterFormTests.swift */,
 				ABEB0392DF0A016EEFA4466B /* ParameterGroupsTests.swift */,
 				49102DC1EBE2FB5A36D47510 /* PartIngestTests.swift */,
+				D7EA3AA128908B6A6B5A7B6B /* PartRowFitTests.swift */,
 				F3A23B3DA0F5413D796CC08C /* PartsRepositoryTests.swift */,
+				315A22FE93DF54A13804C7EC /* PickerTabTests.swift */,
 				D63EA4323AF406721531A466 /* PinFlowTests.swift */,
 				694A663D468B6DDBF68F2E34 /* QueueControlTests.swift */,
 				6E62EB62BB661ACBF6BFEB2F /* QueueLoadTests.swift */,
 				AA8CBDAB8D433BF4C89C9B4E /* QueuePanelTests.swift */,
+				CDEBE7CF6BC852AAED2D4960 /* RecipeSlotAcceptsTests.swift */,
 				F7ED4857F5CF532B639405AB /* RecombineFlowTests.swift */,
 				ABA204BDD1FDD70FAA11441E /* RenderWellTests.swift */,
 				0D033B6852E445B4E7F6E9E0 /* SidebarNavTests.swift */,
@@ -1024,6 +1036,7 @@
 				2C6672D9F8CBE3B5AA017B4A /* EditModelTests.swift in Sources */,
 				D5851C1D43C399AF95FA8AA5 /* EditorFlowTests.swift in Sources */,
 				B5DB6E8CE746810B601C18A5 /* EditorGeometryTests.swift in Sources */,
+				89AD8E6304198EBB8C16AD6D /* EditorPickerAcceptsTests.swift in Sources */,
 				D817860F76E5450455C76214 /* FlowLayoutTests.swift in Sources */,
 				DF2BC5753477356C6A557CB8 /* GenerationFlowTests.swift in Sources */,
 				D079F4509CEE49CE42455083 /* GenerativeFlowTests.swift in Sources */,
@@ -1045,11 +1058,14 @@
 				8545990099E8B7AE7F7CADAB /* ParameterFormTests.swift in Sources */,
 				AB66B26F5D1D6176C642CD08 /* ParameterGroupsTests.swift in Sources */,
 				B458616DD085680CF148B6B7 /* PartIngestTests.swift in Sources */,
+				9CF06A0541F701D498601BB1 /* PartRowFitTests.swift in Sources */,
 				1CBA04587FF004861524468F /* PartsRepositoryTests.swift in Sources */,
+				A6C72D048E22A091EF243470 /* PickerTabTests.swift in Sources */,
 				9329CC4EA2A0907933988CCD /* PinFlowTests.swift in Sources */,
 				5BB4E7051349B999BEAAEEA3 /* QueueControlTests.swift in Sources */,
 				3F482485B068A6C467A6F552 /* QueueLoadTests.swift in Sources */,
 				33EF4066900540765EB7AA53 /* QueuePanelTests.swift in Sources */,
+				97DC516244E15C87BDAC2D44 /* RecipeSlotAcceptsTests.swift in Sources */,
 				66E173F0098E7C5A4CDE57BE /* RecombineFlowTests.swift in Sources */,
 				9C9028DF0B14729A8A72F109 /* RenderWellTests.swift in Sources */,
 				DB0E69A668B422A52F7C2A97 /* SR5Tests.swift in Sources */,

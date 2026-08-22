@@ -491,8 +491,10 @@ struct MainWindow: View {
                                                   sourceId: sourceId)
                             })
         case .editor:
-            EditorScreen(store: env.editor, library: env.library,
-                         parts: env.partsStore, playback: env.playback,
+            EditorScreen(store: env.editor, catalog: env.catalog,
+                         library: env.library, parts: env.partsStore,
+                         jobs: env.jobsStore, playback: env.playback,
+                         onOpenModels: { openModels(for: nil) },
                          onOpenLibrary: { destination = .library })
         case .models:
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,

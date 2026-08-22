@@ -6,9 +6,16 @@ import SwiftUI
 /// files are arranged, and this screen never grows a second lane.
 struct EditorScreen: View {
     @Bindable var store: EditorStore
+    let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
+    let jobs: JobsStore
     let playback: PlaybackController
+    var onOpenModels: () -> Void = {}
+    /// Only the apply card uses this, and only for "notify me and go to
+    /// Library" — which is a genuine navigation: the render is running, take
+    /// me somewhere useful and tell me when it lands. Choosing what to edit
+    /// is not, and no longer goes through here.
     var onOpenLibrary: () -> Void = {}
 
     @Environment(\.undoManager) private var undoManager
@@ -19,8 +26,10 @@ struct EditorScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             if store.material == nil {
-                EditorEmptyState(store: store, library: library, parts: parts,
-                                 onOpenLibrary: onOpenLibrary,
+                EditorEmptyState(store: store, catalog: catalog,
+                                 library: library, parts: parts, jobs: jobs,
+                                 playback: playback,
+                                 onOpenModels: onOpenModels,
                                  showImporter: $showImporter,
                                  isDropTargeted: $isDropTargeted)
             } else {

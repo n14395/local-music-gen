@@ -328,32 +328,39 @@ struct SplitActionView: View {
         Task {
             let created: JobsCreated?
             switch task {
+            // `songId` for the two that make parts, because parts belong to
+            // songs and there is no part-of-a-part: transcribing a stem files
+            // its notes under the song the stem came from, exactly as
+            // `submitRender` already does. `analysisOwner` for the one that
+            // makes a measurement, because that belongs to the thing measured.
+            // The title is the material's own name, which for a song is its
+            // title and for a part is the part.
             case "transcribe":
                 created = await jobs.submitTranscribe(
                     modelId: model.id, songId: source.songId,
-                    sourceTitle: source.sourceTitle, sourceURL: source.fileURL,
+                    sourceTitle: source.name, sourceURL: source.fileURL,
                     params: params)
             case "analyze":
                 created = await jobs.submitAnalyze(
-                    modelId: model.id, ownerId: source.songId,
-                    ownerType: "song", title: source.sourceTitle,
+                    modelId: model.id, ownerId: source.analysisOwner.id,
+                    ownerType: source.analysisOwner.type, title: source.name,
                     sourceURL: source.fileURL, params: params)
             default:
                 created = await jobs.submitSplit(
                     modelId: model.id, songId: source.songId,
-                    sourceTitle: source.sourceTitle, sourceURL: source.fileURL,
+                    sourceTitle: source.name, sourceURL: source.fileURL,
                     params: params)
             }
             if let analyseToo {
                 await jobs.submitAnalyze(
-                    modelId: analyseToo.id, ownerId: source.songId,
-                    ownerType: "song", title: source.sourceTitle,
+                    modelId: analyseToo.id, ownerId: source.analysisOwner.id,
+                    ownerType: source.analysisOwner.type, title: source.name,
                     sourceURL: source.fileURL)
             }
             if let transcribeToo {
                 await jobs.submitTranscribe(
                     modelId: transcribeToo.id, songId: source.songId,
-                    sourceTitle: source.sourceTitle, sourceURL: source.fileURL,
+                    sourceTitle: source.name, sourceURL: source.fileURL,
                     params: [:])
             }
             submitting = false

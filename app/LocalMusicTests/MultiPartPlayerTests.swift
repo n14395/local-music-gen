@@ -199,4 +199,57 @@ final class MultiPartPlayerTests: XCTestCase {
         XCTAssertFalse(player.isPlaying, "playback should have finished")
         player.stop()
     }
+
+    /// The meter tap runs on AVFAudio's own realtime queue. When its block
+    /// inherited `@MainActor` from the enclosing method, the Swift runtime
+    /// trapped on the very first buffer — so the app died the moment the
+    /// Editor started playing. Only real audio through a real tap catches it:
+    /// before the fix, this test killed the test process outright.
+    func testMeterTapPublishesLevelsWithoutTrapping() throws {
+        let a = try synthWav("meter", freq: 440, seconds: 1.5)
+        defer { try? FileManager.default.removeItem(at: a) }
+        let player = MultiPartPlayer()
+        player.metersEnabled = true
+        player.sumsConcurrently = false
+        guard player.play(items: [
+            MultiPartPlayer.Item(id: "a", url: a, offsetS: 0, gainDb: 0,
+                                 muted: false),
+        ]) else {
+            throw XCTSkip("audio hardware unavailable: "
+                          + (player.lastError ?? "unknown"))
+        }
+        // Wait for signal, not merely for a reading: the nodes start a beat
+        // after the engine does, so the first buffers really are silent.
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline, (player.meterDb?.left ?? -80) < -40 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        let level = try XCTUnwrap(player.meterDb, "no meter level arrived")
+        // The synth is a 0.4-amplitude sine: -7.96 dBFS.
+        XCTAssertEqual(level.left, -7.96, accuracy: 3.0)
+        XCTAssertEqual(level.right, level.left, accuracy: 0.01,
+                       "a mono source should meter equally on both sides")
+        player.stop()
+        XCTAssertNil(player.meterDb, "a stopped player must not hold a level")
+    }
+
+    /// Pins the isolation the fix depends on: peak reading is callable from
+    /// off the main actor, which is where the audio thread calls it.
+    func testPeakDbReadsBothChannelsOffTheMainActor() async throws {
+        let value = await Task.detached { () -> (left: Double, right: Double)? in
+            let format = AVAudioFormat(standardFormatWithSampleRate: 48000,
+                                       channels: 2)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                          frameCapacity: 128)!
+            buffer.frameLength = 128
+            for i in 0..<128 {
+                buffer.floatChannelData![0][i] = 0.5
+                buffer.floatChannelData![1][i] = 0.25
+            }
+            return MultiPartPlayer.peakDb(in: buffer)
+        }.value
+        let peaks = try XCTUnwrap(value)
+        XCTAssertEqual(peaks.left, -6.02, accuracy: 0.05)
+        XCTAssertEqual(peaks.right, -12.04, accuracy: 0.05)
+    }
 }

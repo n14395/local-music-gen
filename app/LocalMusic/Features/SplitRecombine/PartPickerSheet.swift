@@ -47,6 +47,23 @@ struct PickedMaterial: Identifiable, Equatable {
         auditionURL = nil
     }
 
+    /// A part rather than a whole song. `song.mix` is the one kind that is not
+    /// a part, which is what makes it the test.
+    var isPart: Bool { kind != "song.mix" }
+
+    /// Who a measurement of this material belongs to, in the two columns the
+    /// `analysis` table keys on.
+    ///
+    /// It has to be the *material's* own id, not `songId`. A part's `songId`
+    /// is the song it came out of, so attributing a stem's analysis that way
+    /// writes its tempo and key onto the whole song — and `JobsStore` then
+    /// propagates a song's analysis down to every part of it, so one stem's
+    /// measurements would overwrite all its siblings'. Nothing would report an
+    /// error; the library would simply start lying.
+    var analysisOwner: (id: String, type: String) {
+        (id, isPart ? "part" : "song")
+    }
+
     /// Cached peaks live under one id-keyed name for songs and parts alike, so
     /// a picked material can find its own waveform without knowing which it is.
     var waveformURL: URL {
@@ -118,6 +135,73 @@ struct MaterialStrip: View {
 
 }
 
+/// What the picker's strip is narrowing the list to.
+///
+/// One strip over both halves of the sheet rather than one over each: the
+/// question it answers is "which of my stuff?", and the answer "a drum stem I
+/// made this morning" is not a different kind of question from "one of my
+/// imports". Parts joins the origins as a peer for that reason, even though it
+/// is a different table underneath.
+enum PickerTab: Hashable {
+    case all
+    case songs(SongOrigin)
+    case parts
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .songs(let origin): origin.title
+        case .parts: "Parts"
+        }
+    }
+
+    /// What the tab calls the things it is not showing you, for the empty
+    /// state. Plural and lowercase: "No renders match “kick”."
+    var noun: String {
+        switch self {
+        case .all: "material"
+        case .songs(let origin): origin.title.lowercased()
+        case .parts: "parts"
+        }
+    }
+
+    var showsSongs: Bool {
+        switch self {
+        case .all, .songs: true
+        case .parts: false
+        }
+    }
+
+    var showsParts: Bool {
+        switch self {
+        case .all, .parts: true
+        case .songs: false
+        }
+    }
+
+    /// The strip, and what each tab counts.
+    ///
+    /// `partCount` is nil where the slot takes no parts at all, which is the
+    /// difference between a tab reading "Parts 0" — there are none *yet* — and
+    /// no tab, meaning this slot would not take one anyway. The origins are
+    /// listed even at zero for the same reason the library's scopes are: a
+    /// fixed strip you can learn beats one that reshuffles itself as the
+    /// library fills up.
+    ///
+    /// No songs to show means no strip at all: the only tabs left would be All
+    /// and Parts, which is one list and a synonym for it.
+    static func strip(songCounts: [SongOrigin: Int], showsSongs: Bool,
+                      partCount: Int?) -> [(tab: PickerTab, count: Int)] {
+        guard showsSongs else { return [] }
+        let songs = SongOrigin.allCases.map { ($0, songCounts[$0] ?? 0) }
+        let total = songs.reduce(0) { $0 + $1.1 } + (partCount ?? 0)
+        var strip: [(tab: PickerTab, count: Int)] = [(.all, total)]
+        strip += songs.map { (PickerTab.songs($0.0), $0.1) }
+        if let partCount { strip.append((.parts, partCount)) }
+        return strip
+    }
+}
+
 /// Pick material for a slot: matching parts and (when accepted) full songs;
 /// incompatible rows stay visible with the reason, and songs that could
 /// produce a match offer the one-click "Split now" fix.
@@ -144,14 +228,24 @@ struct PartPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var splittingSongIds: Set<String> = []
-    /// Which origin the song list is showing; nil is "all of them", the tab
-    /// this opens on so that nothing which used to be pickable disappears
-    /// behind a filter the user never asked for.
-    @State private var originTab: SongOrigin?
+    /// What the strip is showing. Opens on `.all` so that nothing which used
+    /// to be pickable disappears behind a filter the user never asked for.
+    @State private var tab: PickerTab = .all
 
     private var songAccepted: Bool {
         accepts.contains { $0.matches("song.mix") }
     }
+
+    /// Whether this slot would take a part at all — as opposed to having none
+    /// to offer today. Decides whether the Parts tab exists, not whether it
+    /// has anything in it.
+    private var partsAccepted: Bool {
+        accepts.contains { $0.pattern != "song.mix" }
+    }
+
+    /// The songs half of the sheet is listed either to be picked or to be
+    /// split; with neither there is nothing for a strip to narrow.
+    private var showsSongs: Bool { songAccepted || autoDerive != nil }
 
     private var allParts: [PartRecord] {
         let list = (try? parts.repository.parts(.init())) ?? []
@@ -172,24 +266,18 @@ struct PartPickerSheet: View {
     }
 
     private var songs: [SongRecord] {
-        guard let originTab else { return matchingSongs }
-        return matchingSongs.filter { $0.originKind == originTab }
+        guard case .songs(let origin) = tab else { return matchingSongs }
+        return matchingSongs.filter { $0.originKind == origin }
     }
 
-    /// `All 128 · Generated 96 · Imported 30 · Renders 2`. Origins with nothing
-    /// in them still get a tab: a fixed strip you can learn beats one that
-    /// reshuffles itself as the library fills up.
-    private var originTabs: [BenchSegmented<SongOrigin?>.Option] {
-        let all = matchingSongs
-        var options: [BenchSegmented<SongOrigin?>.Option] = [
-            .init(value: nil, label: "All", detail: "\(all.count)")
-        ]
-        for origin in SongOrigin.allCases {
-            let count = all.filter { $0.originKind == origin }.count
-            options.append(.init(value: origin, label: origin.title,
-                                 detail: "\(count)"))
-        }
-        return options
+    /// `All 132 · Generated 96 · Imported 30 · Renders 2 · Parts 4`.
+    private var tabs: [BenchSegmented<PickerTab>.Option] {
+        var counts: [SongOrigin: Int] = [:]
+        for song in matchingSongs { counts[song.originKind, default: 0] += 1 }
+        return PickerTab.strip(songCounts: counts, showsSongs: showsSongs,
+                               partCount: partsAccepted ? matchingParts.count : nil)
+            .map { .init(value: $0.tab, label: $0.tab.title,
+                         detail: "\($0.count)") }
     }
 
     private var splitModel: ModelInfo? {
@@ -213,11 +301,22 @@ struct PartPickerSheet: View {
                     .buttonStyle(.benchSecondary)
                     .keyboardShortcut(.cancelAction)
             }
+            // Above the list rather than inside it, because it now governs the
+            // whole list: a filter you have to scroll back to is one you stop
+            // reaching for, and it sits beside the search box that feeds its
+            // counts.
+            if !tabs.isEmpty {
+                BenchSegmented(selection: $tab, options: tabs, fills: true)
+                    .padding(.horizontal, 18).padding(.vertical, 12)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Bench.Palette.hairline).frame(height: 1)
+                    }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    partsSection
-                    songsSection
-                    otherPartsSection
+                    if tab.showsParts { partsSection }
+                    if tab.showsSongs { songsSection }
+                    if tab.showsParts { otherPartsSection }
                     if matchingParts.isEmpty && !songAccepted
                         && autoDerive == nil {
                         Text("Nothing in the library fits this slot yet.")
@@ -261,6 +360,18 @@ struct PartPickerSheet: View {
                         pickRow(PickedMaterial(part: part, sourceTitle: title))
                     }
                 }
+            }
+        } else if tab == .parts {
+            // Only on its own tab. On All an empty parts list is answered by
+            // the songs underneath it; here there is nothing else on screen,
+            // and a blank sheet does not say whether it is the library or the
+            // search that came up empty.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("PARTS").eyebrow()
+                Text(emptyTabMessage)
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                    .padding(.vertical, 10)
             }
         }
     }
@@ -312,8 +423,7 @@ struct PartPickerSheet: View {
                     Text((songAccepted ? "picked as the full mix"
                                        : (autoDerive?.note ?? "")).uppercased())
                         .metaLine()
-                    Spacer(minLength: 8)
-                    BenchSegmented(selection: $originTab, options: originTabs)
+                    Spacer(minLength: 0)
                 }
                 if songs.isEmpty {
                     Text(emptyTabMessage)
@@ -326,7 +436,7 @@ struct PartPickerSheet: View {
                         // Only worth saying on the All tab. Inside a single
                         // origin's tab every row would carry the same word,
                         // which is the tab's own label repeated down the list.
-                        let mark = originTab == nil ? song.originKind : nil
+                        let mark = tab == .all ? song.originKind : nil
                         if songAccepted {
                             pickRow(PickedMaterial(song: song), origin: mark)
                         } else if autoDerive != nil {
@@ -349,7 +459,9 @@ struct PartPickerSheet: View {
     /// What the empty tab says. "Nothing here" is unhelpful when the reason is
     /// a search term rather than an empty collection.
     private var emptyTabMessage: String {
-        let what = originTab.map { $0.title.lowercased() } ?? "songs"
+        // "songs" rather than the All tab's "material" when the songs list is
+        // the thing that came up empty — the parts above it may not have.
+        let what = tab == .all ? "songs" : tab.noun
         return query.isEmpty
             ? "No \(what) in the library yet."
             : "No \(what) match “\(query)”."

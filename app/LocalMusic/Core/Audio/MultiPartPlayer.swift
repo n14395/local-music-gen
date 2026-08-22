@@ -200,7 +200,6 @@ final class MultiPartPlayer {
         engine.mainMixerNode.outputVolume = sumsConcurrently
             ? Float(min(1.0, 4.0 / Double(prepared.count).squareRoot()))
             : 1.0
-        if metersEnabled { installMeterTap() }
         do {
             try engine.start()
         } catch {
@@ -208,6 +207,10 @@ final class MultiPartPlayer {
             teardown()
             return false
         }
+        // After start, not before: the mixer only resolves its output format
+        // once the engine is running, and installing a tap with a 0-channel
+        // format throws.
+        if metersEnabled { installMeterTap() }
         armedItems = prepared
         durationS = Self.timelineDurationS(prepared, fileDurations: fileDurations())
         return true
@@ -271,35 +274,46 @@ final class MultiPartPlayer {
     /// Reads peaks on the render thread, publishes on the main actor. The
     /// buffer is only touched inside the tap block — what crosses the hop is
     /// two Doubles.
+    ///
+    /// The block MUST be `@Sendable`. A closure written inside a `@MainActor`
+    /// method inherits that isolation unless it says otherwise, and AVFAudio
+    /// calls a tap on its own realtime queue: the inherited version trapped in
+    /// `swift_task_checkIsolated` on the very first buffer, so arming the
+    /// Editor's preview crashed the app the moment audio started.
     private func installMeterTap() {
         let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
         engine.mainMixerNode.removeTap(onBus: 0)
-        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 2048,
-                                        format: format) { [weak self] buffer, _ in
-            guard let data = buffer.floatChannelData else { return }
-            let frames = Int(buffer.frameLength)
-            let channels = Int(buffer.format.channelCount)
-            guard frames > 0, channels > 0 else { return }
-            var peaks = [Float](repeating: 0, count: min(2, channels))
-            for channel in 0..<min(2, channels) {
-                var peak: Float = 0
-                for i in 0..<frames {
-                    let v = abs(data[channel][i])
-                    if v > peak { peak = v }
-                }
-                peaks[channel] = peak
-            }
-            let left = Double(peaks[0])
-            let right = Double(peaks.count > 1 ? peaks[1] : peaks[0])
-            func db(_ v: Double) -> Double {
-                v > 0 ? max(-80, 20 * log10(v)) : -80
-            }
-            let value = (left: db(left), right: db(right))
-            Task { @MainActor [weak self] in
+        engine.mainMixerNode.installTap(
+            onBus: 0, bufferSize: 2048, format: format
+        ) { @Sendable [weak self] buffer, _ in
+            guard let value = Self.peakDb(in: buffer) else { return }
+            Task { @MainActor in
                 guard let self, self.state == .playing else { return }
                 self.meterDb = value
             }
         }
+    }
+
+    /// Peak dBFS per channel for one render buffer. Pure and `nonisolated`:
+    /// it runs on the audio thread, which must not touch main-actor state.
+    nonisolated static func peakDb(
+        in buffer: AVAudioPCMBuffer) -> (left: Double, right: Double)? {
+        guard let data = buffer.floatChannelData else { return nil }
+        let frames = Int(buffer.frameLength)
+        let channels = Int(buffer.format.channelCount)
+        guard frames > 0, channels > 0 else { return nil }
+        func peak(_ channel: Int) -> Double {
+            var peak: Float = 0
+            for i in 0..<frames {
+                let v = abs(data[channel][i])
+                if v > peak { peak = v }
+            }
+            return Double(peak)
+        }
+        func db(_ v: Double) -> Double { v > 0 ? max(-80, 20 * log10(v)) : -80 }
+        let left = peak(0)
+        return (left: db(left), right: db(channels > 1 ? peak(1) : left))
     }
 
     private func teardown() {
