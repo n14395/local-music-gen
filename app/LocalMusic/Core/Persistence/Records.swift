@@ -180,6 +180,11 @@ struct PartRecord: Codable, Identifiable, Equatable, FetchableRecord, Persistabl
     var createdAt: Date
     /// Defaulted, so rows written before the v3 migration decode cleanly.
     var favorite: Bool = false
+    /// 0–5; 0 = unrated, as on `SongRecord`. A stem is a thing you keep or
+    /// discard on its own merits — the vocal take that carried the song, the
+    /// drum bed that did not — so it gets the same judgement a track does
+    /// (v9).
+    var rating: Int = 0
     /// The Editor's edit program — stems are editable too (v5).
     var editsJSON: String?
     var editedAt: Date?

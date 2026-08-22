@@ -88,6 +88,19 @@ final class PartsStore {
         refresh()
     }
 
+    /// Rate a part 0–5. Mirrors `setFavorite` exactly, because from the
+    /// list's point of view they are the same gesture on the same row.
+    func setRating(_ part: PartRecord, to rating: Int) {
+        var updated = part
+        updated.rating = max(0, min(5, rating))
+        do {
+            try repo.update(updated)
+        } catch {
+            lastError = "Could not rate part: \(error.localizedDescription)"
+        }
+        refresh()
+    }
+
     func favorites() -> [PartRecord] {
         (try? repo.favorites()) ?? []
     }
@@ -104,6 +117,32 @@ final class PartsStore {
         } catch {
             lastError = "Could not delete part: \(error.localizedDescription)"
         }
+        refresh()
+    }
+
+    /// Delete several, republishing once — see `LibraryStore.delete(_:)` for
+    /// why one refresh rather than one per row.
+    func delete(_ parts: [PartRecord]) {
+        guard !parts.isEmpty else { return }
+        for part in parts {
+            try? FileManager.default.removeItem(at: part.fileURL)
+            if let preview = part.previewURL {
+                try? FileManager.default.removeItem(at: preview)
+            }
+            try? FileManager.default.removeItem(at: part.waveformURL)
+            LibraryStore.removeEditorLeftovers(id: part.id)
+            do {
+                try repo.delete(id: part.id)
+            } catch {
+                lastError = "Could not delete part: \(error.localizedDescription)"
+            }
+        }
+        refresh()
+    }
+
+    func update(_ parts: [PartRecord]) {
+        guard !parts.isEmpty else { return }
+        for part in parts { try? repo.update(part) }
         refresh()
     }
 

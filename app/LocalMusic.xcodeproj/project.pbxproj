@@ -97,6 +97,7 @@
 		71CA91FF5E90F65DBFB09FF9 /* BackendProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCC52B58013A3ABDDEC29EE /* BackendProcessManager.swift */; };
 		73390314215B2B51DE66DB56 /* StyleTransferScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3385A129901ADC5928CB3574 /* StyleTransferScreen.swift */; };
 		7386F6D72BE32D16CFCE8C5E /* CatalogReadinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C21F3A0F54E7AFF37B0222F /* CatalogReadinessTests.swift */; };
+		739866C3FE979B0756F0E3A3 /* LibrarySelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C894BCDC3D5D15E029784F /* LibrarySelection.swift */; };
 		74B104254B9EFA50F481489B /* BackendDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B7C76BAF1FB399AF2869AF2 /* BackendDebugView.swift */; };
 		776DDF896DFCD17FEE12FD4D /* CatalogFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5F3B6DAD1A39AE32F810C89 /* CatalogFormatting.swift */; };
 		7A163989C4BFCC69430BEC51 /* EngineStatusButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F53700613DF641CBD6160CE /* EngineStatusButton.swift */; };
@@ -107,6 +108,7 @@
 		80F9F3DB7991F28D5B55DF7A /* BackendLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62108250D1F5B012592D1800 /* BackendLocator.swift */; };
 		8101BB1BF04262F7EE4287D7 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD9CC3F3EA95B8251754A29 /* Keychain.swift */; };
 		82AEBE0A73C634D6628EC9D3 /* EventStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A8B307023DF7A4DD3B48CB2 /* EventStreamClient.swift */; };
+		8396F24F8EA6D6BD1899A67D /* LibrarySelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D0DAE21ED6B040E663782F /* LibrarySelectionTests.swift */; };
 		8545990099E8B7AE7F7CADAB /* ParameterFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62B86D96BC27F8EF99948E3 /* ParameterFormTests.swift */; };
 		875A20BB8D70A1BEDCBC4B56 /* EditorGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85194D978CB01A787DEC1DD5 /* EditorGeometry.swift */; };
 		87959DB4AF4E3FD4DFEEC02F /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 878E8823156E9A712C48538F /* DatabaseManager.swift */; };
@@ -143,6 +145,7 @@
 		A62FD2150636737E5FDC3298 /* ModelBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FAFEF61F4D33FD7493174A9 /* ModelBadges.swift */; };
 		A6C72D048E22A091EF243470 /* PickerTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 315A22FE93DF54A13804C7EC /* PickerTabTests.swift */; };
 		AAB837A63C2766CE8A31CD60 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 092D5602518408CC0C037F11 /* LibraryStore.swift */; };
+		AAD92CBD83893DBB4FCCB41E /* PartRatingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F995AC0C2998A19918F5C78 /* PartRatingTests.swift */; };
 		AB064A8D17F6F982ABF462D4 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF9587CEE722A4A371DDA06 /* APIError.swift */; };
 		AB66B26F5D1D6176C642CD08 /* ParameterGroupsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABEB0392DF0A016EEFA4466B /* ParameterGroupsTests.swift */; };
 		AB83F045FE9FE917E58F4CE0 /* EditorStoreRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446797FB4904E8F57EFD4E0D /* EditorStoreRender.swift */; };
@@ -171,6 +174,7 @@
 		C6C42FC9618CFCB614493E01 /* StudioRenderingPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88DFC8C33AF2875FB549EF0 /* StudioRenderingPane.swift */; };
 		C6CBC08323CA59667E361418 /* TimelineRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A88A43CD95167EC4B47B8EB /* TimelineRoundTripTests.swift */; };
 		C91B68E2136E5415469524E6 /* ModelsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C6CD521849F0E1BD13274A /* ModelsScreen.swift */; };
+		CA77034F5EADEFF2BD7E591C /* LibrarySelectionInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102A6F9C3C8F8E0953BA4DA3 /* LibrarySelectionInspector.swift */; };
 		CB0880EF63E74920F3AFCFC3 /* PartInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496230F2832658E1CEBC1097 /* PartInspector.swift */; };
 		CC2736CED281A92CB3C208F4 /* SidebarNavTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D033B6852E445B4E7F6E9E0 /* SidebarNavTests.swift */; };
 		D079F4509CEE49CE42455083 /* GenerativeFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCAF5D7307162C15DBB2D35 /* GenerativeFlowTests.swift */; };
@@ -228,6 +232,7 @@
 		036B1CCA29413626A56838B0 /* SingleInstance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleInstance.swift; sourceTree = "<group>"; };
 		06EA0F3B7770C6114099DBE9 /* MixActionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixActionView.swift; sourceTree = "<group>"; };
 		0751144FE236826BEB49D69D /* WorkbenchLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchLogicTests.swift; sourceTree = "<group>"; };
+		07C894BCDC3D5D15E029784F /* LibrarySelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySelection.swift; sourceTree = "<group>"; };
 		07E004565943D34735A1B87B /* EditorScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScreen.swift; sourceTree = "<group>"; };
 		090A11AFC81EA062B162031A /* ModelCatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalogStore.swift; sourceTree = "<group>"; };
 		092D5602518408CC0C037F11 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
@@ -240,6 +245,7 @@
 		0F47FDAA365BDC6A2E59C041 /* Destination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Destination.swift; sourceTree = "<group>"; };
 		0F5B47D3C51564894A2EB325 /* MixModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixModelsTests.swift; sourceTree = "<group>"; };
 		0FE40B0FB1945696044FDAD3 /* ModelListPlacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelListPlacementTests.swift; sourceTree = "<group>"; };
+		102A6F9C3C8F8E0953BA4DA3 /* LibrarySelectionInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySelectionInspector.swift; sourceTree = "<group>"; };
 		1138CDEC1B514C1D90576B3E /* JobQueueSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobQueueSection.swift; sourceTree = "<group>"; };
 		13335C57B5B066CD075D17C6 /* BenchWaveform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchWaveform.swift; sourceTree = "<group>"; };
 		14F2080F1E57871C4AC41503 /* LibraryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryScreen.swift; sourceTree = "<group>"; };
@@ -300,6 +306,7 @@
 		62108250D1F5B012592D1800 /* BackendLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendLocator.swift; sourceTree = "<group>"; };
 		62F5DE5390284361CAF55797 /* BenchIndicators.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchIndicators.swift; sourceTree = "<group>"; };
 		637E2E2E26DF2D2280F3DDD1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		64D0DAE21ED6B040E663782F /* LibrarySelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySelectionTests.swift; sourceTree = "<group>"; };
 		65E11DBD3293CF864A85F7C3 /* MixModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixModels.swift; sourceTree = "<group>"; };
 		661155585A7F50863C89C5A2 /* TelemetryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryStore.swift; sourceTree = "<group>"; };
 		66A4E9F156E5F7E2407700B7 /* SongEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongEditor.swift; sourceTree = "<group>"; };
@@ -310,6 +317,7 @@
 		6CD267BF2D0F242E1192B9FF /* StudioParameterPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioParameterPanel.swift; sourceTree = "<group>"; };
 		6D3BB55C6460A3F446FEC4BB /* MultiPartPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPartPlayer.swift; sourceTree = "<group>"; };
 		6E62EB62BB661ACBF6BFEB2F /* QueueLoadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueLoadTests.swift; sourceTree = "<group>"; };
+		6F995AC0C2998A19918F5C78 /* PartRatingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PartRatingTests.swift; sourceTree = "<group>"; };
 		74101A851B9B744A47052F22 /* QueuePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanel.swift; sourceTree = "<group>"; };
 		758C3FD077116A88D468CF9C /* WorkbenchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchModel.swift; sourceTree = "<group>"; };
 		762860D6C39220181103E79E /* EditorMiniWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMiniWave.swift; sourceTree = "<group>"; };
@@ -476,6 +484,8 @@
 				028CB977BAF8378E1A9EE3D9 /* LibraryPartList.swift */,
 				1CC04A962CF29A7C5B742A5B /* LibraryPieces.swift */,
 				14F2080F1E57871C4AC41503 /* LibraryScreen.swift */,
+				07C894BCDC3D5D15E029784F /* LibrarySelection.swift */,
+				102A6F9C3C8F8E0953BA4DA3 /* LibrarySelectionInspector.swift */,
 				4687D9749F3872C93C9A234F /* LibrarySongList.swift */,
 				496230F2832658E1CEBC1097 /* PartInspector.swift */,
 				AC6DA43F1AFCCDD4B020B8FE /* SongDetailView.swift */,
@@ -575,6 +585,7 @@
 				C9522B1297187045B68C0038 /* GenerationFlowTests.swift */,
 				CCCAF5D7307162C15DBB2D35 /* GenerativeFlowTests.swift */,
 				CBA5B1DFCE0381495AFDC95C /* LibraryOriginTests.swift */,
+				64D0DAE21ED6B040E663782F /* LibrarySelectionTests.swift */,
 				0C3B7A9F1F29DD8278193F2F /* LibraryTests.swift */,
 				9331DDA9F4663C9A41422AE6 /* MashabilityTests.swift */,
 				B3ADB52C0A33E58452FE3958 /* MigrationTests.swift */,
@@ -597,6 +608,7 @@
 				ABEB0392DF0A016EEFA4466B /* ParameterGroupsTests.swift */,
 				49102DC1EBE2FB5A36D47510 /* PartIngestTests.swift */,
 				CC437B4C87249B5F0FE5BFF8 /* PartNamingTests.swift */,
+				6F995AC0C2998A19918F5C78 /* PartRatingTests.swift */,
 				D7EA3AA128908B6A6B5A7B6B /* PartRowFitTests.swift */,
 				F3A23B3DA0F5413D796CC08C /* PartsRepositoryTests.swift */,
 				315A22FE93DF54A13804C7EC /* PickerTabTests.swift */,
@@ -1005,6 +1017,8 @@
 				65FF7D44C6D8E1F71FA469C5 /* LibraryPieces.swift in Sources */,
 				91D40093D095F627007D8DC5 /* LibraryRepository.swift in Sources */,
 				6BC998F414B37464F39A1FF7 /* LibraryScreen.swift in Sources */,
+				739866C3FE979B0756F0E3A3 /* LibrarySelection.swift in Sources */,
+				CA77034F5EADEFF2BD7E591C /* LibrarySelectionInspector.swift in Sources */,
 				9110B0B4AFE0E3C0DD58840C /* LibrarySongList.swift in Sources */,
 				AAB837A63C2766CE8A31CD60 /* LibraryStore.swift in Sources */,
 				08163FF759011052DEEAD34E /* LoadingPlaceholder.swift in Sources */,
@@ -1106,6 +1120,7 @@
 				DF2BC5753477356C6A557CB8 /* GenerationFlowTests.swift in Sources */,
 				D079F4509CEE49CE42455083 /* GenerativeFlowTests.swift in Sources */,
 				BF09786FA7A12EEBBDA3A5C1 /* LibraryOriginTests.swift in Sources */,
+				8396F24F8EA6D6BD1899A67D /* LibrarySelectionTests.swift in Sources */,
 				C3C1C14D04A9AA83EF26972E /* LibraryTests.swift in Sources */,
 				66EEDEC6FE3D169A9C4C21BF /* MashabilityTests.swift in Sources */,
 				2F0388FE52283A408292ADD3 /* MigrationTests.swift in Sources */,
@@ -1128,6 +1143,7 @@
 				AB66B26F5D1D6176C642CD08 /* ParameterGroupsTests.swift in Sources */,
 				B458616DD085680CF148B6B7 /* PartIngestTests.swift in Sources */,
 				3E251CF371CAB4E9042C7C06 /* PartNamingTests.swift in Sources */,
+				AAD92CBD83893DBB4FCCB41E /* PartRatingTests.swift in Sources */,
 				9CF06A0541F701D498601BB1 /* PartRowFitTests.swift in Sources */,
 				1CBA04587FF004861524468F /* PartsRepositoryTests.swift in Sources */,
 				A6C72D048E22A091EF243470 /* PickerTabTests.swift in Sources */,

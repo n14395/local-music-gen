@@ -254,6 +254,18 @@ final class DatabaseManager: Sendable {
                                arguments: [free, id])
             }
         }
+        // Parts can be rated, like the tracks they came out of.
+        //
+        // The Parts list draws the same row as every other library scope now,
+        // and that row has five stars in it; without a column behind them they
+        // would be five stars you cannot fill. Defaulted rather than
+        // backfilled: 0 means unrated, and inventing a rating for material the
+        // user has never judged would be worse than an empty row of stars.
+        migrator.registerMigration("v9") { db in
+            try db.alter(table: "part") { t in
+                t.add(column: "rating", .integer).notNull().defaults(to: 0)
+            }
+        }
         return migrator
     }
 }

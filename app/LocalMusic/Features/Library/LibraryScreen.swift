@@ -348,9 +348,18 @@ struct LibraryScreen: View {
                 Text("\(checked.count) SELECTED")
                     .font(Bench.Typo.mono(11, .semibold))
                     .foregroundStyle(Bench.Palette.accent)
+                // Parts can be ticked now, and two of those are not a
+                // comparison — the A/B switch plays whole takes against each
+                // other. Dimmed rather than hidden, so the chip keeps its
+                // shape while the count is the thing that changed.
                 Button("A / B compare") { startCompare() }
                     .buttonStyle(BenchPrimaryButtonStyle(size: .compact,
                                                          glows: false))
+                    .disabled(!selection.canCompare)
+                    .opacity(selection.canCompare ? 1 : 0.45)
+                    .help(selection.canCompare
+                          ? "Compare the first two songs against each other"
+                          : "Needs two songs — a part has no take to compare")
             }
             .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 5)
             .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
@@ -419,6 +428,7 @@ struct LibraryScreen: View {
                 LibraryPartList(
                     groups: partGroups, analyses: parts.analyses,
                     playback: playback, selectedId: $selectedPartId,
+                    checked: $checked,
                     onPlay: playPart, onSeek: seekPart,
                     onAddToWorkbench: onAddToWorkbench,
                     onRenderNotes: onRenderNotes)
@@ -479,17 +489,37 @@ struct LibraryScreen: View {
                             part: part, analysis: parts.analysis(for: part.id),
                             isZebra: index.isMultiple(of: 2),
                             isSelected: part.id == selectedPartId,
+                            isChecked: checked.contains(part.id),
+                            showsCheckbox: true,
                             playback: playback,
+                            onToggleCheck: {
+                                if checked.contains(part.id) {
+                                    checked.remove(part.id)
+                                } else {
+                                    checked.insert(part.id)
+                                }
+                            },
                             onPlay: { playPart(part) },
                             onSelect: {
                                 selectedPartId = part.id
                                 selectedSongId = nil
                             },
-                            onSeek: { seekPart(part, $0) },
-                            onAddToWorkbench: { onAddToWorkbench(part) },
-                            onRenderNotes: onRenderNotes.map { render in
-                                { render(part) }
-                            })
+                            onSeek: { seekPart(part, $0) })
+                            // Favourites composes the two row types itself,
+                            // so it carries the parts menu too — the same one
+                            // `LibraryPartList` puts on its rows.
+                            .contextMenu {
+                                Button("Add to Workbench") {
+                                    onAddToWorkbench(part)
+                                }
+                                .disabled(part.format != "wav")
+                                if part.format == "midi" {
+                                    Button("Render notes…") {
+                                        onRenderNotes?(part)
+                                    }
+                                    .disabled(onRenderNotes == nil)
+                                }
+                            }
                     }
                 }
             }
@@ -526,11 +556,32 @@ struct LibraryScreen: View {
 
     // MARK: - Inspector
 
+    /// Everything ticked, resolved against both tables.
+    private var selection: LibrarySelection {
+        LibrarySelection.of(ids: checked, songs: songs, parts: parts.results)
+    }
+
     @ViewBuilder
     private var inspector: some View {
-        // Favourites shows whichever kind you picked; the other scopes only
-        // ever contain one.
-        if scope == .parts || (scope == .favourites && selectedPartId != nil) {
+        // A selection outranks a single row: ticking a second box is a
+        // deliberate act, and the pane it wants is the one about all of them.
+        // Untick back down to one and the row's own pane returns.
+        if selection.isMultiple {
+            LibrarySelectionInspector(
+                selection: selection, library: library, parts: parts,
+                playback: playback,
+                onCompare: startCompare,
+                onAddToWorkbench: onAddToWorkbench,
+                onClear: { checked = [] },
+                onDeleted: {
+                    // The rows are gone, so the ids must go with them —
+                    // otherwise the pane keeps describing files that no longer
+                    // exist, and the count never comes down.
+                    checked = []
+                    selectedSongId = nil
+                    selectedPartId = nil
+                })
+        } else if scope == .parts || (scope == .favourites && selectedPartId != nil) {
             if let part = selectedPart {
                 PartInspector(
                     part: part, analysis: parts.analysis(for: part.id),

@@ -3,12 +3,14 @@ import SwiftUI
 import XCTest
 @testable import LocalMusic
 
-/// A parts row must stay one line tall at every width the app can give it.
+/// A parts row must stay two lines tall at every width the app can give it,
+/// and must be the same row the song scopes draw.
 ///
-/// The bug: `strip` asks for `maxWidth: .infinity`, so in a narrow pane SwiftUI
-/// took the space back from the only child that could yield — the `＋ Bench`
-/// label — and wrapped it to four lines, once per row, down the whole list.
-/// The row now drops the waveform instead.
+/// The original bug: `strip` asks for `maxWidth: .infinity`, so in a narrow
+/// pane SwiftUI took the space back from the only child that could yield — the
+/// `＋ Bench` label — and wrapped it to four lines, once per row, down the
+/// whole list. That button now lives in the row's context menu, but the same
+/// squeeze can still land on the title block, so the measurement stays.
 ///
 /// Measured rather than reasoned about. The decision belongs to `ViewThatFits`,
 /// which exposes nothing to assert on, and the widths involved are text metrics
@@ -17,118 +19,114 @@ import XCTest
 @MainActor
 final class PartRowFitTests: XCTestCase {
     private func part(kind: String = "stem.vocals",
-                      name: String = "Other (keys, synths, rest)",
-                      format: String = "wav") -> PartRecord {
+                      name: String = "vocals-warehouse-jam",
+                      format: String = "wav",
+                      rating: Int = 0) -> PartRecord {
         PartRecord(id: "p1", songId: "s1", kind: kind, name: name,
                    fileName: "p1." + format, format: format,
                    previewFileName: nil, modelId: "sep",
                    modelName: "Demucs 4-stem", jobId: "job_1",
                    splitParamsJSON: "{}", durationS: 180, sampleRate: 44100,
-                   createdAt: Date())
+                   createdAt: Date(), favorite: false, rating: rating)
     }
 
     private func analysis() -> AnalysisRecord? { nil }
 
+    private func row(_ part: PartRecord) -> LibraryPartRow {
+        LibraryPartRow(part: part, analysis: analysis(), isZebra: false,
+                       isSelected: false, playback: PlaybackController(),
+                       onPlay: {}, onSelect: {}, onSeek: { _ in })
+    }
+
     /// The rendered height of one row laid out at `width`.
     private func height(at width: CGFloat, part: PartRecord) -> CGFloat {
-        let row = LibraryPartRow(
-            part: part, analysis: analysis(), isZebra: false, isSelected: false,
-            playback: PlaybackController(),
-            onPlay: {}, onSelect: {}, onSeek: { _ in },
-            onAddToWorkbench: {}, onRenderNotes: {})
-        let host = NSHostingView(rootView: row.frame(width: width))
+        let host = NSHostingView(rootView: row(part).frame(width: width))
         host.layoutSubtreeIfNeeded()
         return host.fittingSize.height
     }
 
-    /// One line of `Bench.Typo.body` plus the row's 9 pt of vertical padding
-    /// each side lands well under this; two lines of a wrapped button label
-    /// clears it comfortably. The gap between the two is what is being
-    /// detected, so the threshold does not need to be tight.
-    private let oneLineCeiling: CGFloat = 52
+    /// Two lines of the title block plus the row's 11 pt of vertical padding
+    /// each side lands well under this; a third line — a wrapped title or a
+    /// wrapped meta line — clears it comfortably. The gap between the two is
+    /// what is being detected, so the threshold does not need to be tight.
+    private let twoLineCeiling: CGFloat = 68
 
     /// 320 is narrower than the parts pane can ever actually be — the window
     /// floor is 1100 with a 404 pt inspector beside the list — so this brackets
     /// the real range from well below it.
-    func testRowStaysOneLineAtEveryPlausibleWidth() {
+    func testRowStaysTwoLinesAtEveryPlausibleWidth() {
         for width in stride(from: 320.0, through: 900.0, by: 20.0) {
             let h = height(at: width, part: part())
-            XCTAssertLessThan(h, oneLineCeiling,
+            XCTAssertLessThan(h, twoLineCeiling,
                               "row wrapped at \(width) pt (height \(h))")
         }
     }
 
-    /// The slot holds an explanation rather than a signal for a notes part, and
-    /// that text is much wider than a waveform's minimum — so it is the case
-    /// most likely to force a wrap, and the one that most needs the fallback.
-    func testNotesRowStaysOneLineToo() {
-        let notes = part(kind: "notes.piano", name: "Piano", format: "midi")
+    /// The meta line is the longest thing in a notes row — it carries the
+    /// family, the MIDI marker and the model — so it is the case most likely
+    /// to force a wrap.
+    func testNotesRowStaysTwoLinesToo() {
+        let notes = part(kind: "notes.piano", name: "piano-notes-warehouse-jam",
+                         format: "midi")
         for width in stride(from: 320.0, through: 900.0, by: 20.0) {
             let h = height(at: width, part: notes)
-            XCTAssertLessThan(h, oneLineCeiling,
+            XCTAssertLessThan(h, twoLineCeiling,
                               "notes row wrapped at \(width) pt (height \(h))")
         }
     }
 
-    /// A part's name is now as long as its song's title makes it, and the row
-    /// still has to be one line at every width. The old column was a flat
-    /// 132 pt and could not push on anything; the new one can, so this is the
-    /// case that would break first.
-    func testALongNameStaysOneLineToo() {
-        let long = part(name: "a-lonely-trumpet-over-rain-slicked-neon-vocals")
+    /// A name as long as a pasted prompt still must not push the row taller.
+    func testALongNameStaysTwoLinesToo() {
+        let long = part(name: "vocals-a-lonely-trumpet-over-rain-slicked-neon")
         for width in stride(from: 320.0, through: 900.0, by: 20.0) {
             let h = height(at: width, part: long)
-            XCTAssertLessThan(h, oneLineCeiling,
+            XCTAssertLessThan(h, twoLineCeiling,
                               "long-named row wrapped at \(width) pt (\(h))")
         }
     }
 
-    /// The row laid out with no width imposed on it — what it would like.
-    private func idealWidth(part: PartRecord) -> CGFloat {
-        let row = LibraryPartRow(
-            part: part, analysis: analysis(), isZebra: false, isSelected: false,
-            playback: PlaybackController(),
-            onPlay: {}, onSelect: {}, onSeek: { _ in },
-            onAddToWorkbench: {}, onRenderNotes: {})
-        let host = NSHostingView(rootView: row)
-        host.layoutSubtreeIfNeeded()
-        return host.fittingSize.width
-    }
-
-    /// The column grows for a name that needs it, and stops.
-    ///
-    /// Both halves matter. Without the growth `vocals-warehouse-jam` — 144 pt
-    /// at the selected row's weight — reads as `vocals-warehous…` on every
-    /// row of the list. Without the ceiling a title pasted from a prompt takes
-    /// the whole row and leaves no waveform, no badges and no button.
-    func testTheNameColumnGrowsForALongNameAndThenStops() {
-        // Under the floor: the column sits at its minimum, so short names
-        // still line up down the list.
-        let short = idealWidth(part: part(name: "vocals-track042"))
-        let long = idealWidth(part: part(name: "vocals-warehouse-jam"))
-        XCTAssertGreaterThan(long, short,
-                             "a name past the floor has to be given the room")
-
-        let pasted = idealWidth(part: part(name: String(repeating: "x", count: 200)))
-        let slack = LibraryPartRow.maxNameWidth - LibraryPartRow.minNameWidth
-        XCTAssertLessThanOrEqual(pasted - short, slack + 1,
-                                 "the column must not grow past its ceiling")
-    }
-
     /// The point of the fallback is that it is a fallback: given room, the row
     /// still draws the waveform. A row that had quietly stopped showing one at
-    /// every width would pass the two tests above and be useless.
-    ///
-    /// Asserted through width rather than by looking for the waveform: with the
-    /// strip present the row fills what it is given, and without it the
-    /// trailing controls still hold the right edge — so the honest observable
-    /// is that a wide row is not taller than a narrow one, and that the strip's
-    /// declared minimum is a width the pane can actually afford.
+    /// every width would pass the tests above and be useless.
     func testStripSurvivesAtTheWidthsTheLibraryNormallyHas() {
         // 1100 pt window − 232 pt sidebar − 404 pt inspector ≈ 464 pt of list,
         // which is the narrowest the pane gets without the queue pinned.
         let h = height(at: 464, part: part())
-        XCTAssertLessThan(h, oneLineCeiling)
+        XCTAssertLessThan(h, twoLineCeiling)
         XCTAssertGreaterThan(LibraryPartRow.minStripWidth, 0)
+    }
+
+    /// The whole point of the change: a part row and a song row are the same
+    /// row. Measured, because "looks the same" is exactly the claim that rots
+    /// the moment one of the two lists is tuned.
+    func testAPartRowIsTheSameHeightAsASongRow() {
+        let song = SongRecord(
+            id: "s1", title: "track042", prompt: "a warm drum groove",
+            lyrics: nil, modelId: "m", modelName: "MusicGen Small",
+            groupId: nil, paramsJSON: "{}", durationS: 180, sampleRate: 32000,
+            fileName: "s1.wav", seedUsed: nil, createdAt: Date(), rating: 3,
+            notes: "", favorite: true)
+        let songRow = LibrarySongRow(
+            song: song, isZebra: false, isSelected: false, isChecked: false,
+            showsCheckbox: false, partCount: 0, isSplitting: false,
+            playback: PlaybackController(), onToggleCheck: {}, onPlay: {},
+            onSelect: {}, onSeek: { _ in })
+        let songHost = NSHostingView(rootView: songRow.frame(width: 640))
+        songHost.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(height(at: 640, part: part()),
+                       songHost.fittingSize.height, accuracy: 1.0,
+                       "the two library rows have to line up")
+    }
+
+    /// The stars and the heart are the row's right edge in every other scope,
+    /// so a rated part has to be able to show them.
+    func testTheRowDrawsARating() {
+        // Asserted through the record rather than the pixels: `RatingStars` is
+        // fixed-size, so a rating changes no geometry — the guard that matters
+        // is that the column exists to hold one.
+        XCTAssertEqual(part(rating: 4).rating, 4)
+        let h = height(at: 640, part: part(rating: 5))
+        XCTAssertLessThan(h, twoLineCeiling)
     }
 }

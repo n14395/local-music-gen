@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One heading plus the parts under it. The library screen builds these; the
@@ -25,6 +26,10 @@ struct LibraryPartList: View {
     let analyses: [String: AnalysisRecord]
     let playback: PlaybackController
     @Binding var selectedId: String?
+    /// Ticked rows, shared with the songs list: one selection spans both
+    /// kinds, because Favourites shows both and "delete these" means the same
+    /// thing either way.
+    @Binding var checked: Set<String>
     let onPlay: (PartRecord) -> Void
     let onSeek: (PartRecord, Double) -> Void
     let onAddToWorkbench: (PartRecord) -> Void
@@ -46,15 +51,15 @@ struct LibraryPartList: View {
                                 analysis: analyses[part.id],
                                 isZebra: index.isMultiple(of: 2),
                                 isSelected: part.id == selectedId,
+                                isChecked: checked.contains(part.id),
+                                showsCheckbox: true,
                                 playback: playback,
+                                onToggleCheck: { toggleCheck(part) },
                                 onPlay: { onPlay(part) },
                                 onSelect: { selectedId = part.id },
-                                onSeek: { onSeek(part, $0) },
-                                onAddToWorkbench: { onAddToWorkbench(part) },
-                                onRenderNotes: onRenderNotes.map { render in
-                                    { render(part) }
-                                })
+                                onSeek: { onSeek(part, $0) })
                                 .id(part.id)
+                                .contextMenu { menu(for: part) }
                         }
                     }
                 }
@@ -76,6 +81,32 @@ struct LibraryPartList: View {
                     proxy.scrollTo(selectedId)
                 }
             }
+        }
+    }
+
+    /// What the row used to carry as buttons. Owned by the list rather than
+    /// the row, which is how `LibrarySongList` does it and for the same
+    /// reason: a menu is about the row's place in a list, not about the row.
+    @ViewBuilder
+    private func menu(for part: PartRecord) -> some View {
+        if part.auditionURL != nil {
+            Button("Play") { onPlay(part) }
+            Divider()
+        }
+        // Only audio goes on the bench — a notes part has to be rendered
+        // first, which is the item below it.
+        Button("Add to Workbench") { onAddToWorkbench(part) }
+            .disabled(part.format != "wav")
+        if part.format == "midi" {
+            // Dimmed rather than absent when there is no renderer installed:
+            // absent reads as "this part cannot be rendered", which is a
+            // different and wrong claim.
+            Button("Render notes…") { onRenderNotes?(part) }
+                .disabled(onRenderNotes == nil)
+        }
+        Divider()
+        Button("Reveal in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([part.fileURL])
         }
     }
 
@@ -104,6 +135,14 @@ struct LibraryPartList: View {
         }
     }
 
+    private func toggleCheck(_ part: PartRecord) {
+        if checked.contains(part.id) {
+            checked.remove(part.id)
+        } else {
+            checked.insert(part.id)
+        }
+    }
+
     private func move(_ direction: MoveCommandDirection) {
         let parts = flat
         guard !parts.isEmpty else { return }
@@ -121,22 +160,30 @@ struct LibraryPartList: View {
 
 // MARK: - Row
 
-/// play · stem colour bar · 132 pt name · strip · heart · key · tempo · `＋ Bench`.
+/// One part, in the row grammar every other library scope uses: a tick box, a
+/// two-line title block, the signal, five stars, a heart.
 ///
-/// The stem colour is the whole point of the row: it is the same colour this
-/// part's swatch, waveform, workbench slider and timeline clip carry, so a
-/// glance down the list reads as instrumentation rather than as text.
+/// It used to be its own thing — a single-line name, key/tempo badges where
+/// the stars belong, and a `＋ Bench` button on the end — which made Parts read
+/// as a different kind of list rather than the same library seen through a
+/// different filter. The actions it carried moved to the row's context menu,
+/// where every song action already lives.
+///
+/// The stem colour is what survives of the old row, and deliberately: it is
+/// the same colour this part's swatch, waveform, workbench slider and timeline
+/// clip carry, so a glance down the list still reads as instrumentation.
 struct LibraryPartRow: View {
     let part: PartRecord
     let analysis: AnalysisRecord?
     let isZebra: Bool
     let isSelected: Bool
+    var isChecked = false
+    var showsCheckbox = false
     let playback: PlaybackController
+    var onToggleCheck: () -> Void = {}
     let onPlay: () -> Void
     let onSelect: () -> Void
     let onSeek: (Double) -> Void
-    let onAddToWorkbench: () -> Void
-    let onRenderNotes: (() -> Void)?
 
     private var stem: Color { Bench.Palette.stem(part.kind) }
     private var isCurrent: Bool { playback.currentSongId == part.id }
@@ -152,35 +199,23 @@ struct LibraryPartRow: View {
     /// signal and is only taking room from the label beside it.
     static let minStripWidth: CGFloat = 96
 
-    /// The name column's floor and ceiling. The floor is what keeps the
-    /// column a column; the ceiling is where a name stops being worth more
-    /// row than the signal beside it.
-    static let minNameWidth: CGFloat = 132
-    static let maxNameWidth: CGFloat = 220
-
     var body: some View {
-        // The flexible middle is the first thing to spend.
-        //
-        // `strip` asks for `maxWidth: .infinity`, and in a pane that has run
-        // out of room SwiftUI honours that by taking the space back from the
-        // only child left that can yield — the button's label, which wraps to
-        // `＋ / Be / nc / h` down the whole list. Dropping the waveform is the
-        // right trade: it is the one thing in the row that degrades to nothing
-        // gracefully, and the inspector to the right draws the same signal at
-        // a size actually worth looking at.
+        // The same ladder the song rows climb: the strip is the one thing in
+        // the row that degrades to nothing gracefully — the inspector draws
+        // the same signal at a size worth aiming at — while half a title
+        // identifies nothing.
         ViewThatFits(in: .horizontal) {
-            content(showsStrip: true, showsBadges: true)
-            content(showsStrip: false, showsBadges: true)
-            // Narrower still. The key and the tempo are on the part's own
-            // badge row in the inspector; the name and the action are not
-            // repeated anywhere, so they are what the row keeps.
-            content(showsStrip: false, showsBadges: false)
+            content(showsStrip: true)
+            content(showsStrip: false)
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, 12).padding(.vertical, 11)
         .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                      style: .continuous)
-            .fill(isSelected ? Bench.Palette.rowSelected
-                             : (isZebra ? Bench.Palette.rowZebra : .clear)))
+            .fill(fill))
+        // Accented in the stem's own colour rather than the app accent the
+        // song rows use: in a list where colour means instrument, a selection
+        // ring in some other colour is the one thing that would read as a
+        // sixth stem.
         .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                   style: .continuous)
             .strokeBorder(isSelected ? stem.opacity(0.3) : .clear, lineWidth: 1))
@@ -189,8 +224,16 @@ struct LibraryPartRow: View {
         .onTapGesture(perform: onSelect)
     }
 
-    private func content(showsStrip: Bool, showsBadges: Bool) -> some View {
+    private var fill: Color {
+        if isSelected { return Bench.Palette.rowSelected }
+        return isZebra ? Bench.Palette.rowZebra : .clear
+    }
+
+    private func content(showsStrip: Bool) -> some View {
         HStack(spacing: 12) {
+            if showsCheckbox {
+                LibraryCheckbox(isOn: isChecked, action: onToggleCheck)
+            }
             if part.auditionURL != nil {
                 BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
                                 isCurrent: isCurrent, size: 26, tint: stem,
@@ -201,72 +244,69 @@ struct LibraryPartRow: View {
                 Color.clear.frame(width: 26, height: 26)
             }
             StemBar(kind: part.kind, width: 6, height: 26)
-            name
-                // Was a flat 132, which was sized for "Vocals" and truncates
-                // almost every real name: `vocals-warehouse-jam` measures 144
-                // pt at the selected row's weight. So the column has a floor
-                // (short names still line up down the list) and a ceiling (a
-                // title pasted from a prompt cannot eat the row), and takes
-                // its space before the waveform does — the strip degrades to
-                // nothing gracefully and the inspector draws it properly
-                // anyway, while half a name identifies nothing.
-                .frame(minWidth: Self.minNameWidth,
-                       maxWidth: Self.maxNameWidth, alignment: .leading)
-                .layoutPriority(1)
+            titleBlock
+                // Bounded exactly as the song row's is, and from its constants
+                // rather than a second set: the two lists sit one sidebar
+                // click apart, and a title column that changed width when you
+                // moved between them would read as a different app.
+                .frame(minWidth: showsStrip ? LibrarySongRow.minTitleWidth : nil,
+                       idealWidth: showsStrip ? LibrarySongRow.minTitleWidth : nil,
+                       maxWidth: showsStrip ? LibrarySongRow.maxTitleWidth : .infinity,
+                       alignment: .leading)
             if showsStrip {
-                // The minimum is what makes this a choice rather than a
-                // formality: a `maxWidth: .infinity` frame has an ideal width
-                // of nearly nothing, so without a floor every variant would
+                // The floor is what makes this a choice rather than a
+                // formality: the loader is a `GeometryReader`, so its ideal
+                // width is nearly nothing, and without one both variants would
                 // measure as fitting and the first would always win.
                 strip
-                    .frame(height: 24)
+                    .frame(height: 28)
                     .frame(minWidth: Self.minStripWidth, maxWidth: .infinity)
-            } else {
-                // Still flexible, so the row fills its pane and the trailing
-                // controls stay against the right edge rather than bunching
-                // up behind the name.
-                Spacer(minLength: 0)
             }
-            FavouriteHeart(isFavourite: part.favorite, size: 10)
-            if showsBadges { badges }
-            // Never wraps, whichever variant is chosen. This is the label the
-            // squeeze actually landed on.
-            action.fixedSize()
+            RatingStars(rating: part.rating, size: 12)
+                .frame(width: 76, alignment: .trailing)
+            FavouriteHeart(isFavourite: part.favorite)
         }
     }
 
-    private var name: some View {
-        HStack(spacing: 0) {
-            Text(LibraryPartRow.split(name: part.name).base)
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(part.name)
                 .font(isSelected ? Bench.Typo.bodyEmphasis : Bench.Typo.body)
                 .foregroundStyle(Bench.Palette.textPrimary)
+                .lineLimit(1).truncationMode(.tail)
+            Text(LibraryPartRow.metaLine(for: part, analysis: analysis))
+                .metaLine()
                 .lineLimit(1)
-            if let qualifier {
-                Text(" " + qualifier)
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textMuted)
-                    .lineLimit(1).truncationMode(.tail)
-            }
         }
     }
 
-    /// The dim half of the name: what "Other" actually contains, or — when the
-    /// part is not audio — what it is instead.
-    private var qualifier: String? {
-        if let parenthetical = LibraryPartRow.split(name: part.name).qualifier {
-            return parenthetical
+    /// `STEM · DEMUCS 4-STEM · 201 S · 124 BPM · 5A` — the parts answer to
+    /// `LibrarySongRow.metaLine`, in the same order and the same units: what
+    /// it is, what made it, how long it runs, then what has been measured of
+    /// it.
+    ///
+    /// It also carries the two things the *name* stopped saying when part
+    /// names became `other-track042`: what "Other" actually holds, and that a
+    /// notes part is symbols rather than sound.
+    static func metaLine(for part: PartRecord,
+                         analysis: AnalysisRecord?) -> String {
+        var fields = [PartNaming.family(kind: part.kind).uppercased()]
+        if let qualifier = PartNaming.qualifier(kind: part.kind) {
+            fields.append(qualifier.uppercased())
+        } else if part.format == "midi" {
+            fields.append("MIDI")
+        } else if part.format == "json" {
+            fields.append("DATA")
         }
-        // `other-track042` does not explain itself the way the old
-        // `Other (keys, synths, rest)` name did, and the residual stem is
-        // exactly the one whose name needs the explanation.
-        if let fromKind = PartNaming.qualifier(kind: part.kind) {
-            return fromKind
+        fields.append(part.modelName.uppercased())
+        if let duration = part.durationS, duration > 0 {
+            fields.append("\(LibraryFormat.seconds(duration)) S")
         }
-        switch part.format {
-        case "midi": return "MIDI"
-        case "json": return "DATA"
-        default: return nil
+        if let bpm = analysis?.bpm {
+            fields.append("\(Int(bpm.rounded())) BPM")
         }
+        if let camelot = analysis?.camelot { fields.append(camelot) }
+        return fields.joined(separator: " · ")
     }
 
     /// This slot is where every other row shows a real signal, so it only ever
@@ -288,47 +328,17 @@ struct LibraryPartRow: View {
     }
 
     /// Why the strip is empty, and the two reasons are not the same: a features
-    /// part never had audio, while a notes part is one "Render…" — the button
-    /// immediately to its right — away from having some.
+    /// part never had audio, while a notes part is one "Render notes…" — now in
+    /// the row's context menu — away from having some.
     private var silentLabel: String {
         part.format == "midi" ? "NO RENDERED PREVIEW YET" : "NO AUDIO"
     }
 
-    @ViewBuilder
-    private var badges: some View {
-        if part.format == "wav" {
-            if let camelot = analysis?.camelot { BenchBadge(camelot) }
-            if let bpm = analysis?.bpm {
-                BenchBadge("\(Int(bpm.rounded())) BPM")
-            }
-        } else {
-            BenchBadge(part.modelName.uppercased(),
-                       tone: part.format == "midi" ? .cyan : .neutral)
-        }
-    }
-
-    @ViewBuilder
-    private var action: some View {
-        if part.format == "midi" {
-            // Rule 5: with no route to the renderer the button dims and says
-            // why rather than vanishing, so a notes row keeps the same shape
-            // as every other row in the group.
-            Button("Render…") { onRenderNotes?() }
-                .buttonStyle(.bench(.quiet))
-                .disabled(onRenderNotes == nil)
-                .opacity(onRenderNotes == nil ? 0.45 : 1)
-                .help(onRenderNotes == nil
-                      ? "Needs an installed model that can render notes"
-                      : "Render these notes with the SoundFont — the audio "
-                        + "lands back in Parts, ready to restyle or mix")
-        } else if part.format == "wav" {
-            Button("＋ Bench", action: onAddToWorkbench)
-                .buttonStyle(.bench(.quiet))
-                .help("Add this part to the Workbench")
-        }
-    }
-
     /// `Other (keys, synths, rest)` → `Other` + `keys, synths, rest`.
+    ///
+    /// Kept for the sibling chips and anything else holding a name a user may
+    /// have typed a parenthetical into; the row itself no longer splits its
+    /// title, because the second line says what the qualifier used to.
     static func split(name: String) -> (base: String, qualifier: String?) {
         guard let open = name.firstIndex(of: "("), name.hasSuffix(")") else {
             return (name, nil)

@@ -258,8 +258,8 @@ struct PartInspector: View {
 
     @ViewBuilder
     private var transportLine: some View {
-        if let url = part.auditionURL {
-            HStack(spacing: 12) {
+        HStack(spacing: 12) {
+            if let url = part.auditionURL {
                 BenchTransportButton(isPlaying: isCurrent && playback.isPlaying,
                                      size: 32) {
                     playback.play(url: url, songId: part.id, title: part.name,
@@ -269,8 +269,14 @@ struct PartInspector: View {
                      + " / \(LibraryFormat.clock(duration))")
                     .font(Bench.Typo.mono(12))
                     .foregroundStyle(Bench.Palette.textTertiary)
-                Spacer(minLength: 8)
             }
+            Spacer(minLength: 8)
+            // Outside the audio branch on purpose. The list draws five stars
+            // on every part, so every part needs somewhere to fill them —
+            // including the notes and features parts that have no transport
+            // to sit beside.
+            RatingStars(rating: part.rating, size: 15, spacing: 2,
+                        onRate: { parts.setRating(part, to: $0) })
         }
     }
 

@@ -183,6 +183,22 @@ final class LibraryStore {
     }
 
     func delete(_ song: SongRecord) {
+        deleteWithoutRefresh(song)
+        refreshRecent()
+    }
+
+    /// Delete several, republishing once.
+    ///
+    /// `delete(_:)` refreshes on its way out, which is right for one row and
+    /// wrong for twenty: the list would be rebuilt from the database twenty
+    /// times while the user watched it shrink a row at a time.
+    func delete(_ songs: [SongRecord]) {
+        guard !songs.isEmpty else { return }
+        for song in songs { deleteWithoutRefresh(song) }
+        refreshRecent()
+    }
+
+    private func deleteWithoutRefresh(_ song: SongRecord) {
         // Parts are derivatives: their rows cascade with the song row, so the
         // files must go first.
         if let partsRepo {
@@ -201,6 +217,12 @@ final class LibraryStore {
         try? FileManager.default.removeItem(at: song.waveformURL)
         LibraryStore.removeEditorLeftovers(id: song.id)
         try? repo.delete(id: song.id)
+    }
+
+    /// Write several rows, republishing once — the same reason as above.
+    func update(_ songs: [SongRecord]) {
+        guard !songs.isEmpty else { return }
+        for song in songs { try? repo.update(song) }
         refreshRecent()
     }
 }
