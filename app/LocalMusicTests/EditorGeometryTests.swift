@@ -56,6 +56,86 @@ final class EditorGeometryTests: XCTestCase {
     }
 
     /// Snap radius is in *pixels*, so it feels the same at every zoom.
+    // MARK: dragging the overview window's edges
+
+    /// The gesture's whole premise: the edge you are holding moves, the other
+    /// one does not. Anything else is a scroll wearing a zoom's clothes.
+    func testDraggingTheStartEdgePinsTheEnd() {
+        let g = geo(start: 20, px: 10)          // 20…100 s of a 200 s track
+        let out = g.draggingEdge(.start, to: 60)
+        XCTAssertEqual(out.visibleStartS, 60, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleEndS, 100, accuracy: 1e-6)
+        XCTAssertEqual(out.pxPerSecond, 20, accuracy: 1e-6)
+    }
+
+    func testDraggingTheEndEdgePinsTheStart() {
+        let g = geo(start: 20, px: 10)
+        let out = g.draggingEdge(.end, to: 60)
+        XCTAssertEqual(out.visibleStartS, 20, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleEndS, 60, accuracy: 1e-6)
+        XCTAssertEqual(out.pxPerSecond, 20, accuracy: 1e-6)
+    }
+
+    /// Dragging an edge outwards is zooming out, and it stops where every
+    /// other zoom control in the editor stops.
+    func testDraggingOutwardsStopsAtTheWholeTrack() {
+        let g = geo(start: 100, px: 10)         // 100…180 s
+        let out = g.draggingEdge(.start, to: -500)
+        XCTAssertEqual(out.visibleStartS, 0, accuracy: 1e-6)
+        XCTAssertEqual(out.pxPerSecond,
+                       EditorGeometry.fitZoom(durationS: 200, width: 800),
+                       accuracy: 1e-6)
+    }
+
+    /// And inwards it stops at `maxZoom`, with the pinned edge still pinned —
+    /// the failure worth pinning is a window that collapses to nothing and
+    /// takes the viewport somewhere else on the way.
+    func testDraggingPastTheOppositeEdgeStopsAtMaxZoom() {
+        let g = geo(start: 20, px: 10)          // 20…100 s
+        let out = g.draggingEdge(.start, to: 500)
+        XCTAssertEqual(out.pxPerSecond, EditorGeometry.maxZoom, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleEndS, 100, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleSeconds,
+                       Double(800 / EditorGeometry.maxZoom), accuracy: 1e-6)
+    }
+
+    func testDraggingTheEndPastTheStartStopsAtMaxZoom() {
+        let g = geo(start: 20, px: 10)
+        let out = g.draggingEdge(.end, to: -500)
+        XCTAssertEqual(out.pxPerSecond, EditorGeometry.maxZoom, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleStartS, 20, accuracy: 1e-6)
+    }
+
+    /// A window already showing the whole track cannot be dragged wider, and
+    /// must not drift while failing to.
+    func testAFullWidthWindowDoesNotMoveWhenDraggedWider() {
+        let fit = EditorGeometry.fitZoom(durationS: 200, width: 800)
+        let g = geo(start: 0, px: fit)
+        let out = g.draggingEdge(.end, to: 9999)
+        XCTAssertEqual(out.visibleStartS, 0, accuracy: 1e-6)
+        XCTAssertEqual(out.pxPerSecond, fit, accuracy: 1e-6)
+    }
+
+    /// A track shorter than the narrowest window `maxZoom` allows inverts the
+    /// clamp bounds. The arithmetic has to survive that — a `ClosedRange`
+    /// built from a reversed pair traps, and this is a real case: an 800 pt
+    /// well at 400 px/s cannot show less than two seconds.
+    func testAVeryShortTrackDoesNotTrap() {
+        let g = geo(start: 0, px: 800, width: 800, duration: 1)
+        XCTAssertEqual(g.draggingEdge(.start, to: 0.5).visibleStartS, 0,
+                       accuracy: 1e-6)
+        XCTAssertNotEqual(g.draggingEdge(.end, to: 0.5).pxPerSecond, 0)
+    }
+
+    /// Before the well has been laid out there is no width to divide by, and
+    /// a drag has nothing to mean yet.
+    func testNoWidthOrNoTrackIsIdentity() {
+        let noWidth = geo(width: 0)
+        XCTAssertEqual(noWidth.draggingEdge(.start, to: 10), noWidth)
+        let noTrack = geo(duration: 0)
+        XCTAssertEqual(noTrack.draggingEdge(.end, to: 10), noTrack)
+    }
+
     func testSnapUsesAScreenRadius() {
         let coarse = geo(px: 10)            // 8 px = 0.8 s
         XCTAssertEqual(coarse.snapped(10.5, candidates: [10, 12]), 10,

@@ -58,6 +58,14 @@ class ACEStepAdapter(ModelAdapter):
     def load(self, progress_cb: ProgressCb) -> None:
         os.environ.setdefault("ACESTEP_LM_BACKEND", "mlx")
         os.environ.setdefault("ACESTEP_DOWNLOAD_SOURCE", "huggingface")
+        # ACE-Step logs through loguru, whose default handler is DEBUG and
+        # reads its level from here at import. Left at DEBUG one render wrote
+        # 17,476 lines, and the INFO half of that is the useful half: what it
+        # is decoding, which backend the VAE took, what it normalised to. This
+        # keeps that and drops the per-tensor commentary underneath it. Set
+        # before the acestep import below, because loguru reads the variable
+        # once when it is first imported.
+        os.environ.setdefault("LOGURU_LEVEL", "INFO")
         import torch
 
         from acestep.handler import AceStepHandler

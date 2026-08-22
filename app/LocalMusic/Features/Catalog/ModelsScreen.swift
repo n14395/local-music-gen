@@ -36,12 +36,12 @@ struct ModelsScreen: View {
 
     // MARK: - Filtering
 
+    /// Shared with Studio's model picker: one catalog, one idea of a hit.
+    /// See `ModelSearch` for why it is tokens rather than one substring.
     private func matchesSearch(_ model: ModelInfo) -> Bool {
-        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return true }
-        return model.displayName.lowercased().contains(query)
-            || model.description.lowercased().contains(query)
-            || model.family.lowercased().contains(query)
+        ModelSearch.matches(query: filter,
+                            in: [model.displayName, model.description,
+                                 model.family])
     }
 
     /// Everything the search box and the "Only installed" switch let through.
@@ -385,7 +385,9 @@ struct ModelsScreen: View {
             onTogglePin: { enabled in
                 Task { await catalog.setPin(listRow.model, enabled: enabled) }
             },
-            onDismissFailure: { downloads.clearFailure(forModel: listRow.model.id) })
+            onDismissFailure: { downloads.clearFailure(forModel: listRow.model.id) },
+            isFavourite: catalog.isFavourite(listRow.model.id),
+            onToggleFavourite: { catalog.toggleFavourite(listRow.model.id) })
     }
 
     private func requestDownload(_ model: ModelInfo) {

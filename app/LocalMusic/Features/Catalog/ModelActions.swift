@@ -49,6 +49,13 @@ enum ModelActions {
             // to stay unit-testable; `StyleTransferMode` is pure and tested, so
             // the two copies could finally become one.
             return preset.mode.canRun(model)
+        case .generate(let preset):
+            return preset.need.canRun(model)
+        case .compareModels:
+            // Any generative model is a candidate for a comparison — the card
+            // needs two of them, but that is a fact about the machine rather
+            // than about this model.
+            return GenerateNeed().canRun(model)
         case .workbench, .match:
             return false
         }

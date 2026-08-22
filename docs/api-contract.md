@@ -924,7 +924,7 @@ buffer of the last 500 events (best effort); after any reconnect the app also re
 | `job.started`        | `{"job_id"}` |
 | `job.progress`       | `{"job_id","stage","fraction","eta_s","message","take","phase","step","steps"}` — the `JobInfo.progress` object plus `job_id`; see 5.5 |
 | `job.preview`        | `{"job_id","take","path","sample_rate","duration_s","step"}` — partial audio for a take still rendering; only for a job submitted with `preview: true`; see 5.6 |
-| `job.log`            | `{"job_id","line"}` (worker stderr mirror, throttled) |
+| `job.log`            | `{"job_id","line"}` — worker stderr mirror; see the note below for what is and is not mirrored |
 | `job.completed`      | `{"job_id"}` — app then `GET /v1/jobs/{id}` for the result |
 | `job.failed`         | `{"job_id","error":{"code","message"}}` |
 | `job.canceled`       | `{"job_id"}` |
@@ -933,6 +933,29 @@ buffer of the last 500 events (best effort); after any reconnect the app also re
 | `worker.state`       | `{"state":"loading"\|"loaded"\|"stopped","model_id","family"}` — what the warm worker holds (drives the app's titlebar) |
 | `system.telemetry`   | the `usage` object from `/v1/system` — every 2 s while a worker is alive, every 10 s idle, so the sidebar readout is live without polling. Same nullability rules; skipped entirely while no client is subscribed |
 | `engine.warning`     | `{"message"}` (e.g. MPS CPU-fallback, RAM > 85 %) |
+
+### 6.1 What `job.log` mirrors
+
+Every line a worker prints is written to that worker's log file under
+`Backend/logs/`. That file is the record and nothing is withheld from it.
+
+`job.log` is a different thing: a summary of that file, one SSE event per
+line, feeding a pane about ten lines tall. Two rules apply to it, and an
+engine implementing this contract is expected to apply both.
+
+- **Progress-bar redraws are not mirrored.** A tqdm-style bar overwrites
+  itself with a carriage return, and a client reading the pipe in text mode
+  sees every overwrite as a new line. Mirroring them sends a value that is
+  already stale, drawn as bar art. They are recognised by the `NN%|` that
+  precedes the bar.
+- **The rest is rate limited**, currently to 8 lines per second per job. When
+  the limit bites, the next mirrored line is preceded by
+  `… N more lines not shown (see the worker log)`. The cap must announce
+  itself: a truncated render and a quiet one have to be distinguishable.
+
+Adapters are also expected to echo each `progress` message to stderr, which is
+what gives a family with no per-step library output anything to mirror at all.
+This is not a separate event — it arrives as an ordinary `job.log` line.
 
 ## 7. Storage ownership
 

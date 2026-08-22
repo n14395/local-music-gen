@@ -230,7 +230,7 @@ private struct SendOnwardPanel: View {
             Text("SEND SELECTION TO").eyebrow()
             sendButton("Continue from here", color: Bench.Palette.violet,
                        symbol: "sparkles",
-                       help: "Render this selection and hand it to the Studio "
+                       help: "Render this selection and hand it to Generate "
                            + "as melody guidance") {
                 Task { await store.sendSelection(.continueFrom) }
             }

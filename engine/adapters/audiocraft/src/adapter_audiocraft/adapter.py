@@ -7,11 +7,10 @@ audiocraft's state_dict.bin (e.g. musicgen-songstarter).
 Snapshot layout: the model repo provides state_dict.bin +
 compression_state_dict.bin; a second, pattern-scoped t5-base repo pre-seeds the
 HF cache so audiocraft's T5 conditioner never hits the network at load time.
-The language model is built in fp32. audiocraft picks fp16 for any non-CPU
-device, which on MPS is a known artifact source — and at this family's largest
-size (songstarter: 48 layers x 2048, 3.3B) it does not degrade, it destroys:
-the take comes back as a full-band wash with no note onsets in it. Overridable
-per model with `settings.dtype` where the memory matters more than the margin.
+fp16 autocast is disabled after load — unsupported/artifact-prone on MPS.
+
+EnCodec's decoder is repaired on the way in: see `_fix_mps_elu`. Without it
+every model in this family returns noise, however good its tokens were.
 
 MusicGen-Style conditions on an *audio excerpt* rather than on a melody, and
 audiocraft routes both through the same `self_wav` slot — so `generate_with_chroma`
@@ -46,56 +45,7 @@ from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult
 
 
 _autocast_patched = False
-_lm_dtype_patched = False
-# Read at build time rather than captured, so a second load in the same worker
-# cannot be silently held to the first one's precision.
-_lm_dtype = {"value": "float32"}
-
-
-def _pin_lm_dtype(dtype: str) -> None:
-    """Build the LM in `dtype` whatever device it lands on.
-
-    `loaders.load_lm_model` decides precision from the device alone::
-
-        cfg.device = str(device)
-        if cfg.device == 'cpu':
-            cfg.dtype = 'float32'
-        else:
-            cfg.dtype = 'float16'
-
-    — written when "not CPU" meant CUDA. On MPS it silently downcasts the
-    checkpoint's fp32 weights on the way into the module, and the residual
-    stream of a deep pre-norm transformer then accumulates in fp16 with
-    `attention_as_float32: false`, which every checkpoint in this family sets.
-
-    The smaller models survive it. songstarter does not: 48 layers at dim 2048
-    is twice the width of anything else here, and its output is a wash of
-    broadband noise with no onsets or harmonics — audio-shaped, because EnCodec
-    decodes any token sequence into something audio-shaped, but not music.
-
-    Patched at `builders.get_lm_model` rather than at `load_lm_model`, because
-    that is where `cfg.dtype` is finally read, and `loaders` reaches it through
-    the module (`from . import builders`) so the rebinding is seen.
-
-    The sibling transformers MusicGen adapter pins the same thing explicitly
-    (`from_pretrained(..., torch_dtype=torch.float32)`) and runs a 3.3B melody
-    checkpoint on MPS without trouble, which is the comparison that says the
-    size is fine and the precision is not.
-    """
-    global _lm_dtype_patched
-    _lm_dtype["value"] = dtype
-    if _lm_dtype_patched:
-        return
-    from audiocraft.models import builders
-
-    original_get_lm_model = builders.get_lm_model
-
-    def pinned_get_lm_model(cfg, *args, **kwargs):
-        cfg.dtype = _lm_dtype["value"]
-        return original_get_lm_model(cfg, *args, **kwargs)
-
-    builders.get_lm_model = pinned_get_lm_model
-    _lm_dtype_patched = True
+_elu_patched = False
 
 
 def _disarm_mps_autocast() -> None:
@@ -134,6 +84,61 @@ def _disarm_mps_autocast() -> None:
     _autocast_patched = True
 
 
+def _fix_mps_elu() -> None:
+    """Make `nn.ELU` contiguous-safe, without which every model here is noise.
+
+    torch 2.1's MPS `elu` reads a non-contiguous input as if it were packed, so
+    it returns garbage — silently, and only for that one activation:
+
+        x = torch.randn(100, 1, 1024).permute(1, 2, 0)   # not contiguous
+        (torch.nn.ELU()(x.to("mps")).cpu() - torch.nn.ELU()(x)).abs().max()
+        # -> same order as the signal itself; relu/tanh/sigmoid are all exact
+
+    EnCodec walks straight into it. `SLSTM.forward` ends `y.permute(1, 2, 0)`
+    and the next module in the SEANet decoder is that ELU, so the very first
+    thing done to the latents is wrong and all the upsampling that follows is
+    working on noise. The tokens are perfect — greedy decoding gives the same
+    ids on CPU and MPS to the last one — which is what makes it so hard to see
+    from the outside: it looks like a broken model rather than a broken codec.
+    Measured on musicgen-medium's codec, a 3 s clip round-trips at +15.86 dB on
+    CPU and -0.57 dB on MPS; with this patch MPS matches CPU exactly.
+
+    Every audiocraft checkpoint is affected, not just the one that got reported
+    — MAGNeT, musicgen-style and songstarter all decode through this. The
+    family is alone in it only because audiocraft pins torch==2.1.0 while every
+    other adapter here is on 2.7+, where the op is fixed. That pin is the thing
+    to remove when audiocraft's own floor moves; until then this is the repair.
+
+    Patched on the class rather than at the call sites because there are two
+    EnCodec implementations in play — audiocraft's own `SEANetDecoder` and the
+    transformers port that `nateraw/musicgen-songstarter-v0.2` delegates to —
+    and both reach the same `nn.ELU`.
+    """
+    global _elu_patched
+    if _elu_patched:
+        return
+    import torch.nn as nn
+
+    _elu_patched = True
+    if not torch.backends.mps.is_available():
+        return
+    # Probed rather than version-gated, so the workaround disappears by itself
+    # the day the pin moves to a torch that has the op right — a patch that
+    # outlives its bug is how a wrong result gets blamed on the fix.
+    probe = torch.randn(8, 1, 32).permute(1, 2, 0)
+    elu = nn.ELU()
+    if torch.allclose(elu(probe.to("mps")).cpu(), elu(probe), atol=1e-5):
+        return
+
+    original_forward = nn.ELU.forward
+
+    def contiguous_elu(self, input):
+        return original_forward(
+            self, input if input.is_contiguous() else input.contiguous())
+
+    nn.ELU.forward = contiguous_elu
+
+
 def _pad_to_excerpt(wav: "torch.Tensor", sample_rate: int,
                     excerpt_s: float) -> "torch.Tensor":
     """Make a style reference at least one excerpt long, by looping it.
@@ -167,7 +172,6 @@ class AudiocraftAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.model = None
         self.kind = self.settings.get("kind", "musicgen")  # musicgen | magnet
-        self.dtype = str(self.settings.get("dtype", "float32"))
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         if self.settings.get("device"):
             self.device = str(self.settings["device"])
@@ -180,7 +184,7 @@ class AudiocraftAdapter(ModelAdapter):
 
     def load(self, progress_cb: ProgressCb) -> None:
         _disarm_mps_autocast()
-        _pin_lm_dtype(self.dtype)
+        _fix_mps_elu()
         from audiocraft.models import MAGNeT, MusicGen
 
         progress_cb(None, f"loading {self.kind} weights")
@@ -196,7 +200,7 @@ class AudiocraftAdapter(ModelAdapter):
             self_wav = conditioners["self_wav"]
             if hasattr(self_wav, "chroma"):
                 self_wav.chroma.to("cpu")
-        progress_cb(None, f"{self.kind} on {self.device} ({self.dtype})")
+        progress_cb(None, f"{self.kind} on {self.device}")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,

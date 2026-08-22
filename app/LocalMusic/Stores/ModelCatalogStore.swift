@@ -30,6 +30,32 @@ final class ModelCatalogStore {
         }
     }
 
+    /// Hearted models, persisted across launches.
+    ///
+    /// A local preference rather than a database row, because a model is not
+    /// the app's data — the catalog belongs to the engine, and an id can leave
+    /// it when a model is dropped. A stale id here costs nothing: nothing draws
+    /// a favourite that is not in `models`.
+    ///
+    /// Deliberately unrelated to the Library's Favourites, which is for music
+    /// and parts. This one orders the model picker and nothing else.
+    private(set) var favouriteModelIds: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(favouriteModelIds),
+                                      forKey: "favouriteModels")
+        }
+    }
+
+    func isFavourite(_ id: String) -> Bool { favouriteModelIds.contains(id) }
+
+    func toggleFavourite(_ id: String) {
+        if favouriteModelIds.contains(id) {
+            favouriteModelIds.remove(id)
+        } else {
+            favouriteModelIds.insert(id)
+        }
+    }
+
     /// Whether a Hugging Face token is in the Keychain, which is what a gated
     /// model row reads to say `HF TOKEN ✓` rather than demanding one.
     ///
@@ -42,6 +68,8 @@ final class ModelCatalogStore {
         self.backend = backend
         acceptedLicenses = Set(UserDefaults.standard
             .stringArray(forKey: "acceptedLicenses") ?? [])
+        favouriteModelIds = Set(UserDefaults.standard
+            .stringArray(forKey: "favouriteModels") ?? [])
         hasHFToken = Keychain.get(account: "hf-token") != nil
     }
 

@@ -224,6 +224,10 @@ def main() -> None:
     adapter = None
     cancel = CancelToken()
 
+    # The last message echoed to stderr, so a phase that reports the same text
+    # once a second for two minutes says it once.
+    last_echo: list[str | None] = [None]
+
     def progress(fraction: float | None, message: str, *,
                  phase: str | None = None, step: int | None = None,
                  steps: int | None = None) -> None:
@@ -236,6 +240,17 @@ def main() -> None:
                                     ("steps", steps)) if v is not None}
         messages.send(proto_out, "progress", progress=fraction, message=message,
                       **staged)
+        # And again as a line, because the two go to different places. The
+        # protocol message drives the stage list; stderr is mirrored to the
+        # render card's log pane, which is otherwise empty for most families —
+        # every adapter routes its library's per-step callback into *this*
+        # function, and that interception is exactly what stops the library
+        # printing anything itself. Echoing here gives every family a voice
+        # from one place, in a shape worth reading, instead of ten adapters
+        # each learning to print.
+        if message and message != last_echo[0]:
+            last_echo[0] = message
+            print(message, file=sys.stderr, flush=True)
 
     # A reader thread is required for cancel: while generate() runs, the main thread
     # cannot read stdin. Cancel/shutdown act on the CURRENT token immediately; other

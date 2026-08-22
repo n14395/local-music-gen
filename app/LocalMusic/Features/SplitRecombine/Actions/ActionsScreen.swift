@@ -25,12 +25,22 @@ struct ActionsScreen: View {
     /// applied. The same escape hatch `.workbench` already uses: some cards are
     /// doors into a place rather than pages of their own.
     let onOpenStyleTransfer: (StylePreset?, String?) -> Void
+    /// Switches the shell to Generate with a preset applied — the same escape
+    /// hatch as `onOpenStyleTransfer`, for the shelf of cards that start from
+    /// a description rather than from audio. The id is the track a preset
+    /// reads tempo and key from, nil for the cards that read nothing.
+    let onOpenGenerate: (GeneratePreset, String?) -> Void
 
     /// `sourceId` is a song or part id to preselect; the page resolves it.
     enum Route: Equatable {
         case action(recipeId: String, sourceId: String?)
     }
 
+    /// The preset waiting on a track to measure — `gen-fit-track` and nothing
+    /// else. Held rather than routed because the card needs one fact off a
+    /// song and then leaves; a page of its own would exist to hold a single
+    /// picker.
+    @State private var pickingFor: GeneratePreset?
     @State private var query = ""
     @State private var category: RecipeCategory?
     @AppStorage("actions.onlyRunnable") private var onlyRunnable = false
@@ -64,6 +74,19 @@ struct ActionsScreen: View {
                       onOpen: open,
                       onDropAudio: importDropped,
                       onOpenModels: { onOpenModels(nil) })
+            .sheet(item: $pickingFor) { preset in
+                PartPickerSheet(
+                    slotLabel: "Track to match",
+                    accepts: RecipeCatalog.recipe(id: preset.id)?
+                        .slots.first?.accepts ?? [],
+                    autoDerive: nil, catalog: catalog, library: library,
+                    parts: parts, jobs: jobs, playback: playback,
+                    onOpenModels: { onOpenModels(nil) },
+                    onPick: { picked in
+                        pickingFor = nil
+                        onOpenGenerate(preset, picked.id)
+                    })
+            }
     }
 
     private var recentRecipes: [Recipe] {
@@ -87,6 +110,10 @@ struct ActionsScreen: View {
         /// four cards read as runnable on a fresh install and only admitted
         /// the problem once you were on the page.
         case needsTaskModel(String)
+        /// A Generate card with nothing installed that can do what it says.
+        /// The hint names the smallest model that would, because "install
+        /// something" is not an instruction anyone can follow.
+        case needsGenerateModel(need: GenerateNeed, hint: String)
         /// The engine has not said what is installed, so this card cannot
         /// honestly claim anything. Every other gated state is a statement
         /// about the user's disk; this one is a statement about the app.
@@ -100,6 +127,7 @@ struct ActionsScreen: View {
             case .needsStyleModel(_, let hint): hint
             case .needsRenderModel: "Get the SoundFont renderer — free"
             case .needsSpliceModel: "Get Token Splice — 76 MB"
+            case .needsGenerateModel(_, let hint): hint
             case .unknown(let readiness): readiness.shortLine
             case .needsTaskModel(let task):
                 switch task {
@@ -168,6 +196,12 @@ struct ActionsScreen: View {
             && MixModels.mixdown(in: catalog.models) != nil
     }
 
+    /// Installed models that can generate audio from a description — the
+    /// pool "Compare models" draws from.
+    private var generativeInstalled: [ModelInfo] {
+        GenerateNeed().eligible(catalog.models)
+    }
+
     private func installed(task: String) -> Bool {
         catalog.models.contains {
             $0.installState == .installed
@@ -206,6 +240,21 @@ struct ActionsScreen: View {
             return .needsSpliceModel
         case .split(let task, _) where !installed(task: task):
             return .needsTaskModel(task)
+        case .generate(let preset) where preset.need.best(catalog.models) == nil:
+            return .needsGenerateModel(
+                need: preset.need,
+                hint: ModelRequirement.generate(preset.need)
+                    .candidates(catalog.models).first
+                    .map { "Get \($0.displayName)" }
+                    ?? "No model can do this yet")
+        case .compareModels where generativeInstalled.count < 2:
+            // Two is the least that can be compared. One installed model
+            // makes this card a slower way to press Generate.
+            return .needsGenerateModel(
+                need: GenerateNeed(),
+                hint: generativeInstalled.isEmpty
+                    ? "Get a model that generates audio"
+                    : "Needs a second model to compare against")
         default:
             return .active
         }
@@ -221,6 +270,8 @@ struct ActionsScreen: View {
         case .render: .task("render")
         case .split(let task, _): .task(task)
         case .styleTransfer(let preset): .style(preset.mode)
+        case .generate(let preset): .generate(preset.need)
+        case .compareModels: .generate(GenerateNeed())
         // Neither runs a model: the bench is a surface, and matching is
         // ranking maths over analysis the library already holds.
         case .workbench, .match: nil
@@ -263,6 +314,17 @@ struct ActionsScreen: View {
         // everything the moment you leave.
         if case .styleTransfer(let preset) = recipe.engine {
             onOpenStyleTransfer(preset, nil)
+            return
+        }
+        // Generate is a destination too. The one preset that measures a track
+        // asks for it here rather than on a page, because a picker is all the
+        // page would have contained.
+        if case .generate(let preset) = recipe.engine {
+            if preset.readsSource {
+                pickingFor = preset
+            } else {
+                onOpenGenerate(preset, nil)
+            }
             return
         }
         route = .action(recipeId: recipe.id, sourceId: nil)
@@ -331,6 +393,23 @@ struct ActionsScreen: View {
                              catalog: catalog, library: library, parts: parts,
                              jobs: jobs, playback: playback,
                              onOpenModels: { onOpenModels(requirement(for: recipe)) }, onBack: back)
+        case .compareModels:
+            CompareActionView(recipe: recipe, catalog: catalog,
+                              library: library, jobs: jobs,
+                              playback: playback,
+                              onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                              onBack: back)
+        case .generate:
+            // `open(_:)` never routes here; the shell switches destination.
+            // A deep link that arrives as a route anyway is bounced the same
+            // way `.styleTransfer` is.
+            gallery
+                .onAppear {
+                    if case .generate(let preset) = recipe.engine {
+                        route = nil
+                        onOpenGenerate(preset, sourceId)
+                    }
+                }
         case .workbench:
             // `open(_:)` never routes here; the shell switches destination.
             gallery

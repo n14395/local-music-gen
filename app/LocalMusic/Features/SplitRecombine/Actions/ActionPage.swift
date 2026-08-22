@@ -18,6 +18,7 @@ extension RecipeMode {
         case .exact: "EXACT"
         case .reimagine: "REIMAGINE"
         case .analyse: "ANALYSE"
+        case .invent: "GENERATE"
         }
     }
 
@@ -26,6 +27,7 @@ extension RecipeMode {
         case .exact: .accent
         case .reimagine: .violet
         case .analyse: .cyan
+        case .invent: .accent
         }
     }
 
@@ -34,11 +36,13 @@ extension RecipeMode {
         case .exact: Bench.Palette.accent
         case .reimagine: Bench.Palette.violet
         case .analyse: Bench.Palette.cyan
+        case .invent: Bench.Palette.accent
         }
     }
 }
 
-/// `EXACT` lime · `REIMAGINE` violet · `ANALYSE` cyan. The one thing every card
+/// `GENERATE` and `EXACT` lime · `REIMAGINE` violet · `ANALYSE` cyan. The one
+/// thing every card
 /// and every page states before you click.
 struct ActionModeBadge: View {
     let mode: RecipeMode
@@ -200,7 +204,7 @@ struct ActionPresetMenu: View {
             Text("Saves the \(form.changedCount) parameter"
                  + (form.changedCount == 1 ? "" : "s")
                  + " you changed, for \(model.displayName). It shows up in "
-                 + "the Studio's preset row too.")
+                 + "the Generate screen's preset row too.")
         }
     }
 

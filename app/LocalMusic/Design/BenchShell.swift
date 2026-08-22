@@ -18,13 +18,13 @@ struct BenchNavGlyph: View {
     var size: CGFloat = 13
 
     enum Kind {
-        case studio, styleTransfer, actions, workbench, editor, library, models
+        case generate, styleTransfer, actions, workbench, editor, library, models
     }
 
     var body: some View {
         Group {
             switch kind {
-            case .studio: bars(heights: [6, 13, 9], width: 2, spacing: 2)
+            case .generate: bars(heights: [6, 13, 9], width: 2, spacing: 2)
             case .styleTransfer: transfer
             case .actions: grid
             case .workbench: rules(heights: [3, 3, 3], widths: [1, 0.69, 1], spacing: 2)

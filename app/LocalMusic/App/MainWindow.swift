@@ -12,7 +12,7 @@ import SwiftUI
 struct MainWindow: View {
     let env: AppEnvironment
 
-    @State private var destination: Destination = .studio
+    @State private var destination: Destination = .generate
     @State private var libraryScope: LibraryScope = .songs
     /// A track the shell wants the Library to open on — set by the queue's
     /// "Show in library", cleared by the Library once it has acted.
@@ -118,7 +118,7 @@ struct MainWindow: View {
         .frame(minWidth: Self.windowMinWidth + queueGutter, minHeight: 700)
         .onChange(of: env.studio.pending) { routeIntent() }
         .onChange(of: env.prefill.pending) { if env.prefill.pending != nil {
-            destination = .studio
+            destination = .generate
         } }
         .onChange(of: isRenderingWork) {
             withAnimation(Self.panelMotion) {
@@ -274,7 +274,7 @@ struct MainWindow: View {
 
     private func glyph(for destination: Destination) -> BenchNavGlyph.Kind {
         switch destination {
-        case .studio: .studio
+        case .generate: .generate
         case .styleTransfer: .styleTransfer
         case .actions: .actions
         case .workbench: .workbench
@@ -320,7 +320,7 @@ struct MainWindow: View {
 
     private func isBusy(_ destination: Destination) -> Bool {
         switch destination {
-        case .studio:
+        case .generate:
             return env.jobsStore.active.values.contains {
                 !$0.status.isTerminal && $0.info.task == nil
                     && !styleTransferJobs.contains($0.info.jobId)
@@ -477,9 +477,11 @@ struct MainWindow: View {
     @ViewBuilder
     private var content: some View {
         switch destination {
-        case .studio:
+        case .generate:
             StudioView(catalog: env.catalog, jobs: env.jobsStore,
                        library: env.library, playback: env.playback,
+                       telemetry: env.telemetry, timings: env.renderTimings,
+                       notifications: env.notifications,
                        prefill: env.prefill, actions: songActions,
                        onOpenModels: { openModels(for: nil) })
         case .library:
@@ -517,6 +519,9 @@ struct MainWindow: View {
                 },
                 onOpenStyleTransfer: { preset, sourceId in
                     openStyleTransfer(preset: preset, sourceId: sourceId)
+                },
+                onOpenGenerate: { preset, sourceId in
+                    openGenerate(preset: preset, sourceId: sourceId)
                 })
         case .workbench:
             WorkbenchScreen(model: env.workbench, catalog: env.catalog,
@@ -559,7 +564,7 @@ struct MainWindow: View {
                 env.prefill.pending = .init(prompt: song.prompt,
                                             lyrics: song.lyrics,
                                             modelId: song.modelId)
-                destination = .studio
+                destination = .generate
             },
             split: { song in
                 env.studio.pending = .split(songId: song.id)
@@ -622,8 +627,62 @@ struct MainWindow: View {
                 sourceId: materialId)
         case .edit(let materialId):
             openEditor(materialId: materialId)
+        case .generate(let presetId, let materialId):
+            if let preset = GeneratePreset.preset(id: presetId) {
+                openGenerate(preset: preset, sourceId: materialId)
+            }
         }
         env.studio.pending = nil
+    }
+
+    /// Open Generate with an Actions preset applied.
+    ///
+    /// The preset picks the model rather than naming one: a card asks for a
+    /// *kind* of model — one that can sing, one that can reach two minutes —
+    /// and the best installed answer is chosen here. Naming a specific id in
+    /// the table would break the card the moment that model was uninstalled,
+    /// and the gallery has already refused to open a card nothing can run.
+    private func openGenerate(preset: GeneratePreset, sourceId: String?) {
+        let model = preset.need.best(env.catalog.models)
+        var prompt = preset.promptSeed
+        var notice = preset.notice
+        if preset.readsSource, let sourceId,
+           let measured = musicalMeta(of: sourceId) {
+            // The track's own words, not its audio: this is a *description*
+            // of what to make, and the model never hears the reference.
+            prompt = ActionFormat.join([measured.phrase, preset.promptSeed])
+                .trimmingCharacters(in: .whitespaces)
+            notice = "Matching \(measured.title) — \(measured.phrase). "
+                + "None of its audio is used, only what the analysis measured."
+        }
+        env.prefill.pending = .init(prompt: prompt,
+                                    lyrics: preset.lyricsSeed,
+                                    modelId: model?.id,
+                                    durationS: preset.durationS,
+                                    takes: preset.takes,
+                                    notice: notice)
+        destination = .generate
+    }
+
+    /// A track's measured tempo and key, phrased for a prompt.
+    ///
+    /// Nil when the library holds no analysis for it — a card that quietly
+    /// dropped the half of its promise it could not keep would be worse than
+    /// one that says the tempo is unknown.
+    private func musicalMeta(of materialId: String)
+        -> (title: String, phrase: String)? {
+        guard let material = material(id: materialId),
+              let analysis = env.partsStore.analysis(for: materialId)
+        else { return nil }
+        var fields: [String] = []
+        if let bpm = analysis.bpm {
+            fields.append("\(Int(bpm.rounded())) bpm")
+        }
+        if let camelot = analysis.camelot {
+            fields.append("in \(camelot)")
+        }
+        guard !fields.isEmpty else { return nil }
+        return (material.name, fields.joined(separator: ", ") + ",")
     }
 
     /// "Render…" on a MIDI part, available only while a SoundFont renderer is
@@ -725,10 +784,9 @@ struct MainWindow: View {
                     $0.type == .audio && $0.key == "melody_audio"
                 }
         }
-        env.prefill.pending = .init(prompt: "", lyrics: nil,
-                                    modelId: melodyModel?.id ?? "",
+        env.prefill.pending = .init(prompt: "", modelId: melodyModel?.id,
                                     melodyAudio: melodyURL)
-        destination = .studio
+        destination = .generate
     }
 }
 
@@ -829,7 +887,7 @@ private struct SidebarFooterCard: View {
         switch destination {
         case .library where libraryScope == .edited:
             backupsCard
-        case .studio, .editor, .library where libraryScope != .parts:
+        case .generate, .editor, .library where libraryScope != .parts:
             engineCard
         case .library:
             stemColoursCard

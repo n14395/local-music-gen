@@ -36,6 +36,10 @@ extension Bench {
         static let segmentedSelected = Color(hex: 0x2C333C)
         static let well = Color(hex: 0x0D1013)
         static let statusCard = Color(hex: 0x191E25)
+        /// A row sunk *into* a card rather than raised on it. The render
+        /// panel's stage list sits on `card`, and its rows have to read as
+        /// recesses in it — `raised` and `control` both go the other way.
+        static let inset = Color(hex: 0x141920)
 
         /// Alternating list rows. Deliberately an overlay rather than an opaque
         /// colour so rows read the same on `windowBackground` and on `panel`.
@@ -57,6 +61,11 @@ extension Bench {
         static let textMuted = Color(hex: 0x7C8794)
         static let textFaint = Color(hex: 0x6B7480)
         static let textFaintest = Color(hex: 0x5C6672)
+        /// One step below `textFaintest`, and only for the engine log: the
+        /// pane fades each line as it scrolls up, and the ramp needs a bottom
+        /// that is still legible against `well` without competing with the
+        /// live line at the other end.
+        static let textDimmest = Color(hex: 0x4A535E)
 
         // Semantic
         static let accent = Color(hex: 0xD8FF5A)

@@ -61,6 +61,13 @@ class DiffusersAudioAdapter(ModelAdapter):
             self._snapshot(), torch_dtype=torch.float32)
         self.pipe_class = type(pipe).__name__
         pipe.to(self.device)
+        # The pipeline's own tqdm bar goes. It redraws per step with a
+        # carriage return, and the worker reads its pipe in text mode, so
+        # every redraw reached the event stream looking like a fresh line —
+        # 117 of them for one 50-step render, which was this family's entire
+        # contribution to the render card's log. The step counts arrive as
+        # progress events instead, and now as one line each.
+        pipe.set_progress_bar_config(disable=True)
         self.pipe = pipe
         progress_cb(None, f"{self.pipe_class} on {self.device}")
 

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The six places in the app.
+/// The seven places in the app.
 ///
 /// The redesign replaced "four destinations plus nested tabs" with flat
 /// ones. Split & Recombine is gone as a place: **Split** became an entry in
@@ -14,9 +14,17 @@ import Foundation
 /// its display string as its identity, which makes renaming a label a
 /// data-visible change.
 enum Destination: String, CaseIterable, Identifiable, Codable {
-    case studio
+    /// First because it is the wider door: Actions is every recipe the app
+    /// knows, and one shelf of them opens Generate with a prompt already
+    /// written. Somebody who does not yet know what they want to type is
+    /// better served by a gallery than by an empty prompt box.
     case actions
-    /// Transforming audio that already exists. Declared after Actions because
+    /// Was `studio`, and the raw value still is — see the note above about
+    /// labels never being identities. Renaming the case keeps the code
+    /// reading like the sidebar; keeping the raw value keeps every
+    /// `@AppStorage` destination already written to defaults pointing here.
+    case generate = "studio"
+    /// Transforming audio that already exists. Declared after Generate because
     /// declaration order *is* `allCases` order, which is sidebar order — and
     /// the raw value is the case name, so moving a case does not disturb a
     /// destination already written to defaults.
@@ -32,7 +40,7 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
 
     var title: String {
         switch self {
-        case .studio: "Studio"
+        case .generate: "Generate"
         case .styleTransfer: "Style Transfer"
         case .actions: "Actions"
         case .workbench: "AI Workbench"
@@ -50,7 +58,7 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
 
     var section: Section {
         switch self {
-        case .studio, .styleTransfer, .actions, .workbench, .editor: .make
+        case .generate, .styleTransfer, .actions, .workbench, .editor: .make
         case .library, .models: .browse
         }
     }

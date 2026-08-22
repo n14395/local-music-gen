@@ -17,6 +17,7 @@ from typing import Protocol
 
 from .config import Settings
 from .events import EventBus
+from .logmirror import LogMirror
 from .telemetry import process_tree_footprint_bytes
 
 
@@ -48,7 +49,10 @@ class Worker:
         self.family = family
         self.bus = bus
         self.loaded_model_id: str | None = None
-        self.current_job_id: str | None = None
+        self._current_job_id: str | None = None
+        # What of this worker's stderr reaches the event stream. The log file
+        # takes everything either way — see `LogMirror`.
+        self.log_mirror = LogMirror()
         # Monotonic time this worker last finished a job, or None while it is
         # working. The warm pool uses it as both the LRU key and the TTL clock.
         self.idle_since: float | None = None
@@ -142,14 +146,42 @@ class Worker:
             self.messages.put(msg)
         self.messages.put(None)  # EOF sentinel
 
+    @property
+    def current_job_id(self) -> str | None:
+        return self._current_job_id
+
+    @current_job_id.setter
+    def current_job_id(self, job_id: str | None) -> None:
+        # Reset here rather than at the two assignment sites in the job queue:
+        # a render that opened by reporting the *previous* render's suppressed
+        # lines would be a bug nobody would think to look for.
+        if job_id != self._current_job_id:
+            # Owed before forgotten: a render whose last act was a flood has
+            # to say so, and after the id moves there is nobody to say it to.
+            self._emit_log(self.log_mirror.flush())
+            self.log_mirror.reset()
+        self._current_job_id = job_id
+
     def _read_stderr(self) -> None:
         assert self.proc.stderr is not None
         for line in self.proc.stderr:
+            # The file first and unconditionally: it is the record, and the
+            # mirror below is a summary of it for a pane ten lines tall.
             self._log_write(line.encode())
-            if self.current_job_id and line.strip():
-                self.bus.emit_threadsafe(
-                    "job.log", {"job_id": self.current_job_id,
-                                "line": line.strip()[:500]})
+            if not self.current_job_id:
+                continue
+            self._emit_log(self.log_mirror.offer(line, time.monotonic()))
+        # The stream has ended — the worker is on its way out, and whatever it
+        # said last is the most worth having.
+        self._emit_log(self.log_mirror.flush())
+
+    def _emit_log(self, lines: list[str]) -> None:
+        for line in lines:
+            if not self.current_job_id:
+                return
+            self.bus.emit_threadsafe(
+                "job.log", {"job_id": self.current_job_id,
+                            "line": line[:500]})
 
     # MARK: protocol
 

@@ -64,6 +64,61 @@ struct EditorGeometry: Equatable {
         return out
     }
 
+    // MARK: viewport edges
+
+    /// Which side of the overview strip's window is being dragged.
+    enum ViewportEdge: Equatable {
+        case start, end
+    }
+
+    /// The viewport after dragging one of its edges to `seconds`.
+    ///
+    /// The dragged edge follows the pointer and the other one does not move —
+    /// that is the whole difference between resizing a window and sliding it,
+    /// and it is what makes the gesture read as zoom rather than scroll. The zoom
+    /// is then simply whatever makes that window fill the well.
+    ///
+    /// Both limits are the ones the rest of the editor already keeps: the
+    /// window cannot be squeezed past `maxZoom`, and it cannot be stretched
+    /// past the whole track, because zooming out beyond fit only adds dead
+    /// space. When a drag hits either limit the dragged edge stops and the
+    /// pinned one still does not move.
+    func draggingEdge(_ edge: ViewportEdge, to seconds: Double) -> EditorGeometry {
+        guard width > 0, durationS > 0 else { return self }
+        // The narrowest window `maxZoom` allows, and the widest the track
+        // does. On a track shorter than the first, the two invert — hence the
+        // ordered clamp below rather than a range literal, which would trap.
+        let minSpan = Double(width / Self.maxZoom)
+        let maxSpan = durationS
+        var out = self
+
+        switch edge {
+        case .start:
+            let pinned = visibleEndS.clamped(to: 0...durationS)
+            let start = Self.clamp(seconds, pinned - maxSpan, pinned - minSpan)
+            out.pxPerSecond = Self.clampZoom(width / CGFloat(max(0.001, pinned - start)),
+                                             durationS: durationS, width: width)
+            // Recomputed from the clamped zoom, not from `start`: if the zoom
+            // hit a limit the two disagree, and the edge that must win is the
+            // one the pointer is not holding.
+            out.visibleStartS = out.clampedStart(pinned - out.visibleSeconds)
+        case .end:
+            let pinned = visibleStartS.clamped(to: 0...durationS)
+            let end = Self.clamp(seconds, pinned + minSpan, pinned + maxSpan)
+            out.pxPerSecond = Self.clampZoom(width / CGFloat(max(0.001, end - pinned)),
+                                             durationS: durationS, width: width)
+            out.visibleStartS = out.clampedStart(pinned)
+        }
+        return out
+    }
+
+    /// `clamped(to:)` on an ordered pair, tolerating a reversed one. A track
+    /// shorter than the minimum window really does produce lower > upper, and
+    /// a `ClosedRange` built from that traps.
+    private static func clamp(_ value: Double, _ a: Double, _ b: Double) -> Double {
+        value.clamped(to: min(a, b)...max(a, b))
+    }
+
     // MARK: snap
 
     enum SnapMode: String, CaseIterable, Identifiable, Codable {

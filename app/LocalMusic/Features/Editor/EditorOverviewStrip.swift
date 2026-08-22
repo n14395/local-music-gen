@@ -1,16 +1,39 @@
+import AppKit
 import SwiftUI
 
 /// The whole-track strip above the main well: the full edited timeline at a
-/// glance, the draggable viewport window, the selection tint, and a red mark
-/// at every cut — E01/E02's "WHOLE TRACK" band.
+/// glance, the viewport window, the selection tint, and a red mark at every
+/// cut — E01/E02's "WHOLE TRACK" band.
+///
+/// The window is the well's viewport drawn against the whole track, and it is
+/// handled the way a window is: drag its middle to move it, drag either edge
+/// to resize it. Resizing it *is* zooming — the well shows whatever the window
+/// contains — so the strip is a zoom control you aim rather than a slider you
+/// guess with, and the edge you are not holding stays exactly where it was.
 struct EditorOverviewStrip: View {
     @Bindable var store: EditorStore
 
     @State private var peaks: WaveformExtractor.Peaks?
     @State private var loadedFor: URL?
-    /// Where inside the viewport window the drag was grabbed, so it moves
-    /// with the pointer instead of jumping to centre on it.
-    @State private var grabOffsetS: Double?
+    /// What the drag in progress is doing. Decided once, from where it
+    /// started, and held for the rest of the gesture: a resize that reverted
+    /// to a scroll halfway through because the pointer wandered over the other
+    /// edge would be unusable.
+    @State private var drag: DragMode?
+    /// Which edge the pointer is over, for the cursor and the highlight.
+    @State private var hoveredEdge: EditorGeometry.ViewportEdge?
+
+    private enum DragMode: Equatable {
+        /// Sliding the window: how far into it the grab landed, so it moves
+        /// with the pointer instead of jumping to centre on it.
+        case scroll(grabOffsetS: Double)
+        case resize(EditorGeometry.ViewportEdge)
+    }
+
+    /// Half the width of an edge's grab zone. The edge is drawn 2 pt wide,
+    /// which is a target nobody can hit; this makes it a 14 pt band without
+    /// making it look like one.
+    private static let edgeGrabPx: CGFloat = 7
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -25,7 +48,7 @@ struct EditorOverviewStrip: View {
                         .tracking(0.4)
                         .foregroundStyle(Bench.Palette.dangerText)
                 } else {
-                    Text("DRAG THE WINDOW TO SCROLL")
+                    Text("DRAG THE WINDOW TO SCROLL · ITS EDGES TO ZOOM")
                         .font(Bench.Typo.mono(10))
                         .tracking(0.4)
                         .foregroundStyle(Bench.Palette.textFaintest)
@@ -80,22 +103,38 @@ struct EditorOverviewStrip: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { value in
-                let visible = visibleSeconds
+                let mode = drag ?? mode(grabbedAt: value.startLocation.x,
+                                        width: width)
+                drag = mode
                 let at = Double(value.location.x / max(1, width)) * duration
-                if grabOffsetS == nil {
-                    let grabbed = Double(value.startLocation.x
-                                         / max(1, width)) * duration
-                    let inside = grabbed >= store.visibleStartS
-                        && grabbed <= store.visibleStartS + visible
-                    // Grabbing the window drags it; clicking outside it
-                    // still jumps there, centred.
-                    grabOffsetS = inside ? grabbed - store.visibleStartS
-                                         : visible / 2
+                switch mode {
+                case .scroll(let grabOffsetS):
+                    store.visibleStartS = (at - grabOffsetS)
+                        .clamped(to: 0...max(0, duration - visibleSeconds))
+                case .resize(let edge):
+                    let resized = wellGeometry.draggingEdge(edge, to: at)
+                    store.pxPerSecond = resized.pxPerSecond
+                    store.visibleStartS = resized.visibleStartS
                 }
-                store.visibleStartS = (at - (grabOffsetS ?? visible / 2))
-                    .clamped(to: 0...max(0, duration - visible))
             }
-            .onEnded { _ in grabOffsetS = nil })
+            .onEnded { _ in drag = nil })
+        // The edges are 2 pt of accent on a dark strip; without the cursor
+        // changing over them, nothing says they are handles rather than the
+        // window's outline.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                let edge = self.edge(near: point.x, width: width)
+                if edge != hoveredEdge {
+                    hoveredEdge = edge
+                    (edge == nil ? NSCursor.arrow
+                                 : NSCursor.resizeLeftRight).set()
+                }
+            case .ended:
+                hoveredEdge = nil
+                NSCursor.arrow.set()
+            }
+        }
         .task(id: store.sourceURL) { await loadPeaks() }
         .onChange(of: store.applyStage) {
             if !store.applyStage.isBusy { Task { await loadPeaks() } }
@@ -103,6 +142,59 @@ struct EditorOverviewStrip: View {
     }
 
     private var cutPositions: [Double] { store.joinTimes }
+
+    /// The well's viewport as geometry, which is what the edge drag operates
+    /// on. Note the width: the strip's own pixels map the *whole track*, but
+    /// the zoom being changed is the well's, so the arithmetic has to be done
+    /// in the well's width or a resize would land at the wrong magnification.
+    ///
+    /// A `pxPerSecond` of zero means "fit, decided at first layout" and is
+    /// substituted here — it is a sentinel, not a scale, and dividing by it
+    /// would be dividing by nothing.
+    private var wellGeometry: EditorGeometry {
+        let duration = max(0.001, store.timelineDurationS)
+        let width = max(1, store.wellWidth)
+        return EditorGeometry(
+            visibleStartS: store.visibleStartS,
+            pxPerSecond: store.pxPerSecond > 0 ? store.pxPerSecond
+                : EditorGeometry.fitZoom(durationS: duration, width: width),
+            width: width, durationS: duration)
+    }
+
+    /// Where the strip draws the window's two edges.
+    private func edgeXs(width: CGFloat) -> (start: CGFloat, end: CGFloat) {
+        let duration = max(0.001, store.timelineDurationS)
+        let x0 = CGFloat(store.visibleStartS / duration) * width
+        return (x0, x0 + max(6, CGFloat(min(1, visibleSeconds / duration)) * width))
+    }
+
+    /// The edge within grabbing distance of `x`, if any.
+    ///
+    /// Deeply zoomed in, the window is only a few points wide and both grab
+    /// zones cover the same pixels — so the nearer edge wins rather than
+    /// whichever is tested first. Zoomed in that far, resizing is what the
+    /// strip is for anyway.
+    private func edge(near x: CGFloat,
+                      width: CGFloat) -> EditorGeometry.ViewportEdge? {
+        let edges = edgeXs(width: width)
+        let toStart = abs(x - edges.start)
+        let toEnd = abs(x - edges.end)
+        guard min(toStart, toEnd) <= Self.edgeGrabPx else { return nil }
+        return toStart <= toEnd ? .start : .end
+    }
+
+    private func mode(grabbedAt x: CGFloat, width: CGFloat) -> DragMode {
+        if let edge = edge(near: x, width: width) { return .resize(edge) }
+        let duration = max(0.001, store.timelineDurationS)
+        let visible = visibleSeconds
+        let grabbed = Double(x / max(1, width)) * duration
+        let inside = grabbed >= store.visibleStartS
+            && grabbed <= store.visibleStartS + visible
+        // Grabbing the window slides it; clicking outside it still jumps
+        // there, centred.
+        return .scroll(grabOffsetS: inside ? grabbed - store.visibleStartS
+                                           : visible / 2)
+    }
 
     private var visibleSeconds: Double {
         guard store.pxPerSecond > 0, store.wellWidth > 0 else {
@@ -118,14 +210,22 @@ struct EditorOverviewStrip: View {
         let w = CGFloat(min(1, visible / duration)) * width
         return Rectangle()
             .fill(Bench.Palette.accent.opacity(0.08))
-            .overlay(alignment: .leading) {
-                Rectangle().fill(Bench.Palette.accent).frame(width: 2)
-            }
-            .overlay(alignment: .trailing) {
-                Rectangle().fill(Bench.Palette.accent).frame(width: 2)
-            }
+            .overlay(alignment: .leading) { handle(.start) }
+            .overlay(alignment: .trailing) { handle(.end) }
             .frame(width: max(6, w))
             .offset(x: x0)
+    }
+
+    /// One edge of the window. It thickens under the pointer — the only
+    /// visual difference between an outline and a handle, on a control with
+    /// no room for a grip.
+    private func handle(_ edge: EditorGeometry.ViewportEdge) -> some View {
+        let held = drag == .resize(edge)
+        let lit = held || (drag == nil && hoveredEdge == edge)
+        return Rectangle()
+            .fill(lit ? Bench.Palette.accentHover : Bench.Palette.accent)
+            .frame(width: lit ? 3 : 2)
+            .animation(.easeOut(duration: 0.12), value: lit)
     }
 
     /// The overview draws the *edited* timeline by resampling the source's

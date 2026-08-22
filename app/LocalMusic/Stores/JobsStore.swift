@@ -160,6 +160,21 @@ struct MixSpec: Codable, Sendable, Equatable {
     var tracks: [Track]
 }
 
+/// One mirrored line of a worker's stderr (`job.log`, contract §6).
+///
+/// The engine sends the raw line and nothing else — no level, no timestamp,
+/// capped at 500 characters — so the time is stamped on arrival here. That is
+/// honest about what the clock means: when the app heard the line, not when
+/// the model printed it. Close enough to read a render by, and not pretending
+/// to be the engine's own clock.
+struct RenderLogLine: Identifiable, Equatable, Sendable {
+    /// Monotonic per store, so `ForEach` keeps its identity as the buffer
+    /// scrolls. Two identical lines a second apart are two lines.
+    let id: Int
+    let at: Date
+    let text: String
+}
+
 /// Active generation jobs: submission, SSE-fed progress, cancellation, and ingest of
 /// finished audio into the library.
 @MainActor @Observable
@@ -173,6 +188,14 @@ final class JobsStore {
         /// Each frame replaces the last; the engine deletes them all when the
         /// take succeeds, so this is only ever worth keeping on a cancel.
         var preview: JobPreview?
+        /// The tail of this job's worker stderr, newest last.
+        ///
+        /// Capped at `logCap`: an adapter that prints a line per step is the
+        /// quiet case, and ggml prints dozens while it mmaps a GGUF. The
+        /// render panel draws the last handful and a cancel throws the rest
+        /// away, so keeping a whole render's output would be holding megabytes
+        /// nobody reads.
+        var log: [RenderLogLine] = []
         /// What this job put in the library, recorded at ingest so a finished
         /// row can offer to show it. In submission order, so `first` is take
         /// a. Empty for the jobs that produce parts or an analysis rather
@@ -193,6 +216,34 @@ final class JobsStore {
     private(set) var queueHeld = false
     /// Set while a pause/resume of our own is outstanding — see `applyHold`.
     private var holdInFlight = false
+    /// Jobs the user asked to be told about by hand.
+    ///
+    /// The app already notifies when a take lands while it is in the
+    /// background, so arming a job can only add one thing: tell me *even if I
+    /// am looking at the app*. Kept here rather than in the render panel
+    /// because the whole point is to walk away from that panel.
+    private(set) var notifyOnLanding: Set<String> = []
+
+    func setNotifyOnLanding(_ jobId: String, _ armed: Bool) {
+        if armed { notifyOnLanding.insert(jobId) } else { notifyOnLanding.remove(jobId) }
+    }
+
+    /// Whether this job was armed — and clears the arming as it answers.
+    ///
+    /// A read that consumes, because the alternative is what this used to do.
+    /// `apply` dropped the id the instant a job completed and the notifier
+    /// checked the set afterwards (`AppEnvironment.route` calls
+    /// `jobsStore.apply(event)` and *then* `notify(for:)`), so the check was
+    /// always false and the button had no effect whatsoever. Whoever acts on
+    /// the arming is the one who should spend it.
+    func takeNotifyOnLanding(_ jobId: String) -> Bool {
+        notifyOnLanding.remove(jobId) != nil
+    }
+
+    /// Ever-increasing id for `RenderLogLine`. Store-wide rather than
+    /// per-job: ids only have to be unique within the list that draws them,
+    /// and one counter cannot collide across a queue.
+    private var logSequence = 0
 
     /// Set by AppEnvironment: display name lookup + post-ingest notification.
     var modelName: (String) -> String = { $0 }
@@ -759,6 +810,26 @@ final class JobsStore {
         queueHeld = system.queueHeld ?? false
     }
 
+    /// How many stderr lines a running job keeps. Ten fit the panel; the rest
+    /// are here so "Copy log" hands over something worth pasting into a bug
+    /// report rather than the last screenful.
+    static let logCap = 200
+
+    private func appendLog(jobId: String, line: String) {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A job the app is not tracking has no panel to draw this in, and
+        // holding lines against an id that will never be looked up is a leak
+        // with extra steps.
+        guard !text.isEmpty, active[jobId] != nil else { return }
+        logSequence += 1
+        active[jobId]?.log.append(
+            RenderLogLine(id: logSequence, at: Date(), text: text))
+        if let overflow = active[jobId].map({ $0.log.count - Self.logCap }),
+           overflow > 0 {
+            active[jobId]?.log.removeFirst(overflow)
+        }
+    }
+
     /// "Keep partial": stop the take, and adopt the last preview frame it sent
     /// as a library song.
     ///
@@ -889,16 +960,21 @@ final class JobsStore {
             }
         case .jobPreview(let jobId, let preview):
             active[jobId]?.preview = preview
+        case .jobLog(let jobId, let line):
+            appendLog(jobId: jobId, line: line)
         case .jobCompleted(let jobId):
             // the engine drops a succeeded job's previews; keeping the path
-            // would leave the well drawing from a file that is gone
+            // would leave the card drawing from a file that is gone
             active[jobId]?.preview = nil
+            // The arming is NOT cleared here: this runs before the notifier
+            // reads it. `takeNotifyOnLanding` spends it instead.
             Task { await ingest(jobId: jobId) }
         case .jobFailed(let jobId, let error):
             active[jobId]?.status = .failed
             active[jobId]?.error = error
         case .jobCanceled(let jobId):
             active[jobId]?.status = .canceled
+            notifyOnLanding.remove(jobId)
         case .queueState(let held, _):
             queueHeld = held
         default:

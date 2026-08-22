@@ -57,19 +57,38 @@ enum RecipeEngine: Equatable {
     case arrange                             // structure arranger → mix job
     case match                               // ranking browser, no job
     case tokenSplice                         // EnCodec codebook splice (mix)
+    /// Opens Generate with this preset applied — a prompt already started, a
+    /// length already set, and the model the job suits already picked.
+    ///
+    /// A door rather than a page, for the same reason `.styleTransfer` is one:
+    /// the settings behind it are worth keeping when you leave to think.
+    case generate(preset: GeneratePreset)
+    /// One prompt through several models at once, for the comparison this
+    /// whole app exists to make. The only Generate card that is a page: a
+    /// comparison is genuinely a one-shot batch — a prompt and a set of ticks
+    /// — rather than a workspace anyone returns to.
+    case compareModels
 }
 
 /// What the action *is*, which the gallery turns into a badge. Not the same
 /// question as `RecipeCategory` — "What mashes with this?" sits among the
 /// recombine actions because that is what you are about to do, but it measures
 /// and returns no audio, so it is badged `ANALYSE`.
-enum RecipeMode { case exact, reimagine, analyse }
+/// `.invent` is the from-nothing case: no source audio exists to be exact
+/// about or to reimagine, because there is no source. It is a claim about
+/// where the audio comes from, which is why the badge is worth drawing —
+/// "REIMAGINE" over a card that has never been shown a file is a promise
+/// about material the user does not have.
+enum RecipeMode { case exact, reimagine, analyse, invent }
 
 /// The three labelled shelves of the gallery. Derived from neither `mode` nor
 /// `engine` on its own: karaoke is a preset separation (`.split`) yet belongs
 /// under Recombine because that is the goal, and the melody hand-off is a
 /// Reimagine even though it submits no job of its own.
 enum RecipeCategory: String, CaseIterable, Identifiable {
+    /// First, because it is the only shelf that needs nothing to start from.
+    /// Everything below it asks you to bring audio.
+    case generate
     case separate, recombine, reimagine
 
     var id: String { rawValue }
@@ -77,6 +96,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     /// Chip label in the filter row.
     var title: String {
         switch self {
+        case .generate: "Generate"
         case .separate: "Separate & analyse"
         case .recombine: "Recombine"
         case .reimagine: "Reimagine"
@@ -86,6 +106,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     /// Section eyebrow above the grid, which says what the shelf promises.
     var sectionTitle: String {
         switch self {
+        case .generate: "GENERATE — FROM NOTHING BUT A DESCRIPTION"
         case .separate: "SEPARATE & ANALYSE"
         case .recombine: "RECOMBINE — YOUR AUDIO, EXACTLY"
         case .reimagine: "REIMAGINE — A MODEL REWRITES IT"
@@ -115,7 +136,105 @@ struct Recipe: Identifiable, Equatable {
 /// provenance of everything already made, so names and taglines move freely and
 /// ids never do.
 enum RecipeCatalog {
+    /// A card's engine, from the preset table keyed by its own id. Force
+    /// unwrapped on purpose: a Generate card with no preset is a card that
+    /// opens a screen and does nothing, and the two tables are twenty lines
+    /// apart — a build failure here is the cheapest possible way to find out.
+    private static func generate(_ id: String) -> RecipeEngine {
+        .generate(preset: GeneratePreset.preset(id: id)!)
+    }
+
     static let all: [Recipe] = [
+        // MARK: Generate
+        //
+        // Every other shelf starts from audio you already have. These start
+        // from a sentence. They carry no slots for that reason — the source
+        // picker every other card opens with would have nothing to pick.
+        Recipe(id: "gen-song-lyrics",
+               name: "Write a song with lyrics",
+               tagline: "Words you write, sung over music it composes",
+               mode: .invent, category: .generate, icon: "music.mic",
+               slots: [], engine: generate("gen-song-lyrics"), phase: 1,
+               wantsLyrics: true),
+        Recipe(id: "gen-instrumental",
+               name: "Instrumental track",
+               tagline: "A full-length backing, no voice on it",
+               mode: .invent, category: .generate,
+               icon: "music.quarternote.3",
+               slots: [], engine: generate("gen-instrumental"), phase: 1),
+        Recipe(id: "gen-sketch",
+               name: "Song sketch",
+               tagline: "Four short takes, before you commit to a long one",
+               mode: .invent, category: .generate, icon: "bolt",
+               slots: [], engine: generate("gen-sketch"), phase: 1),
+        Recipe(id: "gen-drum-loop",
+               name: "Drum loop",
+               tagline: "A bar or two of drums to build the rest on",
+               mode: .invent, category: .generate, icon: "metronome",
+               slots: [], engine: generate("gen-drum-loop"), phase: 1),
+        Recipe(id: "gen-bassline",
+               name: "Bassline",
+               tagline: "Low end to drop under something",
+               mode: .invent, category: .generate, icon: "waveform.path",
+               slots: [], engine: generate("gen-bassline"), phase: 1),
+        Recipe(id: "gen-chord-bed",
+               name: "Chord bed",
+               tagline: "Pads and harmony to write over",
+               mode: .invent, category: .generate, icon: "pianokeys",
+               slots: [], engine: generate("gen-chord-bed"), phase: 1),
+        Recipe(id: "gen-hook",
+               name: "Melody or hook",
+               tagline: "The line the song gets remembered by",
+               mode: .invent, category: .generate, icon: "music.note",
+               slots: [], engine: generate("gen-hook"), phase: 1),
+        Recipe(id: "gen-ambient-bed",
+               name: "Ambient bed",
+               tagline: "Long, slow and edgeless — for underneath",
+               mode: .invent, category: .generate, icon: "wind",
+               slots: [], engine: generate("gen-ambient-bed"), phase: 1),
+        Recipe(id: "gen-sound-effect",
+               name: "Sound effect",
+               tagline: "Foley and one-off noises, not music",
+               mode: .invent, category: .generate,
+               icon: "speaker.wave.2",
+               slots: [], engine: generate("gen-sound-effect"), phase: 1),
+        Recipe(id: "gen-riser",
+               name: "Riser or transition",
+               tagline: "The lift into a drop, or the sweep out of one",
+               mode: .invent, category: .generate,
+               icon: "arrow.up.forward",
+               slots: [], engine: generate("gen-riser"), phase: 1),
+        Recipe(id: "gen-one-shot",
+               name: "One-shot sample",
+               tagline: "A single hit, short enough to drop in a sampler",
+               mode: .invent, category: .generate,
+               icon: "circle.grid.cross",
+               slots: [], engine: generate("gen-one-shot"), phase: 1),
+        Recipe(id: "gen-fit-track",
+               name: "Generate to fit this track",
+               tagline: "New audio at the tempo and key of one you have",
+               mode: .invent, category: .generate, icon: "tuningfork",
+               // The slot is what the picker offers; nothing of the track's
+               // audio is used, only its measured tempo and key.
+               slots: [Slot(id: "reference", label: "Track to match",
+                            accepts: [KindPattern(pattern: "song.mix"),
+                                      KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*")],
+                            arity: 1...1, autoDerive: nil)],
+               engine: generate("gen-fit-track"), phase: 1),
+        Recipe(id: "gen-explore-prompt",
+               name: "Explore a prompt",
+               tagline: "Four takes of one idea, four different seeds",
+               mode: .invent, category: .generate,
+               icon: "square.on.square.dashed",
+               slots: [], engine: generate("gen-explore-prompt"), phase: 1),
+        Recipe(id: "gen-compare-models",
+               name: "Compare models on one prompt",
+               tagline: "The same description through several models at once",
+               mode: .invent, category: .generate,
+               icon: "square.grid.3x1.below.line.grid.1x2",
+               slots: [], engine: .compareModels, phase: 1),
+
         // MARK: Separate & analyse
         Recipe(id: "split-instruments",
                name: "Split into instruments",

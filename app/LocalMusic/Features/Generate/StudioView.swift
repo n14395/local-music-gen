@@ -15,6 +15,9 @@ struct StudioView: View {
     let jobs: JobsStore
     let library: LibraryStore
     let playback: PlaybackController
+    let telemetry: TelemetryStore
+    let timings: RenderTimingStore
+    let notifications: NotificationService
     let prefill: PrefillBox
     let actions: SongActions
     let onOpenModels: () -> Void
@@ -23,6 +26,10 @@ struct StudioView: View {
 
     @AppStorage("studio.mode") private var mode: Mode = .simple
     @State private var selectedModelId: String?
+    /// One line above the composer saying what an Actions card just changed.
+    /// Dismissible, and gone the moment you press Generate: it describes an
+    /// arrival, and after the first take it is describing history.
+    @State private var notice: String?
     @State private var prompt = ""
     @State private var lyrics = ""
     /// What the finished tracks will be called. Left empty on purpose: the
@@ -69,7 +76,9 @@ struct StudioView: View {
             } else if showsRendering {
                 StudioRenderingPane(jobs: jobs, library: library,
                                     playback: playback, catalog: catalog,
-                                    actions: actions,
+                                    actions: actions, telemetry: telemetry,
+                                    timings: timings,
+                                    notifications: notifications,
                                     renderingJobs: renderingJobs)
             } else {
                 composer
@@ -89,7 +98,7 @@ struct StudioView: View {
     private var topBar: some View {
         BenchTopBar {
             HStack(spacing: 14) {
-                Text("Studio")
+                Text("Generate")
                     .font(Bench.Typo.screenTitle)
                     .tracking(-0.15)
                     .foregroundStyle(Bench.Palette.textPrimary)
@@ -150,6 +159,7 @@ struct StudioView: View {
         HStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: mode == .simple ? 22 : 14) {
+                    if let notice { noticeBar(notice) }
                     if mode == .simple, let model {
                         HStack(alignment: .center, spacing: 12) {
                             modelPicker(model, compact: false)
@@ -220,6 +230,8 @@ struct StudioView: View {
                 id: candidate.id,
                 name: candidate.displayName,
                 description: candidate.description,
+                family: candidate.family,
+                isFavourite: catalog.isFavourite(candidate.id),
                 badges: badges(candidate))
         }
     }
@@ -250,7 +262,8 @@ struct StudioView: View {
             ModelChooser(entries: chooserEntries,
                          selectedId: selectedModelId,
                          onPick: { selectedModelId = $0 },
-                         onManage: onOpenModels)
+                         onManage: onOpenModels,
+                         onToggleFavourite: { catalog.toggleFavourite($0) })
         }
     }
 
@@ -536,7 +549,7 @@ struct StudioView: View {
                 submit(model)
             } label: {
                 HStack(spacing: 10) {
-                    BenchNavGlyph(kind: .studio, color: Bench.Palette.onAccent, size: 14)
+                    BenchNavGlyph(kind: .generate, color: Bench.Palette.onAccent, size: 14)
                     Text(count > 1 ? "Generate \(count) takes" : "Generate")
                 }
             }
@@ -588,6 +601,34 @@ struct StudioView: View {
         }
     }
 
+    /// What an Actions card changed on the way in.
+    private func noticeBar(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "sparkles")
+                .font(Bench.Typo.mono(11))
+                .foregroundStyle(Bench.Palette.accent)
+            Text(text)
+                .font(Bench.Typo.secondary)
+                .foregroundStyle(Bench.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button {
+                notice = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(Bench.Typo.mono(9, .semibold))
+                    .foregroundStyle(Bench.Palette.textFaintest)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 14).padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .benchCard(fill: Bench.Palette.accent.opacity(0.07),
+                   stroke: Bench.Palette.accent.opacity(0.22))
+    }
+
     // MARK: - State plumbing
     //
     // The ordering of these four hooks is load-bearing: setting
@@ -604,10 +645,19 @@ struct StudioView: View {
         prompt = request.prompt
         lyrics = request.lyrics ?? ""
         pendingMelody = request.melodyAudio
-        if installed.contains(where: { $0.id == request.modelId }),
-           selectedModelId != request.modelId {
-            selectedModelId = request.modelId   // onChange rebuilds the form
+        notice = request.notice
+        // Asked for, not imposed: `clampToModel` below reduces both to what
+        // the chosen model actually allows, so a card wanting two minutes
+        // lands on thirty seconds of MusicGen rather than on a length it
+        // would refuse.
+        if let durationS = request.durationS { self.durationS = durationS }
+        if let takes = request.takes { count = takes }
+        if let modelId = request.modelId,
+           installed.contains(where: { $0.id == modelId }),
+           selectedModelId != modelId {
+            selectedModelId = modelId   // onChange rebuilds the form
         } else {
+            clampToModel()
             consumePendingMelody()
         }
         prefill.pending = nil
@@ -616,10 +666,16 @@ struct StudioView: View {
     private func rebuildForm() {
         guard let model else { return }
         formState = ParameterFormState(specs: model.capabilities.params)
+        clampToModel()
+        consumePendingMelody()
+    }
+
+    /// Length and take count are the user's until the model disagrees.
+    private func clampToModel() {
+        guard let model else { return }
         let dur = model.capabilities.duration
         durationS = min(max(durationS, dur.minS), dur.maxS)
-        count = min(count, model.capabilities.outputsPerJobMax)
-        consumePendingMelody()
+        count = min(max(1, count), model.capabilities.outputsPerJobMax)
     }
 
     private func consumePendingMelody() {
@@ -649,6 +705,7 @@ struct StudioView: View {
     private func submit(_ model: ModelInfo) {
         let lyricsValue = model.capabilities.supportsLyrics
             && !lyrics.trimmingCharacters(in: .whitespaces).isEmpty ? lyrics : nil
+        notice = nil
         Task {
             var params = formState.params
             for (key, url) in formState.audioSelections {

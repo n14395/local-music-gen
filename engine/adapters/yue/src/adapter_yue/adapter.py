@@ -101,6 +101,11 @@ class YuEAdapter(ModelAdapter):
                     raise CancelledError()
                 line = line.strip()
                 if line:
+                    # infer.py's stdout is captured because this worker's own
+                    # stdout is the JSONL protocol channel — so without this
+                    # the only family that reports hours of work says nothing
+                    # at all. stderr is the mirror the render card reads.
+                    print(line, file=sys.stderr, flush=True)
                     match = re.search(r"(\d+)%", line)
                     fraction = int(match.group(1)) / 100 if match else None
                     progress_cb(fraction, line[:200])

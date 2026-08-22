@@ -618,7 +618,11 @@ private struct BenchStepButton: View {
 struct BenchSearchField: View {
     @Binding var text: String
     let placeholder: String
-    var width: CGFloat = 250
+    /// nil fills whatever it is given — for a field that heads a panel of a
+    /// fixed width rather than sitting in a toolbar. `frame(width:)` treats nil
+    /// as "unconstrained", so the default keeps every existing call site at the
+    /// exact width it had.
+    var width: CGFloat? = 250
 
     var body: some View {
         HStack(spacing: 8) {

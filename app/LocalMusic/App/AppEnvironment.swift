@@ -1,22 +1,39 @@
 import Foundation
 import Observation
 
-/// A pending "reuse prompt" / "use as melody" request from another screen,
-/// consumed by Studio.
+/// A pending "reuse prompt" / "use as melody" / Actions-preset request from
+/// another screen, consumed by Generate.
 @MainActor @Observable
 final class PrefillBox {
     struct Prefill: Equatable {
         var prompt: String
         var lyrics: String?
-        var modelId: String
+        /// Which model to arrive on. Optional since the Actions cards: a card
+        /// asks for a *kind* of model and the best installed one is picked
+        /// for it, and on a machine with none the card is gated before it can
+        /// send anything here.
+        var modelId: String?
         var melodyAudio: URL?
+        /// Length to ask for, clamped to whatever the chosen model allows.
+        var durationS: Double?
+        /// How many takes. Same clamping — a model that renders one at a time
+        /// gets one however many the card asked for.
+        var takes: Int?
+        /// A line shown once above the composer, saying what arriving here
+        /// changed. Without it a card that quietly set four fields looks like
+        /// a screen that changed its mind on its own.
+        var notice: String?
 
-        init(prompt: String, lyrics: String?, modelId: String,
-             melodyAudio: URL? = nil) {
+        init(prompt: String, lyrics: String? = nil, modelId: String? = nil,
+             melodyAudio: URL? = nil, durationS: Double? = nil,
+             takes: Int? = nil, notice: String? = nil) {
             self.prompt = prompt
             self.lyrics = lyrics
             self.modelId = modelId
             self.melodyAudio = melodyAudio
+            self.durationS = durationS
+            self.takes = takes
+            self.notice = notice
         }
     }
     var pending: Prefill?
@@ -35,6 +52,10 @@ final class StudioBox {
         /// Open the Style Transfer workspace on this song or part, optionally
         /// with an Actions preset already applied.
         case styleTransfer(materialId: String, presetId: String?)
+        /// Open Generate with an Actions preset applied. `materialId` is the
+        /// track a preset reads tempo and key from, and is nil for the
+        /// thirteen cards that read nothing.
+        case generate(presetId: String, materialId: String?)
         /// Open the Editor on this song or part.
         case edit(materialId: String)
     }
@@ -59,6 +80,10 @@ final class AppEnvironment {
     /// widget — pointed at whichever player is sounding.
     let nowPlaying = NowPlayingBridge()
     let telemetry = TelemetryStore()
+    /// How long this Mac's stages have actually taken, so the render card can
+    /// put a figure against a stage that has not started yet. Session-scoped
+    /// and measured, never projected — see `RenderTimingStore`.
+    let renderTimings = RenderTimingStore()
     let storage = StorageStore()
     /// The bench is a destination now rather than a pane inside Split &
     /// Recombine, so its model lives here — switching away from Workbench and
@@ -319,6 +344,9 @@ final class AppEnvironment {
         case .jobQueued:
             notifications.requestAuthorizationIfNeeded()
         case .jobCompleted(let jobId):
+            // Spent before the Editor guard below, or an armed edit render
+            // would leave its id in the set for the rest of the session.
+            let armed = jobsStore.takeNotifyOnLanding(jobId)
             // The Editor announces its own renders — an apply that lands
             // says "Edits applied", and "Your track is ready" beside it
             // would be the same event claimed twice.
@@ -326,15 +354,30 @@ final class AppEnvironment {
             let title = jobsStore.active[jobId].map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
-            notifications.notifyIfInactive(title: "Your track is ready",
-                                           body: String(title.prefix(80)))
+            // A job the user armed from the render card is told about either
+            // way; everything else only when the app is in the background.
+            if armed {
+                notifications.notify(title: "Your track is ready",
+                                     body: String(title.prefix(80)))
+            } else {
+                notifications.notifyIfInactive(title: "Your track is ready",
+                                               body: String(title.prefix(80)))
+            }
         case .jobFailed(let jobId, let error):
+            // Failing IS landing, for someone who walked away. Silence here
+            // would be the arming's worst outcome: they asked to be told when
+            // it was done and it is done, badly.
+            let armed = jobsStore.takeNotifyOnLanding(jobId)
             let title = jobsStore.active[jobId].map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
-            notifications.notifyIfInactive(
-                title: "Generation failed",
-                body: "\(title.prefix(50)) — \(error.message)")
+            let body = "\(title.prefix(50)) — \(error.message)"
+            if armed {
+                notifications.notify(title: "Generation failed", body: body)
+            } else {
+                notifications.notifyIfInactive(title: "Generation failed",
+                                               body: body)
+            }
         case .downloadCompleted(_, let modelId, let runtimeOnly):
             let name = catalog.models.first { $0.id == modelId }?.displayName
                 ?? modelId
@@ -363,6 +406,10 @@ final class AppEnvironment {
 
     func startBackend() {
         Task { await backendManager.start() }
+        // Read, not requested: the prompt belongs to the moment the user asks
+        // to be notified, but the *answer* has to be known before then so the
+        // render card can tell an armed take it will land quietly.
+        Task { await notifications.refresh() }
     }
 
     /// "Unload model" in the titlebar; the engine refuses while a job runs and

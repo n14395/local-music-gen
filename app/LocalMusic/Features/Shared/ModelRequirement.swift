@@ -26,6 +26,11 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
     case mixdown
     case splicer
     case style(StyleTransferMode)
+    /// What a Generate card needs before it can run — see `GenerateNeed`.
+    /// Only the gating half travels here; the preferred families decide which
+    /// model a card *arrives* on and gate nothing, so they have no business in
+    /// a filter that answers "what do I download".
+    case generate(GenerateNeed)
 
     var id: String {
         switch self {
@@ -33,6 +38,7 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
         case .mixdown: "mixdown"
         case .splicer: "splicer"
         case .style(let mode): "style:" + mode.rawValue
+        case .generate(let need): "generate:" + need.key
         }
     }
 
@@ -48,6 +54,7 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
         case .mixdown: "Create a mix"
         case .splicer: "Token splice"
         case .style(let mode): mode.title
+        case .generate(let need): need.title
         }
     }
 
@@ -65,6 +72,8 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
         // base rather than hiding it.
         case .style(let mode):
             mode.canRun(model)
+        case .generate(let need):
+            need.canRun(model)
         }
     }
 

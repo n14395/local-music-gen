@@ -32,6 +32,10 @@ struct ModelRowView: View {
     let onInstallRuntime: () -> Void
     let onTogglePin: (Bool) -> Void
     var onDismissFailure: () -> Void = {}
+    /// Hearted models sort to the top of Studio's picker. Unrelated to the
+    /// Library's Favourites, which is for music and parts.
+    var isFavourite: Bool = false
+    var onToggleFavourite: () -> Void = {}
 
     private var model: ModelInfo { row.model }
     private var isInstalled: Bool { model.installState == .installed }
@@ -109,7 +113,24 @@ struct ModelRowView: View {
                     .help("Kept loaded in memory")
             }
             Spacer(minLength: 0)
+            favouriteHeart
         }
+    }
+
+    /// Deliberately not the same idea as PINNED beside it: the pin is about
+    /// memory residency and the engine enforces it, while this is only about
+    /// the order Studio offers models in.
+    private var favouriteHeart: some View {
+        Button(action: onToggleFavourite) {
+            Image(systemName: isFavourite ? "heart.fill" : "heart")
+                .font(.system(size: 12))
+                .foregroundStyle(isFavourite ? TrackRow.favouriteHeart
+                                             : Bench.Palette.textFaint)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isFavourite ? "Remove from favourite models"
+                          : "Show this model first in Generate's picker")
     }
 
     private var stateBadge: (text: String, tone: BenchBadge.Tone)? {

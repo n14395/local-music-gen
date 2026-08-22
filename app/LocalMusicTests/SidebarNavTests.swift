@@ -11,9 +11,18 @@ final class SidebarNavTests: XCTestCase {
     /// the thing it resembles — cannot quietly reshuffle the nav.
     func testMakeSectionOrder() {
         XCTAssertEqual(Destination.inSection(.make),
-                       [.studio, .actions, .styleTransfer, .workbench,
+                       [.actions, .generate, .styleTransfer, .workbench,
                         .editor])
         XCTAssertEqual(Destination.inSection(.browse), [.library, .models])
+    }
+
+    /// The label moved and the identity did not. A destination is written to
+    /// `@AppStorage` by raw value, so renaming the case to match its new label
+    /// must not send everyone who last used it back to the default screen.
+    func testRenamingTheTabDidNotMoveItsIdentity() {
+        XCTAssertEqual(Destination.generate.rawValue, "studio")
+        XCTAssertEqual(Destination(rawValue: "studio"), .generate)
+        XCTAssertEqual(Destination.generate.title, "Generate")
     }
 
     /// Every destination is in exactly one section and none has been dropped.

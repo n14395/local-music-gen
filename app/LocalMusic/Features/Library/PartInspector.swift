@@ -400,7 +400,7 @@ struct PartInspector: View {
                 title: "Use as melody",
                 isEnabled: part.format == "wav",
                 help: part.format == "wav"
-                    ? "Start a new song in Studio that follows this part's melody"
+                    ? "Start a new song in Generate that follows this part's melody"
                     : "Only audio parts can be used as a melody"
             ) { onUseMelody(part.fileURL) }
         }

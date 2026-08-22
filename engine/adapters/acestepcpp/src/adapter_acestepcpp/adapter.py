@@ -22,6 +22,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import soundfile as sf
@@ -163,6 +164,14 @@ class AceStepCppAdapter(ModelAdapter):
                 line = line.rstrip()
                 if line:
                     tail = (tail + [line])[-8:]
+                    # Forward before parsing. These are the richest per-step
+                    # lines any family in this app produces — `[DiT] Step 6/8`,
+                    # the LM's own counters — and until now they were read for
+                    # their numbers and then dropped on the floor, so the one
+                    # runtime with real output had the emptiest log pane. The
+                    # worker's stderr is mirrored to that pane (contract §6);
+                    # this is the only thing standing between the two.
+                    print(line, file=sys.stderr, flush=True)
                     on_line(line)
             proc.wait()
         finally:
