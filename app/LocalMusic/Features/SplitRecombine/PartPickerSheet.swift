@@ -314,8 +314,11 @@ struct PartPickerSheet: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if tab.showsParts { partsSection }
-                    if tab.showsSongs { songsSection }
+                    switch tab {
+                    case .all: mergedSection
+                    case .parts: partsSection
+                    case .songs: songsSection
+                    }
                     if tab.showsParts { otherPartsSection }
                     if matchingParts.isEmpty && !songAccepted
                         && autoDerive == nil {
@@ -332,6 +335,98 @@ struct PartPickerSheet: View {
         .frame(width: 560, height: 520)
         .background(Bench.Palette.windowBackground)
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: everything, together
+
+    /// One row of the All list: what to draw, when it was made so the two
+    /// tables can be interleaved, and — for a song that can only be split —
+    /// the record the Split now button needs.
+    struct Listed: Identifiable {
+        let material: PickedMaterial
+        let createdAt: Date
+        /// nil for a part, which came from no one origin.
+        let origin: SongOrigin?
+        let splittable: SongRecord?
+        var id: String { material.id }
+    }
+
+    /// Parts and songs in one list, newest first.
+    ///
+    /// Both tables already come back `createdAt DESC`, and the origins have
+    /// always been mixed together rather than shelved apart — a render made
+    /// this morning sits above an import from last year. Parts were the one
+    /// kind kept in their own aisle, which meant the freshest thing in the
+    /// library could be six rows below the oldest. The tabs are where you go
+    /// when you want one kind; All is where you go when you want the newest.
+    private var listed: [Listed] {
+        Self.merge(parts: matchingParts.map {
+                       (PickedMaterial(part: $0, sourceTitle: sourceTitle($0)),
+                        $0.createdAt)
+                   },
+                   songs: showsSongs ? matchingSongs : [],
+                   songsArePickable: songAccepted)
+    }
+
+    /// The interleave, kept out of the view so the rule can be read and tested
+    /// on its own: newest first, whichever table it came from.
+    static func merge(parts: [(PickedMaterial, Date)], songs: [SongRecord],
+                      songsArePickable: Bool) -> [Listed] {
+        var rows = parts.map {
+            Listed(material: $0.0, createdAt: $0.1, origin: nil, splittable: nil)
+        }
+        rows += songs.map {
+            Listed(material: PickedMaterial(song: $0), createdAt: $0.createdAt,
+                   origin: $0.originKind,
+                   splittable: songsArePickable ? nil : $0)
+        }
+        return rows.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// No eyebrow: the tab above is the heading, and "PARTS"/"SONGS" over a
+    /// list that is both would be a label for something else. The caption
+    /// stays, because what happens when you pick a *song* is not obvious from
+    /// the row and is the one thing the old heading was really saying.
+    private var mergedSection: some View {
+        // Read once: `listed` runs two database queries, and asking it both
+        // for the count and for the rows ran all four.
+        let rows = listed
+        return VStack(alignment: .leading, spacing: 8) {
+            if !mergedCaption.isEmpty {
+                Text(mergedCaption.uppercased()).metaLine()
+            }
+            if rows.isEmpty {
+                Text(emptyTabMessage)
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                    .padding(.vertical, 10)
+            }
+            VStack(spacing: 6) {
+                ForEach(rows) { row in
+                    if let song = row.splittable {
+                        HStack(spacing: 10) {
+                            materialRow(row.material, origin: row.origin)
+                                .opacity(0.6)
+                            splitNowButton(song)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                    } else {
+                        // Carried on the row rather than looked up per draw:
+                        // `matchingSongs` is a database query, and asking it
+                        // once per row turned one search into a hundred.
+                        pickRow(row.material, origin: row.origin)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Said as a sentence rather than as the "SONGS ·" label it replaces: over
+    /// a mixed list the label would be describing only some of the rows.
+    private var mergedCaption: String {
+        guard showsSongs else { return "" }
+        return songAccepted ? "a song is picked as its whole mix"
+                            : (autoDerive?.note ?? "")
     }
 
     // MARK: parts
@@ -433,16 +528,11 @@ struct PartPickerSheet: View {
                 }
                 VStack(spacing: 6) {
                     ForEach(songs) { song in
-                        // Only worth saying on the All tab. Inside a single
-                        // origin's tab every row would carry the same word,
-                        // which is the tab's own label repeated down the list.
-                        let mark = tab == .all ? song.originKind : nil
                         if songAccepted {
-                            pickRow(PickedMaterial(song: song), origin: mark)
+                            pickRow(PickedMaterial(song: song))
                         } else if autoDerive != nil {
                             HStack(spacing: 10) {
-                                materialRow(PickedMaterial(song: song),
-                                            origin: mark)
+                                materialRow(PickedMaterial(song: song))
                                     .opacity(0.6)
                                 splitNowButton(song)
                             }
@@ -459,9 +549,7 @@ struct PartPickerSheet: View {
     /// What the empty tab says. "Nothing here" is unhelpful when the reason is
     /// a search term rather than an empty collection.
     private var emptyTabMessage: String {
-        // "songs" rather than the All tab's "material" when the songs list is
-        // the thing that came up empty — the parts above it may not have.
-        let what = tab == .all ? "songs" : tab.noun
+        let what = tab.noun
         return query.isEmpty
             ? "No \(what) in the library yet."
             : "No \(what) match “\(query)”."
