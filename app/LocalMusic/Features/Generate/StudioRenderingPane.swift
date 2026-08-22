@@ -20,11 +20,6 @@ struct StudioRenderingPane: View {
     let actions: SongActions
     let renderingJobs: [JobsStore.ActiveJob]
 
-    /// Shared with StudioView, which reads it when it submits: previews are
-    /// decided at submit time, so this toggle arms takes rather than switching
-    /// the running one.
-    @AppStorage("studio.streamPreview") private var streamPreview = false
-
     private var lead: JobsStore.ActiveJob? { renderingJobs.first }
 
     /// Takes that finished while this batch was running, newest first —
@@ -100,32 +95,17 @@ struct StudioRenderingPane: View {
                                progress: job.progress,
                                status: job.status)
 
-            HStack(spacing: 10) {
-                // Only offered where the model can actually decode partial
-                // audio: for every other family there is nothing real to show,
-                // and the engine refuses the flag (contract 5.6).
-                if model?.capabilities.canPreview == true {
-                    BenchToggleChip(isOn: $streamPreview,
-                                    label: "Preview as it renders")
-                    if streamPreview && job.info.preview != true {
-                        Text("FROM THE NEXT TAKE")
-                            .font(Bench.Typo.mono(10))
-                            .foregroundStyle(Bench.Palette.textFaintest)
-                    }
-                }
-                Spacer()
-                if job.preview != nil {
-                    Button("Keep partial") {
-                        Task { await jobs.keepPartial(job.id) }
-                    }
-                    .buttonStyle(.bench(.accent))
-                    .help("Stop here and save the audio rendered so far.")
-                }
-                Button("Cancel take") {
-                    Task { await jobs.cancel(job.id) }
-                }
-                .buttonStyle(.bench(.destructive))
+            // All that is left of this row. It used to also carry "Preview
+            // as it renders" and, once a frame had landed, "Keep partial" —
+            // both of which only ever appeared for the four families whose
+            // adapters can decode a real partial (contract 5.6), so the card
+            // was a different card depending on which model you picked. The
+            // app no longer asks for previews at all; see `GenerationWell`.
+            Button("Cancel take") {
+                Task { await jobs.cancel(job.id) }
             }
+            .buttonStyle(.bench(.destructive))
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -237,19 +217,24 @@ enum RenderWell {
     }
 }
 
-/// The tall well at the top of the render card: the audio the model has
-/// genuinely made so far, cut off at a playhead that tracks the generating
-/// stage.
+/// The tall well at the top of the render card: how much of the take has been
+/// made, as a filled span behind a playhead that tracks the generating stage.
 ///
-/// The waveform is real — `job.preview` is a wav the engine decoded from the
-/// state the model is actually in, never an interpolation of the finished
-/// take. It is drawn at the width the preview covers of the take, which keeps
-/// both shapes of preview honest: a diffusion model's frame covers the whole
-/// clip from the first step (it gets cleaner, not longer) while MusicGen's
-/// grows a bar at a time. Nothing is drawn to the right of the playhead —
-/// there is no ghost of audio that does not exist yet. A take that was not
-/// asked to preview, or cannot, gets the plain filled region: a span of work
-/// done, drawn as such rather than as an invented envelope.
+/// It used to draw the audio itself where it could. `job.preview` is a wav the
+/// engine decodes from the state the model is actually in, and four of the
+/// eleven generative families can produce one — the rest hand their adapter no
+/// tensor to decode (the acestep.cpp runtime is a subprocess; the torch one is
+/// a single opaque call). So the same screen rendered as a live waveform or as
+/// a plain bar depending on which model you had picked, with a toggle
+/// appearing beside it in the first case and not the second.
+///
+/// The span is now what every model gets. It is the honest shape for the
+/// majority and it is the same shape for all of them, which is worth more here
+/// than the extra detail was: the render card should read as one screen.
+///
+/// The engine keeps the capability — `submit(preview:)`, the `job.preview`
+/// frames and `JobsStore.keepPartial` are all still live and still tested. It
+/// is this card that stopped asking.
 private struct GenerationWell: View {
     let job: JobsStore.ActiveJob
     let stages: [PipelineStage]?
@@ -273,16 +258,9 @@ private struct GenerationWell: View {
             let x = geo.size.width * edge
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 10).fill(Bench.Palette.well)
-                if let preview = job.preview {
-                    PreviewWaveform(url: preview.fileURL)
-                        .frame(width: geo.size.width * previewSpan(preview))
-                        .padding(.vertical, 14)
-                        .mask(alignment: .leading) { Rectangle().frame(width: x) }
-                } else {
-                    Rectangle()
-                        .fill(Bench.Palette.accent.opacity(0.07))
-                        .frame(width: x)
-                }
+                Rectangle()
+                    .fill(Bench.Palette.accent.opacity(0.07))
+                    .frame(width: x)
                 if edge > 0 {
                     Rectangle()
                         .fill(Bench.Palette.accent)
@@ -311,14 +289,6 @@ private struct GenerationWell: View {
         }
     }
 
-    /// How much of the well the decoded audio covers. A job with no declared
-    /// duration (nothing to divide by) gets the whole width, because the
-    /// preview is all there is to say about its length.
-    private func previewSpan(_ preview: JobPreview) -> Double {
-        guard let duration = job.info.durationS, duration > 0 else { return 1 }
-        return min(1, preview.durationS / duration)
-    }
-
     private var label: String {
         if let message = job.progress?.message, !message.isEmpty {
             return message.uppercased()
@@ -332,29 +302,6 @@ private struct GenerationWell: View {
 }
 
 // MARK: - Preview waveform
-
-/// The partial take, redrawn whenever a new frame lands.
-///
-/// Peaks are extracted without the on-disk cache the library rows use: a
-/// preview file is superseded seconds after it is written, so caching would
-/// leave one stale `.peaks` file behind per frame. Nothing is drawn until the
-/// file has actually been read — a placeholder waveform for audio nobody has
-/// looked at yet is exactly the sort of stand-in previews exist to remove.
-private struct PreviewWaveform: View {
-    let url: URL
-
-    @State private var peaks: WaveformExtractor.Peaks?
-
-    var body: some View {
-        BenchWaveform(peaks: peaks, playedFraction: 1,
-                      tint: Bench.Palette.accent,
-                      rest: Bench.Palette.accent.opacity(0.2))
-            .opacity(peaks == nil ? 0 : 1)
-            .task(id: url) {
-                peaks = try? await WaveformExtractor.shared.peaks(for: url)
-            }
-    }
-}
 
 // MARK: - Pipeline
 

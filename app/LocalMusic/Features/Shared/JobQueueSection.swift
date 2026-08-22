@@ -15,6 +15,8 @@ struct JobQueueSection: View {
     /// only a status readout — the gesture has to be worth the affordance, and
     /// only the queued rows can move (§5.8: the running one is a 409).
     var reorderable = false
+    /// Show a track a finished row produced, by song id.
+    var onShowInLibrary: ((String) -> Void)?
 
     /// The row a drag is currently hovering, so the drop target says where the
     /// job would land instead of silently accepting it.
@@ -51,7 +53,16 @@ struct JobQueueSection: View {
                           movable: movable,
                           isDropTarget: dropTarget == job.id,
                           onCancel: { Task { await jobs.cancel(job.id) } },
-                          onDismiss: { jobs.dismiss(job.id) })
+                          onDismiss: { jobs.dismiss(job.id) },
+                          // Take a: a multi-take job made several tracks and
+                          // one of them has to be the one selected. The rest
+                          // are its neighbours in the list, and the row's own
+                          // meta line already says how many there were.
+                          onShowInLibrary: onShowInLibrary.flatMap { show in
+                              job.producedSongIds.first.map { id in
+                                  { show(id) }
+                              }
+                          })
         if movable {
             // The payload is the job id as a plain String: no exported UTType
             // in Info.plist, which a custom Transferable would need (the same
@@ -124,6 +135,9 @@ struct JobRow: View {
     var isDropTarget = false
     let onCancel: () -> Void
     let onDismiss: () -> Void
+    /// Present only on a row that finished and left a track behind, which is
+    /// what makes it the row's own answer to "so where did it go".
+    var onShowInLibrary: (() -> Void)?
 
     private var isRunning: Bool {
         switch job.status {
@@ -163,6 +177,15 @@ struct JobRow: View {
             Text(metaLine)
                 .metaLine()
                 .lineLimit(2)
+            if let onShowInLibrary {
+                // Its own line rather than another control in the header row:
+                // the title up there already gives way to the status readout
+                // and the dismiss button, and a third would leave a two-word
+                // prompt showing.
+                Button("Show in library", action: onShowInLibrary)
+                    .buttonStyle(.bench(.quiet))
+                    .help("Open the Library on this track")
+            }
         }
         .padding(13)
         .benchCard(fill: isActive ? Bench.Palette.cardSelected : Bench.Palette.card,

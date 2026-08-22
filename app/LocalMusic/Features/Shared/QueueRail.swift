@@ -22,6 +22,9 @@ struct QueueRail: View {
     /// Swaps between floating and taking a column of its own. Optional for the
     /// same reason as `onClose`.
     var onTogglePin: (() -> Void)?
+    /// Show a track a finished row produced. Optional: where the rail is only
+    /// a status readout there is nowhere to send anyone.
+    var onShowInLibrary: ((String) -> Void)?
 
     private var load: QueueLoad {
         QueueLoad.of(jobs: jobs.displayJobs, downloads: downloads.downloads.count)
@@ -40,7 +43,8 @@ struct QueueRail: View {
                                         modelName: { id in
                                             catalog.models.first { $0.id == id }?.displayName ?? id
                                         },
-                                        reorderable: true)
+                                        reorderable: true,
+                                        onShowInLibrary: onShowInLibrary)
                     }
                     Text("Downloads and renders share one queue so the Mac is never "
                          + "asked for two big jobs at once.")
@@ -83,6 +87,7 @@ struct QueueRail: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            clearFinishedButton
             pauseAllButton
             if let onTogglePin {
                 Button(action: onTogglePin) {
@@ -133,6 +138,20 @@ struct QueueRail: View {
               ? "Start the queue again"
               : "Hold the queue and pause every transfer — the render already "
                 + "running finishes")
+    }
+
+    /// Finished rows wait to be dismissed now rather than vanishing on a
+    /// timer, which is the point of them — but a day's work is fifty rows, and
+    /// "dismiss it yourself" should not have to mean fifty clicks. Absent
+    /// rather than dimmed when there is nothing to clear: the header is five
+    /// controls in 340 pt and a permanent dead button is the one that can go.
+    @ViewBuilder
+    private var clearFinishedButton: some View {
+        if load.finished > 0 {
+            Button("Clear done", action: jobs.dismissFinished)
+                .buttonStyle(.bench(.quiet))
+                .help("Dismiss every row that has finished")
+        }
     }
 
     /// Said plainly rather than left as a blank panel: the queue is now

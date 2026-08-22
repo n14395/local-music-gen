@@ -30,15 +30,6 @@ actor WaveformExtractor {
         return try await task.value
     }
 
-    /// Peaks for a file that is not worth caching — a streaming render
-    /// preview, superseded within seconds, which would otherwise leave one
-    /// stale `.peaks` file per frame.
-    func peaks(for audioURL: URL) async throws -> Peaks {
-        try await Task<Peaks, Error>.detached(priority: .utility) {
-            try Self.extract(from: audioURL)
-        }.value
-    }
-
     /// Peaks for one *window* of a file, read fresh from only the frames in
     /// view — the whole-file cache is 2000 bins (~90 ms per bin on a three
     /// minute track), which cannot support a zoomed editor. No cache: the

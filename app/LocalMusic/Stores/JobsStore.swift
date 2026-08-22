@@ -173,6 +173,11 @@ final class JobsStore {
         /// Each frame replaces the last; the engine deletes them all when the
         /// take succeeds, so this is only ever worth keeping on a cancel.
         var preview: JobPreview?
+        /// What this job put in the library, recorded at ingest so a finished
+        /// row can offer to show it. In submission order, so `first` is take
+        /// a. Empty for the jobs that produce parts or an analysis rather
+        /// than a track.
+        var producedSongIds: [String] = []
         var id: String { info.jobId }
     }
 
@@ -208,11 +213,33 @@ final class JobsStore {
         self.partsRepo = partsRepo
     }
 
-    var displayJobs: [ActiveJob] {
-        active.values.sorted {
-            ($0.info.queuePosition ?? 99, $0.info.createdAt)
-                < ($1.info.queuePosition ?? 99, $1.info.createdAt)
+    var displayJobs: [ActiveJob] { Self.ordered(active.values) }
+
+    /// Work first, in the order it will run; then what has finished, newest
+    /// first.
+    ///
+    /// Two groups rather than one comparator, because the halves answer
+    /// different questions. The unfinished rows are a *plan*: the engine's
+    /// queue position is the whole point of them, a drag reorders against it,
+    /// and a row saying `#3 IN QUEUE` above one saying `#1` would be a lie
+    /// about what happens next. The finished rows are a *record*, and a record
+    /// reads newest first — the take that just landed is the one you came to
+    /// click, and it should not be at the bottom of everything you made today.
+    ///
+    /// Which also puts a new submission above every finished row, which is
+    /// what makes the list usable now that finished rows stay until dismissed.
+    ///
+    /// `id` breaks both ties so the order is total: two jobs submitted in the
+    /// same millisecond must not be able to swap places between redraws.
+    static func ordered(_ jobs: some Collection<ActiveJob>) -> [ActiveJob] {
+        let working = jobs.filter { !$0.status.isTerminal }.sorted {
+            ($0.info.queuePosition ?? 99, $0.info.createdAt, $0.id)
+                < ($1.info.queuePosition ?? 99, $1.info.createdAt, $1.id)
         }
+        let finished = jobs.filter(\.status.isTerminal).sorted {
+            ($0.info.createdAt, $0.id) > ($1.info.createdAt, $1.id)
+        }
+        return working + finished
     }
 
     /// Jobs a drag may reorder: the queued ones, in the order the engine says
@@ -642,6 +669,13 @@ final class JobsStore {
         }
     }
 
+    /// Remember what a job left in the library, for the row's "Show in
+    /// library". Written before `onSongsIngested` so anything that redraws off
+    /// that callback already sees it.
+    private func record(_ songs: [SongRecord], for jobId: String) {
+        active[jobId]?.producedSongIds = songs.map(\.id)
+    }
+
     /// Human title for job rows/notifications — prompt for generations, an
     /// action description for promptless task jobs.
     func displayTitle(for info: JobInfo) -> String {
@@ -782,20 +816,46 @@ final class JobsStore {
             lastError = "Could not save the partial take: \(error.localizedDescription)"
             return nil
         }
+        record([song], for: job.jobId)
         onSongsIngested([song])
         return song
     }
 
+    /// Take one row off the list.
+    ///
+    /// The routing context goes with it, and not before: `displayTitle` reads
+    /// it, so a split or a recombination that dropped its context on success
+    /// would sit there afterwards under a blank name.
     func dismiss(_ jobId: String) {
         active.removeValue(forKey: jobId)
+        pendingContext.removeValue(forKey: jobId)
+    }
+
+    /// Clear every row that has stopped — succeeded, failed or cancelled.
+    ///
+    /// Finished rows now wait to be dismissed rather than disappearing on a
+    /// timer, which is the point; but a day's work is fifty of them, and
+    /// "manually dismissed" should not have to mean fifty clicks.
+    func dismissFinished() {
+        for job in active.values where job.status.isTerminal { dismiss(job.id) }
+    }
+
+    /// Put a row on the list that this store did not submit.
+    ///
+    /// The one way in besides `submit`: `reconcile` uses it for work already
+    /// running when the app came back, and tests use it to stand a queue up
+    /// with no engine behind it. `active`'s setter stays private so that
+    /// remains the whole list of ways a row can appear.
+    func adopt(_ job: ActiveJob) {
+        active[job.id] = job
     }
 
     func reconcile() async {
         guard let client else { return }
         if let jobs = try? await client.jobs() {
             for job in jobs where active[job.jobId] == nil {
-                active[job.jobId] = ActiveJob(info: job, progress: job.progress,
-                                              status: job.status)
+                adopt(ActiveJob(info: job, progress: job.progress,
+                                status: job.status))
             }
         }
     }
@@ -883,7 +943,6 @@ final class JobsStore {
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
             onPartsIngested(parts)
-            finish(jobId)
             return
         }
         var songs: [SongRecord] = []
@@ -949,8 +1008,8 @@ final class JobsStore {
         }
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
+        record(songs, for: jobId)
         onSongsIngested(songs)
-        finish(jobId)
     }
 
     /// Route a task job's typed artifacts: stems/notes → parts library,
@@ -994,7 +1053,6 @@ final class JobsStore {
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
             onPartsIngested([])   // refresh part badges with the new analysis
-            finish(jobId)
             return
         case .recombine(let recipeId, let title, let applied):
             ingestRecombine(job: job, result: result, recipeId: recipeId,
@@ -1010,7 +1068,6 @@ final class JobsStore {
             onEditorArtifact(job, result, purpose)
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
-            finish(jobId)
             return
         case .generativePart(let ownerSongId, _, let kind, _):
             // Render task jobs (notes → SoundFont audio): the single audio
@@ -1026,14 +1083,12 @@ final class JobsStore {
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
             onPartsIngested(parts)
-            finish(jobId)
             return
         default:
             // Unknown contexts (post-relaunch reconciliation) have nowhere to
             // route artifacts.
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
-            finish(jobId)
             return
         }
 
@@ -1123,7 +1178,6 @@ final class JobsStore {
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
         onPartsIngested(parts)
-        finish(jobId)
     }
 
     /// A finished mix: the mixdown becomes a library song (origin
@@ -1212,9 +1266,9 @@ final class JobsStore {
 
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
+        record(songs, for: jobId)
         onSongsIngested(songs)
         if !parts.isEmpty { onPartsIngested(parts) }
-        finish(jobId)
     }
 
     private func ingestAnalysis(_ artifacts: [JobArtifact], ownerId: String,
@@ -1309,13 +1363,4 @@ final class JobsStore {
     }
 
     /// Finished jobs leave the queue view after a short grace period.
-    private func finish(_ jobId: String) {
-        Task {
-            try? await Task.sleep(for: .seconds(8))
-            if active[jobId]?.status == .succeeded {
-                dismiss(jobId)
-                pendingContext.removeValue(forKey: jobId)
-            }
-        }
-    }
 }

@@ -14,6 +14,9 @@ struct MainWindow: View {
 
     @State private var destination: Destination = .studio
     @State private var libraryScope: LibraryScope = .songs
+    /// A track the shell wants the Library to open on — set by the queue's
+    /// "Show in library", cleared by the Library once it has acted.
+    @State private var libraryReveal: LibraryReveal?
     /// Live navigation inside Actions: nil is the gallery, non-nil is the
     /// configuration page currently open. Held by the shell so a jump from
     /// another screen lands on a configured page, and so leaving Actions and
@@ -120,6 +123,11 @@ struct MainWindow: View {
         .onChange(of: isRenderingWork) {
             withAnimation(Self.panelMotion) {
                 queuePanel.workChanged(isWorking: isRenderingWork)
+            }
+        }
+        .onChange(of: queueIsEmpty) {
+            withAnimation(Self.panelMotion) {
+                queuePanel.contentsChanged(isEmpty: queueIsEmpty)
             }
         }
         .task { await env.pollTelemetry() }
@@ -386,6 +394,14 @@ struct MainWindow: View {
         env.jobsStore.active.values.contains { !$0.status.isTerminal }
     }
 
+    /// Nothing left to draw — no work, no transfers, and no finished rows still
+    /// waiting to be dismissed. Deliberately not the same as "nothing running":
+    /// the take that just landed is still a row, and still worth reading.
+    private var queueIsEmpty: Bool {
+        QueueLoad.of(jobs: Array(env.jobsStore.active.values),
+                     downloads: env.downloadsStore.downloads.count).isEmpty
+    }
+
     private static let panelMotion = Animation.easeOut(duration: 0.22)
     private static let windowMinWidth: CGFloat = 1100
 
@@ -400,6 +416,26 @@ struct MainWindow: View {
 
     /// Showing, and over the screen rather than beside it.
     private var queueFloats: Bool { queuePanel.isOpen && !queueIsPinned }
+
+    /// Take the user to a track a finished queue row made.
+    ///
+    /// The scope comes from the song's own origin rather than being assumed to
+    /// be Generated: the same row shape carries a recombination, and dropping
+    /// the user on the Generated list with a render selected shows an empty
+    /// pane over a list the track is not in.
+    ///
+    /// A floating panel closes on the way, because it is sitting on top of the
+    /// list it just sent you to. A pinned one has its own column and stays —
+    /// pinning it is a statement that you want it there.
+    private func showInLibrary(songId: String) {
+        guard let song = env.library.song(id: songId) else { return }
+        libraryReveal = LibraryReveal(
+            songId: songId, scope: LibraryScope(origin: song.originKind))
+        destination = .library
+        if queueFloats {
+            withAnimation(Self.panelMotion) { queuePanel.close() }
+        }
+    }
 
     /// Floats by default, so glancing at the queue never reflows the screen
     /// you were working on, and pins when you want it permanently — which is
@@ -428,7 +464,8 @@ struct MainWindow: View {
                                   queuePinned = !queueIsPinned
                                   queuePanel.pinChanged()
                               }
-                          })
+                          },
+                          onShowInLibrary: showInLibrary)
             }
             .shadow(color: .black.opacity(queueIsPinned ? 0 : 0.45), radius: 26, x: -8)
             .transition(.move(edge: .trailing))
@@ -448,7 +485,8 @@ struct MainWindow: View {
         case .library:
             LibraryScreen(library: env.library, parts: env.partsStore,
                           jobs: env.jobsStore, playback: env.playback,
-                          scope: $libraryScope, actions: songActions,
+                          scope: $libraryScope, reveal: $libraryReveal,
+                          actions: songActions,
                           onAddToWorkbench: { part in
                               env.studio.pending = .addToWorkbench(partId: part.id)
                           },
@@ -697,6 +735,16 @@ struct MainWindow: View {
 /// Which slice of the library is on screen. Lives here rather than inside the
 /// library view because the sidebar card changes with it — Parts swaps the
 /// engine readout for the stem-colour legend.
+/// "Open the Library here, on this track."
+///
+/// Carries the scope as well as the id because the two have to move together:
+/// selecting a render while the Generated list is showing selects a row that
+/// list does not contain, and the pane behind it would stay empty.
+struct LibraryReveal: Equatable {
+    var songId: String
+    var scope: LibraryScope
+}
+
 enum LibraryScope: String, CaseIterable, Identifiable, Codable {
     // Declaration order is sidebar order: the two kinds of whole track first,
     // then their parts, then what was built from them.
@@ -715,6 +763,16 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
         case .renders: "Renders"
         case .edited: "Edited"
         case .favourites: "Favourites"
+        }
+    }
+
+    /// Where a song of this origin lives — the inverse of `origin`, for
+    /// anything sending the user to a track it already has in hand.
+    init(origin: SongOrigin) {
+        switch origin {
+        case .generated: self = .songs
+        case .imported: self = .imported
+        case .recombined: self = .renders
         }
     }
 

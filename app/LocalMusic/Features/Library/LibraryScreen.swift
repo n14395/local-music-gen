@@ -19,6 +19,9 @@ struct LibraryScreen: View {
     let jobs: JobsStore
     let playback: PlaybackController
     @Binding var scope: LibraryScope
+    /// A track the shell wants shown, set from outside and cleared here once
+    /// acted on. `nil` the rest of the time, which is most of the time.
+    @Binding var reveal: LibraryReveal?
     let actions: SongActions
     let onAddToWorkbench: (PartRecord) -> Void
     let onRenderNotes: ((PartRecord) -> Void)?
@@ -109,6 +112,10 @@ struct LibraryScreen: View {
             library.filters.artist = nil
             parts.filters.favoritesOnly = false
         }
+        // `initial` because the reveal is usually set in the same turn that
+        // switches to this screen, so the first body evaluation is already
+        // carrying it and there is no change left to observe.
+        .onChange(of: reveal, initial: true) { consumeReveal() }
         .onChange(of: scope) { applyScope() }
         .onChange(of: library.results) { refreshDerived() }
         .onChange(of: parts.results) { refreshDerived() }
@@ -623,6 +630,21 @@ struct LibraryScreen: View {
         guard let first = imported.first else { return }
         scope = .imported
         selectedSongId = first.id
+    }
+
+    /// Move to the scope the track lives in and select it.
+    ///
+    /// Written the same way `receive(_:)` handles a fresh import, and it works
+    /// for the same reason: `applyScope` clears a *part* selection on the way
+    /// into a song scope but never a song one, so the id set here survives the
+    /// scope change that follows it. Cleared first, so a reveal that names a
+    /// deleted track cannot be retried on every redraw.
+    private func consumeReveal() {
+        guard let reveal else { return }
+        self.reveal = nil
+        scope = reveal.scope
+        selectedPartId = nil
+        selectedSongId = reveal.songId
     }
 
     private func startCompare() {

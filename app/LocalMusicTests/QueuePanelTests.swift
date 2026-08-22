@@ -130,4 +130,84 @@ final class QueuePanelTests: XCTestCase {
         panel.workChanged(isWorking: true)
         XCTAssertTrue(panel.isOpen)
     }
+
+    // MARK: closing when the queue empties
+
+    /// The headline behaviour: work opens and pins the panel, and clearing the
+    /// list puts it away again — column and all.
+    func testEmptyingTheQueueClosesAndUnpinsThePanel() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.contentsChanged(isEmpty: false)
+        XCTAssertTrue(panel.isOpen)
+        XCTAssertTrue(panel.isPinned(preference: false))
+
+        // Work finishes, but the finished row is still on the list.
+        panel.workChanged(isWorking: false)
+        XCTAssertTrue(panel.isOpen, "a take that just landed is still worth reading")
+
+        // The row is dismissed: now there is genuinely nothing to draw.
+        panel.contentsChanged(isEmpty: true)
+        XCTAssertFalse(panel.isOpen)
+        XCTAssertFalse(panel.isPinned(preference: false))
+        XCTAssertEqual(QueuePanel.gutter(isOpen: panel.isOpen, isPinned: false,
+                                         width: 320), 0)
+    }
+
+    /// Edge-triggered, not state-driven — otherwise opening an empty queue by
+    /// hand would be impossible: press the button, watch it shut.
+    func testAnEmptyPanelOpenedByHandStaysOpen() {
+        var panel = QueuePanel()
+        panel.contentsChanged(isEmpty: true)
+        panel.toggle()
+        XCTAssertTrue(panel.isOpen)
+        // Still empty, and told so repeatedly.
+        panel.contentsChanged(isEmpty: true)
+        panel.contentsChanged(isEmpty: true)
+        XCTAssertTrue(panel.isOpen, "no new edge, so no close")
+    }
+
+    /// A stored pin is a setting the user chose. Emptying the queue gives the
+    /// column back by closing; it must not rewrite the preference itself, or
+    /// the next render would come back unpinned.
+    func testEmptyingDoesNotClearTheStoredPinPreference() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.contentsChanged(isEmpty: false)
+        // Work always stops before the queue can empty — an emptied queue has
+        // no jobs in it by definition — so the falling edge comes first.
+        panel.workChanged(isWorking: false)
+        panel.contentsChanged(isEmpty: true)
+        XCTAssertFalse(panel.isOpen)
+        // Closed, so it reserves nothing...
+        XCTAssertEqual(QueuePanel.gutter(isOpen: panel.isOpen,
+                                         isPinned: panel.isPinned(preference: true),
+                                         width: 320), 0)
+        // ...but the preference still decides where it goes when it reopens.
+        panel.workChanged(isWorking: true)
+        XCTAssertTrue(panel.isOpen)
+        XCTAssertTrue(panel.isPinned(preference: true))
+    }
+
+    /// A fresh launch has an empty queue; that must not count as an edge.
+    func testLaunchIntoAnEmptyQueueFiresNoClose() {
+        var panel = QueuePanel()
+        panel.contentsChanged(isEmpty: true)
+        panel.toggle()
+        XCTAssertTrue(panel.isOpen)
+    }
+
+    /// A second batch after a drained queue opens the panel again.
+    func testNextBatchReopensAfterADrain() {
+        var panel = QueuePanel()
+        panel.workChanged(isWorking: true)
+        panel.contentsChanged(isEmpty: false)
+        panel.workChanged(isWorking: false)
+        panel.contentsChanged(isEmpty: true)
+        XCTAssertFalse(panel.isOpen)
+
+        panel.workChanged(isWorking: true)
+        XCTAssertTrue(panel.isOpen)
+        XCTAssertTrue(panel.isPinned(preference: false))
+    }
 }

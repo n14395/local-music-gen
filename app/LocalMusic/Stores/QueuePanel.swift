@@ -10,9 +10,16 @@ import Foundation
 /// applies to renders started from Actions and Style Transfer, which never had
 /// a queue view at all.
 ///
-/// Draining the queue deliberately does **not** close it: a panel you opened
-/// yourself should not vanish the moment the last take lands, which is exactly
-/// when you were looking at it.
+/// It closes itself again when the queue goes **empty** — not when work stops.
+/// Those are different moments, and the difference is the whole reason this is
+/// safe: a finished take stays on the list until it is dismissed, so the last
+/// render landing leaves a row to read. Emptiness means there is nothing left
+/// to draw at all, and a pinned panel holding a column to show "Nothing
+/// queued" is pure waste.
+///
+/// The close is **edge-triggered**, on the queue becoming empty. Reacting to
+/// the state instead would make an already-empty panel impossible to open: you
+/// would press the button and watch it shut again.
 ///
 /// A value type with no store behind it, so the edge detection can be tested
 /// without an engine, a job, or a window.
@@ -29,6 +36,10 @@ struct QueuePanel: Equatable {
     /// the edge is the whole point: the panel opens on the transition, not on
     /// the state — otherwise every progress tick would reopen it.
     private var isWorking = false
+    /// The same trick for the closing edge. Starts `true` because a freshly
+    /// launched app has an empty queue, and a spurious edge at launch would
+    /// fire a close nobody asked for.
+    private var isEmpty = true
 
     /// Call whenever work starts or stops.
     mutating func workChanged(isWorking working: Bool) {
@@ -36,6 +47,19 @@ struct QueuePanel: Equatable {
         guard working, !isWorking else { return }
         isOpen = true
         pinnedByWork = true
+    }
+
+    /// Call whenever the queue's contents change — `QueueLoad.isEmpty`, which
+    /// counts finished rows as contents, not just running work.
+    ///
+    /// Note what this deliberately does not touch: the *stored* pin preference.
+    /// Clearing that would let an empty queue quietly rewrite a setting the
+    /// user chose, and closing already gives the column back — `gutter` is 0
+    /// for a closed panel however it is pinned.
+    mutating func contentsChanged(isEmpty empty: Bool) {
+        defer { isEmpty = empty }
+        guard empty, !isEmpty else { return }
+        close()
     }
 
     mutating func toggle() {

@@ -22,10 +22,6 @@ struct StudioView: View {
     enum Mode: String { case simple, full }
 
     @AppStorage("studio.mode") private var mode: Mode = .simple
-    /// "Preview as it renders". Sticky rather than per-submit: it is a way of
-    /// working, and the rendering pane's toggle writes the same key so turning
-    /// it on while watching one take arms the next.
-    @AppStorage("studio.streamPreview") private var streamPreview = false
     @State private var selectedModelId: String?
     @State private var prompt = ""
     @State private var lyrics = ""
@@ -664,11 +660,14 @@ struct StudioView: View {
             await jobs.submit(modelId: model.id, prompt: prompt,
                               lyrics: lyricsValue, durationS: durationS,
                               count: count, params: params,
-                              // asked for only where the model can actually
-                              // decode partial audio; the engine refuses the
-                              // flag otherwise (contract 5.6)
-                              preview: streamPreview
-                                  && model.capabilities.canPreview,
+                              // No preview is ever asked for. Only four of the
+                              // eleven generative families could decode one, so
+                              // the render card grew a control and a live
+                              // waveform for some models and not others; it now
+                              // reads the same whichever you pick. `submit`
+                              // still takes the flag (contract 5.6) and the
+                              // engine still honours it — nothing here passes
+                              // it.
                               // A field still showing the default sends no
                               // name at all, so the number is allocated when
                               // the take lands. Pinning "track042" here would
