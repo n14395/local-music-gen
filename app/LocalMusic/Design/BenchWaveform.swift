@@ -23,17 +23,33 @@ struct BenchWaveform: View {
 
     var body: some View {
         GeometryReader { geo in
-            Canvas(rendersAsynchronously: false) { context, size in
+            let canvas = Canvas(rendersAsynchronously: false) { context, size in
                 draw(in: context, size: size)
             }
-            .contentShape(Rectangle())
-            .gesture(seekGesture(width: geo.size.width))
+            // Only where there is somewhere to seek to. A hit region and a
+            // gesture that does nothing still swallow the click, which in a
+            // row that is itself clickable means a dead stripe down it.
+            if let onSeek {
+                canvas
+                    .contentShape(Rectangle())
+                    // High priority because the waveform is usually *inside*
+                    // something clickable — a selectable row in the library, a
+                    // pick button in the material sheet — and scrubbing has to
+                    // beat that reliably rather than by whichever gesture
+                    // SwiftUI happens to resolve first. Nothing else in the app
+                    // wants a click on a waveform to mean anything else.
+                    .highPriorityGesture(seekGesture(width: geo.size.width,
+                                                     onSeek: onSeek))
+            } else {
+                canvas
+            }
         }
     }
 
-    private func seekGesture(width: CGFloat) -> some Gesture {
+    private func seekGesture(width: CGFloat,
+                             onSeek: @escaping (Double) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0).onChanged { value in
-            guard let onSeek, width > 0 else { return }
+            guard width > 0 else { return }
             onSeek(Double(value.location.x / width).clamped(to: 0...1))
         }
     }

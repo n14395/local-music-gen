@@ -74,15 +74,14 @@ struct EditorEmptyState: View {
                     .fill(Bench.Palette.card)
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .strokeBorder(Bench.Palette.cardStroke, lineWidth: 1)
-                // The Editor glyph: a rule with two cut marks.
-                ZStack {
-                    Rectangle().fill(Bench.Palette.accent)
-                        .frame(width: 22, height: 2)
-                    Rectangle().fill(Bench.Palette.accent)
-                        .frame(width: 2, height: 18).offset(x: -7, y: 0)
-                    Rectangle().fill(Bench.Palette.accent)
-                        .frame(width: 2, height: 10).offset(x: 7, y: 2)
-                }
+                // The same glyph the sidebar draws, not a second drawing of
+                // the same idea. This tile used to hand-build a rule with two
+                // cut marks, so when the Editor's icon changed the nav moved
+                // and this did not — the two sat a few hundred points apart
+                // claiming to be the same destination. `BenchNavGlyph` scales
+                // off `size`, which is the whole reason it takes one.
+                BenchNavGlyph(kind: .editor, color: Bench.Palette.accent,
+                              size: 22)
             }
             .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 5) {

@@ -672,9 +672,19 @@ struct PartPickerSheet: View {
                     .lineLimit(1)
             }
             .frame(width: 190, alignment: .leading)
+            // Seekable only on the row you are listening to. Everywhere else
+            // in this sheet a click means "pick this", and the waveform is the
+            // widest thing in the row — quietly turning it into a scrubber on
+            // forty rows would make most of the list unpickable. On the row
+            // that is playing there is nothing to lose: it is the one you have
+            // already chosen to hear.
             MaterialStrip(material: material,
                           playedFraction: isCurrent ? playback.playedFraction : 0,
-                          height: 24)
+                          height: 24,
+                          onSeek: isCurrent ? { fraction in
+                              guard playback.duration > 0 else { return }
+                              playback.seek(to: fraction * playback.duration)
+                          } : nil)
             if let camelot = analysis?.camelot { BenchBadge(camelot) }
             if let bpm = analysis?.bpm {
                 BenchBadge("\(Int(bpm.rounded())) BPM")
