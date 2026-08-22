@@ -68,6 +68,12 @@ enum RecipeEngine: Equatable {
     /// comparison is genuinely a one-shot batch — a prompt and a set of ticks
     /// — rather than a workspace anyone returns to.
     case compareModels
+    /// One track, one DSP transform, no model — see `TrackTransform`.
+    case transform(TrackTransform)
+    /// A door into the Editor, the way `.workbench` is one into the bench.
+    case editor
+    /// Separate a whole selection in one go.
+    case batchSplit
 }
 
 /// What the action *is*, which the gallery turns into a badge. Not the same
@@ -125,6 +131,14 @@ struct Recipe: Identifiable, Equatable {
     let engine: RecipeEngine
     let phase: Int               // ≤2 available; ≥3 shown "coming soon"
     var wantsLyrics = false      // show the lyrics editor (Rewrite the Lyrics)
+    /// Models this card should open on when installed, best first.
+    ///
+    /// A preference, never a gate: the page still lists every model that can
+    /// do the task, and a card whose favourite is not installed opens on
+    /// whatever else can. It exists because several specialists — monophonic
+    /// pitch tracking, expressive piano — are strictly better at one job and
+    /// completely invisible behind a dropdown that lists them alphabetically.
+    var prefersModelIds: [String] = []
 
     var isAvailable: Bool { phase <= 2 }
 }
@@ -140,6 +154,15 @@ enum RecipeCatalog {
     /// unwrapped on purpose: a Generate card with no preset is a card that
     /// opens a screen and does nothing, and the two tables are twenty lines
     /// apart — a build failure here is the cheapest possible way to find out.
+    /// The one slot every transform card takes: anything with audio in it.
+    private static func transformSlot() -> Slot {
+        Slot(id: "source", label: "Song or part",
+             accepts: [KindPattern(pattern: "song.mix"),
+                       KindPattern(pattern: "stem.*"),
+                       KindPattern(pattern: "layer.*")],
+             arity: 1...1, autoDerive: nil)
+    }
+
     private static func generate(_ id: String) -> RecipeEngine {
         .generate(preset: GeneratePreset.preset(id: id)!)
     }
@@ -236,6 +259,107 @@ enum RecipeCatalog {
                slots: [], engine: .compareModels, phase: 1),
 
         // MARK: Separate & analyse
+        Recipe(id: "melody-notes",
+               name: "Extract the melody line",
+               tagline: "The tune as notes — one line, no chords",
+               mode: .analyse, category: .separate, icon: "music.note",
+               slots: [Slot(id: "source", label: "Vocal or lead part",
+                            accepts: [KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*"),
+                                      KindPattern(pattern: "song.mix")],
+                            arity: 1...1,
+                            autoDerive: AutoDerive(
+                                splitTask: "separate",
+                                note: "Split a song to get its vocal stem"))],
+               engine: .split(task: "transcribe",
+                              note: "Monophonic: it follows one line and "
+                                  + "ignores everything under it, which is "
+                                  + "why a stem beats a mix here."),
+               phase: 1,
+               prefersModelIds: ["transcribe-swiftf0"]),
+        Recipe(id: "piano-notes",
+               name: "Transcribe a piano performance",
+               tagline: "Onsets, offsets, velocities and pedal",
+               mode: .analyse, category: .separate, icon: "pianokeys",
+               slots: [Slot(id: "source", label: "Piano recording or part",
+                            accepts: [KindPattern(pattern: "song.mix"),
+                                      KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*")],
+                            arity: 1...1, autoDerive: nil)],
+               engine: .split(task: "transcribe",
+                              note: "Built for piano alone — it will "
+                                  + "transcribe anything and be wrong about "
+                                  + "most of it."),
+               phase: 1,
+               prefersModelIds: ["transcribe-transkun"]),
+        Recipe(id: "batch-split",
+               name: "Split several at once",
+               tagline: "Every track you tick, separated in one go",
+               mode: .exact, category: .separate,
+               icon: "square.stack.3d.up",
+               slots: [], engine: .batchSplit, phase: 1),
+
+        // MARK: One track, one transform
+        //
+        // Everything here is `mix_spec` doing what it has always been able to
+        // do (contract §5.4) with no model in the way. The Editor does each of
+        // them too, and better; these are the version where you do not open a
+        // window. See `TrackTransform`.
+        Recipe(id: "reverse",
+               name: "Reverse it",
+               tagline: "Backwards, sample for sample",
+               mode: .exact, category: .recombine,
+               icon: "arrow.uturn.backward",
+               slots: [transformSlot()], engine: .transform(.reverse),
+               phase: 1),
+        Recipe(id: "speed",
+               name: "Change the speed",
+               tagline: "Faster or slower, same pitch",
+               mode: .exact, category: .recombine, icon: "speedometer",
+               slots: [transformSlot()], engine: .transform(.speed),
+               phase: 1),
+        Recipe(id: "key-shift",
+               name: "Change the key",
+               tagline: "Up or down in semitones, formants intact",
+               mode: .exact, category: .recombine, icon: "arrow.up.arrow.down",
+               slots: [transformSlot()], engine: .transform(.key), phase: 1),
+        Recipe(id: "fades",
+               name: "Fade in and out",
+               tagline: "A clean top and tail, both ends the same",
+               mode: .exact, category: .recombine,
+               icon: "slider.horizontal.3",
+               slots: [transformSlot()], engine: .transform(.fades),
+               phase: 1),
+        Recipe(id: "clean-up",
+               name: "Clean up a recording",
+               tagline: "Rumble out, silence down, peaks in",
+               mode: .exact, category: .recombine, icon: "bandage",
+               slots: [transformSlot()], engine: .transform(.cleanUp),
+               phase: 1),
+        Recipe(id: "loop-cut",
+               name: "Make a loop",
+               tagline: "Whole bars, cut on the track's own downbeats",
+               mode: .exact, category: .recombine,
+               icon: "repeat",
+               slots: [transformSlot()], engine: .transform(.loop), phase: 1),
+        Recipe(id: "conform",
+               name: "Conform to another track",
+               tagline: "Take one track's tempo and key onto another",
+               mode: .exact, category: .recombine,
+               icon: "arrow.triangle.swap",
+               slots: [transformSlot(),
+                       Slot(id: "reference", label: "Track to match",
+                            accepts: [KindPattern(pattern: "song.mix"),
+                                      KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*")],
+                            arity: 1...1, autoDerive: nil)],
+               engine: .transform(.conform), phase: 1),
+        Recipe(id: "editor",
+               name: "Open in Editor",
+               tagline: "Trim, cut, level and fade one file by hand",
+               mode: .exact, category: .recombine, icon: "scissors",
+               slots: [], engine: .editor, phase: 1),
+
         Recipe(id: "split-instruments",
                name: "Split into instruments",
                tagline: "Vocals, drums, bass and more as separate parts",

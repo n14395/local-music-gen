@@ -91,6 +91,25 @@ struct RecombineOptions: Sendable {
     /// Explicit arrangement length, so trailing silence on the timeline is
     /// rendered rather than trimmed to the last clip.
     var targetDurationS: Double?
+
+    // MARK: single-source transforms
+    //
+    // `mix_spec` can reverse a track, stretch it, shift its key, ramp it and
+    // run it through a processor chain (contract §5.4) — everything the
+    // Editor renders with. Until the Actions transform cards, the only way to
+    // ask for any of it was to open a workspace. These apply to *every* track
+    // in the job, which is exactly right for a one-source card and would be
+    // wrong for the bench; the bench never sets them.
+    var reverse = false
+    /// 1 is untouched. Rides as a bpm ratio the way the Editor's does — see
+    /// `planMix` — so the engine stretches uniformly rather than to a grid.
+    var speedRate: Double = 1
+    /// Added to whatever key-matching already worked out, so the two compose
+    /// rather than one silently winning.
+    var pitchShiftSt: Double = 0
+    var fadeInS: Double?
+    var fadeOutS: Double?
+    var effects: [MixSpec.Effect] = []
 }
 
 // MARK: mix_spec wire shape (contract §5.4) — encoded with
@@ -443,6 +462,12 @@ final class JobsStore {
                 .summary?.camelot
         let target = AnalysisSummary(bpm: targetBpm, camelot: targetCamelot)
         let sampleRate = resolved.compactMap(\.sampleRate).max() ?? 44100
+        // Speed rides as a bpm ratio, the same carrier trick the Editor uses:
+        // "this source at bpm B belongs on a grid at B × rate". A real bpm
+        // when one was measured — it reads honestly in provenance — else a
+        // plain 120, since only the ratio is doing any work.
+        let speeding = abs(options.speedRate - 1) > 1e-6
+        let carrierBpm = resolved.first?.summary?.bpm ?? 120
 
         var tracks: [MixSpec.Track] = []
         var applied: [AppliedIngredient] = []
@@ -478,15 +503,19 @@ final class JobsStore {
                 mute: sub.muted,
                 offsetS: targetBpm.map { sub.offsetBeats * 60.0 / $0 } ?? 0,
                 section: section,
-                fadeInS: (sub.fadeInS ?? 0) > 0 ? sub.fadeInS : nil,
-                fadeOutS: (sub.fadeOutS ?? 0) > 0 ? sub.fadeOutS : nil,
-                sourceBpm: sourceBpm,
+                fadeInS: (sub.fadeInS ?? options.fadeInS ?? 0) > 0
+                    ? (sub.fadeInS ?? options.fadeInS) : nil,
+                fadeOutS: (sub.fadeOutS ?? options.fadeOutS ?? 0) > 0
+                    ? (sub.fadeOutS ?? options.fadeOutS) : nil,
+                sourceBpm: speeding ? carrierBpm : sourceBpm,
                 sourceDownbeats: item.summary?.downbeats,
                 stretch: MixSpec.Stretch(
-                    mode: mode,
+                    mode: speeding ? "uniform" : mode,
                     transientMode: isDrums ? "crisp" : "smooth",
                     preserveFormants: item.kind.hasPrefix("stem.vocals")),
-                pitchShiftSt: shift))
+                pitchShiftSt: shift + options.pitchShiftSt,
+                reverse: options.reverse ? true : nil,
+                effects: options.effects.isEmpty ? nil : options.effects))
             // Record the ratio the ENGINE will apply, not the one Mashability
             // considers good enough to recommend: it nils out red-quality
             // matches, so provenance used to claim "no stretch" for mixes that
@@ -500,7 +529,9 @@ final class JobsStore {
                 pitchShiftSt: shift))
         }
         let spec = MixSpec(
-            target: MixSpec.Target(bpm: targetBpm, key: targetCamelot,
+            target: MixSpec.Target(bpm: speeding ? carrierBpm * options.speedRate
+                                                 : targetBpm,
+                                   key: targetCamelot,
                                    sampleRate: sampleRate, downbeats: nil,
                                    durationS: options.targetDurationS),
             tracks: tracks)

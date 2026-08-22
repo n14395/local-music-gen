@@ -312,7 +312,15 @@ struct SplitActionView: View {
             source = PickedMaterial.resolve(id: sourceId, parts: parts,
                                             library: library)
         }
-        if selectedModelId == nil { selectedModelId = eligibleModels.first?.id }
+        if selectedModelId == nil {
+            // The card's favourite when it is installed — several of these
+            // tasks have a specialist that is strictly better at one job and
+            // invisible in an alphabetical list. Still only a preference: the
+            // picker below lists everything that can run the task.
+            selectedModelId = recipe.prefersModelIds.first(where: { id in
+                eligibleModels.contains { $0.id == id }
+            }) ?? eligibleModels.first?.id
+        }
         rebuildForm()
     }
 

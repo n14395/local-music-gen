@@ -522,6 +522,9 @@ struct MainWindow: View {
                 },
                 onOpenGenerate: { preset, sourceId in
                     openGenerate(preset: preset, sourceId: sourceId)
+                },
+                onOpenEditor: { materialId in
+                    openEditor(materialId: materialId)
                 })
         case .workbench:
             WorkbenchScreen(model: env.workbench, catalog: env.catalog,

@@ -56,7 +56,14 @@ enum ModelActions {
             // needs two of them, but that is a fact about the machine rather
             // than about this model.
             return GenerateNeed().canRun(model)
-        case .workbench, .match:
+        case .transform:
+            // Same test the bench uses: "declares mix" is not enough, because
+            // Token Splice declares it too.
+            return tasks.contains("mix")
+                && capabilities.params.contains { $0.key == "mix_spec" }
+        case .batchSplit:
+            return tasks.contains("separate")
+        case .workbench, .match, .editor:
             return false
         }
     }

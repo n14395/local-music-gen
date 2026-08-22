@@ -156,3 +156,109 @@ final class GeneratePresetTests: XCTestCase {
         XCTAssertEqual(requirement.id, "generate:lyrics-min120")
     }
 }
+
+/// The transform shelf: one track, one operation, no model.
+final class TrackTransformTests: XCTestCase {
+
+    /// The failure this guards is silent and expensive. `RecombineOptions`
+    /// defaults auto-match *on*, which is right for a mashup and wrong for
+    /// every card here: "Reverse it" would quietly stretch a track to a tempo
+    /// nobody mentioned, and the only evidence would be that it came back the
+    /// wrong length.
+    func testNoTransformMatchesTempoOrKeyByAccident() {
+        for transform in TrackTransform.allCases where transform != .conform {
+            let options = transform.options(value: 1)
+            XCTAssertFalse(options.autoMatchTempo, "\(transform)")
+            XCTAssertFalse(options.autoMatchKey, "\(transform)")
+        }
+    }
+
+    /// Conforming is the one that is *supposed* to match a grid — it is the
+    /// whole card.
+    func testConformingMatchesBoth() {
+        let options = TrackTransform.conform.options(value: 0)
+        XCTAssertTrue(options.autoMatchTempo)
+        XCTAssertTrue(options.autoMatchKey)
+    }
+
+    func testEachTransformWritesOnlyItsOwnField() {
+        XCTAssertTrue(TrackTransform.reverse.options(value: 0).reverse)
+        XCTAssertEqual(TrackTransform.speed.options(value: 1.5).speedRate, 1.5)
+        XCTAssertEqual(TrackTransform.key.options(value: -3).pitchShiftSt, -3)
+        let fades = TrackTransform.fades.options(value: 2)
+        XCTAssertEqual(fades.fadeInS, 2)
+        XCTAssertEqual(fades.fadeOutS, 2)
+        // Reverse must not arrive as a side effect of asking for a fade.
+        XCTAssertFalse(fades.reverse)
+        XCTAssertEqual(fades.speedRate, 1)
+    }
+
+    /// Rumble out, silence down, peaks in — and in that order, because the
+    /// engine applies the chain in the order it is given.
+    func testCleanUpIsAnOrderedChain() {
+        let effects = TrackTransform.cleanUp.options(value: 0).effects
+        XCTAssertEqual(effects.map(\.type),
+                       ["highpass", "gate", "compressor"])
+        XCTAssertEqual(effects[0].cutoffHz, 80)
+        XCTAssertNotNil(effects[1].thresholdDb)
+        XCTAssertNotNil(effects[2].ratio)
+    }
+
+    /// Only the two grid-aware cards may claim to need analysis; gating the
+    /// others on it would make them unusable on anything unanalysed.
+    func testOnlyTheGridAwareCardsNeedAnalysis() {
+        let needing = TrackTransform.allCases.filter(\.needsAnalysis)
+        XCTAssertEqual(Set(needing), [.loop, .conform])
+        XCTAssertEqual(TrackTransform.allCases.filter(\.needsReference),
+                       [.conform])
+    }
+
+    /// A control with no bounds is a control the page cannot draw, and a
+    /// bounded one whose initial value sits outside its range is a slider
+    /// that jumps the first time it is touched.
+    func testEveryControlIsCoherent() {
+        for transform in TrackTransform.allCases {
+            guard let bounds = transform.bounds else {
+                XCTAssertNil(transform.controlTitle, "\(transform)")
+                continue
+            }
+            XCTAssertNotNil(transform.controlTitle, "\(transform)")
+            XCTAssertTrue(bounds.range.contains(bounds.initial), "\(transform)")
+            XCTAssertGreaterThan(bounds.step, 0, "\(transform)")
+        }
+    }
+
+    /// Speed and key open on "unchanged", so a card opened and committed
+    /// without touching anything is a no-op rather than a surprise.
+    func testSpeedAndKeyOpenNeutral() {
+        XCTAssertEqual(TrackTransform.speed.bounds?.initial, 1)
+        XCTAssertEqual(TrackTransform.key.bounds?.initial, 0)
+    }
+
+    /// Every transform card reaches a page, and every transform has a card.
+    func testTransformsAndCardsAreInStep() {
+        var seen: Set<TrackTransform> = []
+        for recipe in RecipeCatalog.all {
+            if case .transform(let transform) = recipe.engine {
+                XCTAssertFalse(seen.contains(transform),
+                               "two cards run \(transform)")
+                seen.insert(transform)
+                XCTAssertFalse(recipe.slots.isEmpty,
+                               "\(recipe.id) transforms nothing")
+                if transform.needsReference {
+                    XCTAssertEqual(recipe.slots.count, 2, recipe.id)
+                }
+            }
+        }
+        XCTAssertEqual(seen, Set(TrackTransform.allCases))
+    }
+
+    /// The two specialists exist and are preferred by name. A typo here is a
+    /// card that silently opens on the general transcriber — which works, and
+    /// is wrong, and says nothing.
+    func testTheSpecialistCardsNameRealModels() {
+        let preferred = RecipeCatalog.all.flatMap(\.prefersModelIds)
+        XCTAssertEqual(Set(preferred),
+                       ["transcribe-swiftf0", "transcribe-transkun"])
+    }
+}

@@ -30,6 +30,9 @@ struct ActionsScreen: View {
     /// a description rather than from audio. The id is the track a preset
     /// reads tempo and key from, nil for the cards that read nothing.
     let onOpenGenerate: (GeneratePreset, String?) -> Void
+    /// Switches the shell to the Editor on this song or part — the same
+    /// escape hatch as the two above.
+    let onOpenEditor: (String) -> Void
 
     /// `sourceId` is a song or part id to preselect; the page resolves it.
     enum Route: Equatable {
@@ -41,6 +44,8 @@ struct ActionsScreen: View {
     /// song and then leaves; a page of its own would exist to hold a single
     /// picker.
     @State private var pickingFor: GeneratePreset?
+    /// The Editor door, waiting on the file it opens.
+    @State private var pickingForEditor = false
     @State private var query = ""
     @State private var category: RecipeCategory?
     @AppStorage("actions.onlyRunnable") private var onlyRunnable = false
@@ -74,6 +79,20 @@ struct ActionsScreen: View {
                       onOpen: open,
                       onDropAudio: importDropped,
                       onOpenModels: { onOpenModels(nil) })
+            .sheet(isPresented: $pickingForEditor) {
+                PartPickerSheet(
+                    slotLabel: "Song or part",
+                    accepts: [KindPattern(pattern: "song.mix"),
+                              KindPattern(pattern: "stem.*"),
+                              KindPattern(pattern: "layer.*")],
+                    autoDerive: nil, catalog: catalog, library: library,
+                    parts: parts, jobs: jobs, playback: playback,
+                    onOpenModels: { onOpenModels(nil) },
+                    onPick: { picked in
+                        pickingForEditor = false
+                        onOpenEditor(picked.id)
+                    })
+            }
             .sheet(item: $pickingFor) { preset in
                 PartPickerSheet(
                     slotLabel: "Track to match",
@@ -247,6 +266,10 @@ struct ActionsScreen: View {
                     .candidates(catalog.models).first
                     .map { "Get \($0.displayName)" }
                     ?? "No model can do this yet")
+        case .transform where !mixInstalled:
+            return .needsMixModel
+        case .batchSplit where !installed(task: "separate"):
+            return .needsTaskModel("separate")
         case .compareModels where generativeInstalled.count < 2:
             // Two is the least that can be compared. One installed model
             // makes this card a slower way to press Generate.
@@ -270,6 +293,10 @@ struct ActionsScreen: View {
         case .render: .task("render")
         case .split(let task, _): .task(task)
         case .styleTransfer(let preset): .style(preset.mode)
+        case .transform: .mixdown
+        case .batchSplit: .task("separate")
+        // A door into a screen that needs no model to open.
+        case .editor: nil
         case .generate(let preset): .generate(preset.need)
         case .compareModels: .generate(GenerateNeed())
         // Neither runs a model: the bench is a surface, and matching is
@@ -319,6 +346,10 @@ struct ActionsScreen: View {
         // Generate is a destination too. The one preset that measures a track
         // asks for it here rather than on a page, because a picker is all the
         // page would have contained.
+        if case .editor = recipe.engine {
+            pickingForEditor = true
+            return
+        }
         if case .generate(let preset) = recipe.engine {
             if preset.readsSource {
                 pickingFor = preset
@@ -393,6 +424,26 @@ struct ActionsScreen: View {
                              catalog: catalog, library: library, parts: parts,
                              jobs: jobs, playback: playback,
                              onOpenModels: { onOpenModels(requirement(for: recipe)) }, onBack: back)
+        case .transform(let transform):
+            TransformActionView(recipe: recipe, transform: transform,
+                                sourceId: sourceId, catalog: catalog,
+                                library: library, parts: parts, jobs: jobs,
+                                playback: playback,
+                                onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                                onBack: back)
+        case .batchSplit:
+            BatchSplitActionView(recipe: recipe, catalog: catalog,
+                                 library: library, parts: parts, jobs: jobs,
+                                 playback: playback,
+                                 onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                                 onBack: back)
+        case .editor:
+            // `open(_:)` never routes here; the shell switches destination.
+            gallery
+                .onAppear {
+                    route = nil
+                    if let sourceId { onOpenEditor(sourceId) }
+                }
         case .compareModels:
             CompareActionView(recipe: recipe, catalog: catalog,
                               library: library, jobs: jobs,
