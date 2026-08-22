@@ -120,8 +120,12 @@ request; `EventSource` polyfills that can't set headers are not a constraint her
     share.** macOS exposes no per-process figure without root, so the app
     labels it "GPU" and never "this render". Null when the driver publishes no
     counter.
-  - `usage.worker_bytes` — physical footprint of the live worker process (what
-    Activity Monitor calls "Memory"). Null when no worker is running.
+  - `usage.worker_bytes` — physical footprint of the live worker process **and
+    every process it has spawned** (what Activity Monitor calls "Memory"). The
+    descendants matter: adapters that drive a native runtime (acestep.cpp, YuE,
+    whisper.cpp) hold the whole model in a child process, and counting the
+    worker alone reported ~0 for them throughout a render. Null when no worker
+    is running.
   - `usage.accelerator_bytes` — of that, what the worker holds on the
     accelerator. Null until the worker has reported a reading.
 

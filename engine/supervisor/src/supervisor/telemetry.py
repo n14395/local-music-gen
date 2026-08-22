@@ -66,6 +66,10 @@ _PHYS_FOOTPRINT_OFFSET = 16 + 7 * 8
 # rusage_info_v4 is ~350 bytes; over-allocate rather than transcribe a struct we
 # read one field of, since a short buffer would be a silent stack smash.
 _RUSAGE_BUF_BYTES = 1024
+# Bounds for the child walk: generous for any real worker, finite for a
+# pathological one.
+_MAX_CHILDREN = 256
+_MAX_TREE_PROCS = 64
 
 
 @functools.lru_cache(maxsize=1)
@@ -76,6 +80,9 @@ def _libproc():
         return None
     lib.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
     lib.proc_pid_rusage.restype = ctypes.c_int
+    lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p,
+                                       ctypes.c_int]
+    lib.proc_listchildpids.restype = ctypes.c_int
     return lib
 
 
@@ -90,6 +97,55 @@ def process_footprint_bytes(pid: int) -> int | None:
     if lib.proc_pid_rusage(pid, _RUSAGE_INFO_V4, ctypes.byref(buf)) != 0:
         return None
     return int(struct.unpack_from("=Q", buf.raw, _PHYS_FOOTPRINT_OFFSET)[0])
+
+
+def _child_pids(pid: int) -> list[int]:
+    """Direct children of `pid`. Despite the name, proc_listchildpids returns a
+    COUNT of pids, not a byte count (verified against a known set of children);
+    -1 on failure, which reads the same as "none" here."""
+    lib = _libproc()
+    if lib is None:
+        return []
+    buf = (ctypes.c_int32 * _MAX_CHILDREN)()
+    found = lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf))
+    if found <= 0:
+        return []
+    return [int(buf[i]) for i in range(min(found, _MAX_CHILDREN))]
+
+
+def process_tree_footprint_bytes(pid: int) -> int | None:
+    """Physical footprint of a process **and everything it spawned**.
+
+    Adapters that drive a native runtime (acestep.cpp, YuE, whisper.cpp) hold
+    none of the model in the worker itself: the worker stays ~10 MB of Python
+    while its child mmaps several GB of GGUF. Measuring the worker alone made
+    the sidebar report "0.0 GB" through an entire render that was in fact
+    4-5 GB deep. What counts against this Mac is the tree, so the tree is what
+    we report.
+
+    None only when the root process is gone; a child that exits mid-walk is
+    skipped rather than failing the whole reading.
+    """
+    root = process_footprint_bytes(pid)
+    if root is None:
+        return None
+    total = root
+    seen = {pid}
+    frontier = [pid]
+    # Breadth-first with a visit cap. Real trees here are one process deep; the
+    # cap costs nothing and means a runaway spawner can never hang the sampler.
+    while frontier and len(seen) < _MAX_TREE_PROCS:
+        for child in _child_pids(frontier.pop()):
+            if child in seen:
+                continue
+            seen.add(child)
+            frontier.append(child)
+            # Pages shared with the parent are counted twice in principle. In
+            # practice these children are exec'd binaries sharing nothing but
+            # dylibs, and over-reporting by a few MB beats under-reporting by
+            # the whole model.
+            total += process_footprint_bytes(child) or 0
+    return total
 
 
 # MARK: GPU utilisation

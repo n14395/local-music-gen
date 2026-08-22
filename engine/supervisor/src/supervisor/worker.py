@@ -17,7 +17,7 @@ from typing import Protocol
 
 from .config import Settings
 from .events import EventBus
-from .telemetry import process_footprint_bytes
+from .telemetry import process_tree_footprint_bytes
 
 
 class WorkerDied(Exception):
@@ -209,12 +209,15 @@ class Worker:
         return self.proc.poll() is None
 
     def footprint_bytes(self) -> int | None:
-        """Physical memory this worker process holds, or None once it is gone.
+        """Physical memory this worker holds, **including anything it spawned**,
+        or None once it is gone. Adapters that drive a native CLI (acestep.cpp,
+        YuE, whisper.cpp) keep the whole model in a child process, so counting
+        the worker alone reported 0.0 GB for them all the way through a render.
         Checked against poll() first: a reaped pid can be reused, and reading a
         stranger's footprint would be worse than reporting nothing."""
         if self.proc.poll() is not None:
             return None
-        return process_footprint_bytes(self.proc.pid)
+        return process_tree_footprint_bytes(self.proc.pid)
 
     def shutdown(self, grace_s: float = 3.0) -> None:
         try:

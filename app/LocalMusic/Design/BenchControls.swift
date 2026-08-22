@@ -139,17 +139,49 @@ struct BenchSegmented<Value: Hashable>: View {
         let label: String
         /// Rendered after the label in a dimmer colour, e.g. `Songs 128`.
         var detail: String?
+        /// Drawn before the label. For a strip whose tabs are not all the same
+        /// kind of thing — a mark says "this one filters the list" without a
+        /// second control to explain it.
+        var symbol: String?
         var id: Value { value }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        segments
+            .padding(2)
+            .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
+                                         style: .continuous)
+                .fill(Bench.Palette.raised))
+            .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
+                                      style: .continuous)
+                .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
+    }
+
+    /// Equal shares would be set by the widest label, so `Generated 96` and
+    /// `Parts 3` would each get the same column and the long one would still
+    /// truncate. `SegmentedFillLayout` gives every tab the width it actually
+    /// needs and splits what is left over.
+    @ViewBuilder
+    private var segments: some View {
+        if fills {
+            SegmentedFillLayout { buttons }
+        } else {
+            HStack(spacing: 0) { buttons }
+        }
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
             ForEach(options) { option in
                 let isOn = option.value == selection
                 Button {
                     selection = option.value
                 } label: {
                     HStack(spacing: 5) {
+                        if let symbol = option.symbol {
+                            Image(systemName: symbol)
+                                .font(.system(size: 10))
+                        }
                         Text(option.label)
                         if let detail = option.detail {
                             Text(detail)
@@ -179,14 +211,60 @@ struct BenchSegmented<Value: Hashable>: View {
                 }
                 .buttonStyle(.plain)
             }
+    }
+}
+
+/// A row where every subview gets the width it asked for, plus an equal share
+/// of whatever is left over.
+///
+/// The alternative — `maxWidth: .infinity` on each — divides the row equally,
+/// which is only right when the labels are the same length. A strip reading
+/// `All 128 · Generated 96 · Imported 30 · Renders 2 · Parts 3 · Edited 2 ·
+/// Loved 4` is not: equal columns are set by the longest label, so the long
+/// one truncates while `Parts 3` sits in twice the room it needs.
+///
+/// Slack is shared equally rather than in proportion to width, so the padding
+/// around each label stays even and the tabs read as one control.
+struct SegmentedFillLayout: Layout {
+    /// Pure and testable: what each subview gets out of `total`, given what
+    /// each one asked for. Too little room shrinks them in proportion, so the
+    /// widest gives up the most rather than the last one falling off the end.
+    static func widths(ideals: [CGFloat], total: CGFloat) -> [CGFloat] {
+        guard !ideals.isEmpty else { return [] }
+        let wanted = ideals.reduce(0, +)
+        guard total > wanted else {
+            guard wanted > 0 else { return ideals }
+            return ideals.map { $0 * total / wanted }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
-                                     style: .continuous)
-            .fill(Bench.Palette.raised))
-        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
-                                  style: .continuous)
-            .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
+        let slack = (total - wanted) / CGFloat(ideals.count)
+        return ideals.map { $0 + slack }
+    }
+
+    private func ideals(_ subviews: Subviews) -> [CGFloat] {
+        subviews.map { $0.sizeThatFits(.unspecified).width }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
+                      cache: inout ()) -> CGSize {
+        let ideals = ideals(subviews)
+        let total = proposal.width ?? ideals.reduce(0, +)
+        let height = subviews.reduce(CGFloat.zero) {
+            max($0, $1.sizeThatFits(.unspecified).height)
+        }
+        return CGSize(width: total, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        let widths = Self.widths(ideals: ideals(subviews), total: bounds.width)
+        var x = bounds.minX
+        for (subview, width) in zip(subviews, widths) {
+            subview.place(at: CGPoint(x: x, y: bounds.midY),
+                          anchor: .leading,
+                          proposal: ProposedViewSize(width: width,
+                                                     height: bounds.height))
+            x += width
+        }
     }
 }
 

@@ -146,12 +146,41 @@ enum PickerTab: Hashable {
     case all
     case songs(SongOrigin)
     case parts
+    /// Not a slice of the list like the ones above, but a filter across all of
+    /// it: a song is generated *or* imported *or* a render, and any of the
+    /// three — or a part — may also have been edited or hearted. They carry a
+    /// mark for that reason, so a strip of five places and two adjectives does
+    /// not read as seven places.
+    case edited
+    case loved
 
     var title: String {
         switch self {
         case .all: "All"
         case .songs(let origin): origin.title
         case .parts: "Parts"
+        case .edited: "Edited"
+        case .loved: "Loved"
+        }
+    }
+
+    /// The same marks the sidebar's scopes use, because they mean the same
+    /// thing in both places.
+    var symbol: String? {
+        switch self {
+        case .all, .songs, .parts: nil
+        case .edited: "scissors"
+        case .loved: "heart.fill"
+        }
+    }
+
+    /// Whether a row belongs on this tab. The origins and Parts decide by
+    /// which list a row came from; these two decide per row.
+    func admits(edited: Bool, loved: Bool) -> Bool {
+        switch self {
+        case .all, .songs, .parts: true
+        case .edited: edited
+        case .loved: loved
         }
     }
 
@@ -162,20 +191,30 @@ enum PickerTab: Hashable {
         case .all: "material"
         case .songs(let origin): origin.title.lowercased()
         case .parts: "parts"
+        case .edited: "edited material"
+        case .loved: "loved material"
         }
     }
 
     var showsSongs: Bool {
         switch self {
-        case .all, .songs: true
+        case .all, .songs, .edited, .loved: true
         case .parts: false
         }
     }
 
     var showsParts: Bool {
         switch self {
-        case .all, .parts: true
+        case .all, .parts, .edited, .loved: true
         case .songs: false
+        }
+    }
+
+    /// Drawn as one merged list of parts and songs rather than as sections.
+    var isMerged: Bool {
+        switch self {
+        case .all, .edited, .loved: true
+        case .songs, .parts: false
         }
     }
 
@@ -191,13 +230,18 @@ enum PickerTab: Hashable {
     /// No songs to show means no strip at all: the only tabs left would be All
     /// and Parts, which is one list and a synonym for it.
     static func strip(songCounts: [SongOrigin: Int], showsSongs: Bool,
-                      partCount: Int?) -> [(tab: PickerTab, count: Int)] {
+                      partCount: Int?, editedCount: Int,
+                      lovedCount: Int) -> [(tab: PickerTab, count: Int)] {
         guard showsSongs else { return [] }
         let songs = SongOrigin.allCases.map { ($0, songCounts[$0] ?? 0) }
         let total = songs.reduce(0) { $0 + $1.1 } + (partCount ?? 0)
         var strip: [(tab: PickerTab, count: Int)] = [(.all, total)]
         strip += songs.map { (PickerTab.songs($0.0), $0.1) }
         if let partCount { strip.append((.parts, partCount)) }
+        // After the slices, and marked, because they overlap them: All is the
+        // union of the tabs to its left and *not* the sum of all of them.
+        strip.append((.edited, editedCount))
+        strip.append((.loved, lovedCount))
         return strip
     }
 }
@@ -272,12 +316,18 @@ struct PartPickerSheet: View {
 
     /// `All 132 · Generated 96 · Imported 30 · Renders 2 · Parts 4`.
     private var tabs: [BenchSegmented<PickerTab>.Option] {
+        let rows = allListed
         var counts: [SongOrigin: Int] = [:]
-        for song in matchingSongs { counts[song.originKind, default: 0] += 1 }
-        return PickerTab.strip(songCounts: counts, showsSongs: showsSongs,
-                               partCount: partsAccepted ? matchingParts.count : nil)
+        for row in rows {
+            if let origin = row.origin { counts[origin, default: 0] += 1 }
+        }
+        return PickerTab.strip(
+            songCounts: counts, showsSongs: showsSongs,
+            partCount: partsAccepted ? rows.filter { $0.origin == nil }.count : nil,
+            editedCount: rows.filter(\.isEdited).count,
+            lovedCount: rows.filter(\.isLoved).count)
             .map { .init(value: $0.tab, label: $0.tab.title,
-                         detail: "\($0.count)") }
+                         detail: "\($0.count)", symbol: $0.tab.symbol) }
     }
 
     private var splitModel: ModelInfo? {
@@ -314,11 +364,9 @@ struct PartPickerSheet: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    switch tab {
-                    case .all: mergedSection
-                    case .parts: partsSection
-                    case .songs: songsSection
-                    }
+                    if tab.isMerged { mergedSection }
+                    else if tab == .parts { partsSection }
+                    else { songsSection }
                     if tab.showsParts { otherPartsSection }
                     if matchingParts.isEmpty && !songAccepted
                         && autoDerive == nil {
@@ -332,7 +380,10 @@ struct PartPickerSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 560, height: 520)
+        // Wider than it was: seven tabs carrying counts need about 600 pt of
+        // strip before the longest label starts giving up letters, and the
+        // rows underneath spend the rest on waveform.
+        .frame(width: 660, height: 520)
         .background(Bench.Palette.windowBackground)
         .preferredColorScheme(.dark)
     }
@@ -344,9 +395,15 @@ struct PartPickerSheet: View {
     /// the record the Split now button needs.
     struct Listed: Identifiable {
         let material: PickedMaterial
-        let createdAt: Date
+        /// When this was last *touched* — made, or edited since. Sorting on it
+        /// is what makes the list answer "what was I just working on", which
+        /// `createdAt` alone could not: an edit leaves the row exactly where
+        /// it was, which for a song made last month is a long way down.
+        let touchedAt: Date
         /// nil for a part, which came from no one origin.
         let origin: SongOrigin?
+        let isEdited: Bool
+        let isLoved: Bool
         let splittable: SongRecord?
         var id: String { material.id }
     }
@@ -359,28 +416,37 @@ struct PartPickerSheet: View {
     /// kind kept in their own aisle, which meant the freshest thing in the
     /// library could be six rows below the oldest. The tabs are where you go
     /// when you want one kind; All is where you go when you want the newest.
-    private var listed: [Listed] {
-        Self.merge(parts: matchingParts.map {
-                       (PickedMaterial(part: $0, sourceTitle: sourceTitle($0)),
-                        $0.createdAt)
-                   },
+    /// Every row the sheet could list, before a tab narrows it.
+    private var allListed: [Listed] {
+        Self.merge(parts: matchingParts, sourceTitle: sourceTitle,
                    songs: showsSongs ? matchingSongs : [],
                    songsArePickable: songAccepted)
     }
 
+    private var listed: [Listed] {
+        allListed.filter { tab.admits(edited: $0.isEdited, loved: $0.isLoved) }
+    }
+
     /// The interleave, kept out of the view so the rule can be read and tested
-    /// on its own: newest first, whichever table it came from.
-    static func merge(parts: [(PickedMaterial, Date)], songs: [SongRecord],
+    /// on its own: most recently touched first, whichever table it came from.
+    static func merge(parts: [PartRecord], sourceTitle: (PartRecord) -> String,
+                      songs: [SongRecord],
                       songsArePickable: Bool) -> [Listed] {
-        var rows = parts.map {
-            Listed(material: $0.0, createdAt: $0.1, origin: nil, splittable: nil)
+        var rows = parts.map { part in
+            Listed(material: PickedMaterial(part: part,
+                                            sourceTitle: sourceTitle(part)),
+                   touchedAt: max(part.createdAt, part.editedAt ?? .distantPast),
+                   origin: nil, isEdited: part.editedAt != nil,
+                   isLoved: part.favorite, splittable: nil)
         }
-        rows += songs.map {
-            Listed(material: PickedMaterial(song: $0), createdAt: $0.createdAt,
-                   origin: $0.originKind,
-                   splittable: songsArePickable ? nil : $0)
+        rows += songs.map { song in
+            Listed(material: PickedMaterial(song: song),
+                   touchedAt: max(song.createdAt, song.editedAt ?? .distantPast),
+                   origin: song.originKind, isEdited: song.editedAt != nil,
+                   isLoved: song.favorite,
+                   splittable: songsArePickable ? nil : song)
         }
-        return rows.sorted { $0.createdAt > $1.createdAt }
+        return rows.sorted { $0.touchedAt > $1.touchedAt }
     }
 
     /// No eyebrow: the tab above is the heading, and "PARTS"/"SONGS" over a
@@ -424,7 +490,10 @@ struct PartPickerSheet: View {
     /// Said as a sentence rather than as the "SONGS ·" label it replaces: over
     /// a mixed list the label would be describing only some of the rows.
     private var mergedCaption: String {
-        guard showsSongs else { return "" }
+        // On every merged tab, not only All: what picking a song does is the
+        // same fact whether you found it among everything or among the ones
+        // you have hearted.
+        guard showsSongs, tab.isMerged else { return "" }
         return songAccepted ? "a song is picked as its whole mix"
                             : (autoDerive?.note ?? "")
     }
