@@ -12,7 +12,7 @@ import SwiftUI
 struct MainWindow: View {
     let env: AppEnvironment
 
-    @State private var destination: Destination = .generate
+    @State private var destination: Destination = .launch
     @State private var libraryScope: LibraryScope = .songs
     /// A track the shell wants the Library to open on — set by the queue's
     /// "Show in library", cleared by the Library once it has acted.
@@ -55,16 +55,39 @@ struct MainWindow: View {
     /// a laptop cannot — and re-pinning it every launch would be a chore.
     @AppStorage("queue.pinned") private var queuePinned = false
 
+    /// Hiding the sidebar is a working preference, not a session accident —
+    /// somebody who wants the screen wide wants it wide tomorrow too.
+    @AppStorage("sidebar.collapsed") private var sidebarCollapsed = false
+    /// Whether the window is currently too narrow to hold both. Overrules the
+    /// preference without erasing it.
+    @State private var sidebarFit = SidebarFit()
+    /// The narrowest the screen on show fits inside without overflowing its
+    /// own edges, measured from the screen itself — a different number on
+    /// every destination, and several hundred points larger on the Editor than
+    /// any constant the shell could carry. Seeded with the old guess for the
+    /// first frame.
+    @State private var contentMinWidth = SidebarFit.contentMinWidth
+    /// The window's own width, kept so the sidebar's fit can be recomputed
+    /// when the *content's* requirement changes rather than only when the
+    /// window is dragged.
+    @State private var windowWidth: CGFloat = 0
+
     /// Bump when the recommended set changes enough to be worth re-offering.
     private static let onboardingVersionCurrent = 1
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                sidebar
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Bench.Palette.windowBackground)
+                if !sidebarIsCollapsed {
+                    // Slides out to the left rather than fading: the sidebar
+                    // is a column of the window, and a column that dissolves
+                    // in place reads as a drawing bug.
+                    sidebar.transition(.move(edge: .leading))
+                }
+                FittingWidthReader(onChange: { contentMinWidth = $0 }) {
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Bench.Palette.windowBackground)
                     // A focus ring is not drawn in z-order with everything
                     // else: SwiftUI composites it above neighbouring views, so
                     // the blue ring on whatever the keyboard is on — the
@@ -77,14 +100,16 @@ struct MainWindow: View {
                     // overlay's content is not a descendant of the modifiers
                     // beneath it in the chain, so the panel keeps its own
                     // focus rings while the screen behind it loses them.
-                    .focusEffectDisabled(queueFloats)
+                        .focusEffectDisabled(queueFloats)
                     // Pinning is this padding and nothing else. The panel is
                     // one view in one place either way — the gutter decides
                     // whether the screen ends before it or runs underneath it,
                     // so pinning animates a single number instead of moving a
                     // rail between two branches of the layout.
-                    .padding(.trailing, queueGutter)
-                    .overlay(alignment: .trailing) { queueOverlay }
+                        .padding(.trailing, queueGutter)
+                        .overlay(alignment: .trailing) { queueOverlay }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
             TransportBar(playback: env.playback, slot: transportSlot,
@@ -115,7 +140,44 @@ struct MainWindow: View {
         // The floor rises with the pinned rail rather than letting it eat the
         // screen behind it: 1100 is already fully spent by Studio in Full
         // control (230 pt of sidebar, a 576 pt parameter panel).
-        .frame(minWidth: Self.windowMinWidth + queueGutter, minHeight: 700)
+        // The floor is the *content's*, not the content plus a sidebar that
+        // can now step out of the way. Below `contentMinWidth + sidebarWidth`
+        // the sidebar collapses on its own, which is what lets the window go
+        // this narrow at all.
+        // The measured requirement, not a constant: this is what stops the
+        // window being dragged narrower than the screen inside it can draw.
+        .frame(minWidth: contentMinWidth, minHeight: 700)
+        // The floor above only stops the window being dragged narrower; it
+        // cannot widen one that is already too small — see `WindowWidthFloor`.
+        // So the window is grown to fit as well, and the sidebar collapsing is
+        // what happens when even the display cannot supply the width.
+        .background {
+            WindowWidthFloor(width: requiredWidth)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+        }
+        // Measured from the window rather than inferred from the screen: the
+        // decision is about the room the sidebar and the screen have to share,
+        // and only the enclosing frame knows how much that is.
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onChange(of: proxy.size.width, initial: true) {
+                        windowWidth = proxy.size.width
+                        refitSidebar()
+                    }
+            }
+        }
+        .environment(\.sidebarControl, SidebarControl(
+            isCollapsed: sidebarIsCollapsed,
+            isLocked: sidebarFit.isCramped,
+            toggle: {
+                withAnimation(Self.panelMotion) { sidebarCollapsed.toggle() }
+            }))
+        // A screen with a wider requirement can arrive without the window
+        // changing size at all — opening the Editor is exactly that — so the
+        // fit is recomputed from the content too, not only from the frame.
+        .onChange(of: contentMinWidth) { refitSidebar() }
         .onChange(of: env.studio.pending) { routeIntent() }
         .onChange(of: env.prefill.pending) { if env.prefill.pending != nil {
             destination = .generate
@@ -320,17 +382,15 @@ struct MainWindow: View {
 
     private func isBusy(_ destination: Destination) -> Bool {
         switch destination {
-        case .generate:
+        case .generate, .actions:
+            // One rule for both rows, so a job can only ever spin one of them
+            // and neither can be reached by a predicate that forgot the other.
+            // Minus the two destinations that own their own work: Style
+            // Transfer reports the ids it started, and an Editor render is a
+            // `mix` job that belongs to the Editor row.
             return env.jobsStore.active.values.contains {
-                !$0.status.isTerminal && $0.info.task == nil
-                    && !styleTransferJobs.contains($0.info.jobId)
-            }
-        case .actions:
-            // Task jobs, minus the two destinations that own their own:
-            // Style Transfer reports the ids it started, and an Editor
-            // render is a `mix` job that belongs to the Editor row.
-            return env.jobsStore.active.values.contains {
-                !$0.status.isTerminal && $0.info.task != nil
+                !$0.status.isTerminal
+                    && Destination.busyOwner(task: $0.info.task) == destination
                     && !styleTransferJobs.contains($0.info.jobId)
                     && !env.jobsStore.isEditorJob($0.info.jobId)
             }
@@ -403,7 +463,9 @@ struct MainWindow: View {
     }
 
     private static let panelMotion = Animation.easeOut(duration: 0.22)
-    private static let windowMinWidth: CGFloat = 1100
+    // The old 1100 pt window floor lives on as `SidebarFit.contentMinWidth`
+    // plus the sidebar it used to include. It is not a constant here any more
+    // because the sidebar is no longer always part of the sum.
 
     /// Where the panel is sitting right now: the stored preference, unless it
     /// opened itself for a render, which pins it for that showing.
@@ -416,6 +478,27 @@ struct MainWindow: View {
 
     /// Showing, and over the screen rather than beside it.
     private var queueFloats: Bool { queuePanel.isOpen && !queueIsPinned }
+
+    /// What the window actually draws — the preference unless the window has
+    /// overruled it.
+    private var sidebarIsCollapsed: Bool {
+        sidebarFit.isCollapsed(preference: sidebarCollapsed)
+    }
+
+    /// What the window would have to be to show all of it at once: the screen
+    /// at its narrowest useful width, the pinned queue's column, and the
+    /// sidebar if the user has not put it away.
+    private var requiredWidth: CGFloat {
+        SidebarFit.requiredWidth(sidebarPreferredOpen: !sidebarCollapsed,
+                                 contentMinWidth: contentMinWidth)
+    }
+
+    private func refitSidebar() {
+        withAnimation(Self.panelMotion) {
+            sidebarFit.widthChanged(windowWidth,
+                                    contentMinWidth: contentMinWidth)
+        }
+    }
 
     /// Take the user to a track a finished queue row made.
     ///

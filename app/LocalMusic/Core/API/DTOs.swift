@@ -464,7 +464,8 @@ struct JobInfo: Codable, Identifiable, Sendable {
     let jobId: String
     let groupId: String
     let modelId: String
-    /// nil from pre-task engines; treat as "generate".
+    /// nil from pre-task engines; treat as "generate". Read `effectiveTask` or
+    /// `isGenerate` rather than testing this directly.
     let task: String?
     /// Echo of the submitted `preview` flag: whether THIS take is publishing
     /// partial audio. Distinct from the model's `supports_preview` — a model
@@ -481,6 +482,18 @@ struct JobInfo: Codable, Identifiable, Sendable {
     /// is one.
     var priority: Int?
     let status: JobStatus
+
+    /// The task this job is, with the pre-task engines' nil resolved to what it
+    /// has always meant.
+    ///
+    /// Use this, never a bare `task == nil` test. A current engine *echoes*
+    /// `"generate"` for an ordinary render (contract §5.4), so `task == nil` is
+    /// false for every job it looks like it would catch — which is exactly how
+    /// the sidebar came to spin Actions while Studio was generating.
+    var effectiveTask: String { task ?? "generate" }
+
+    /// An ordinary render, as opposed to one of the transforms in Actions.
+    var isGenerate: Bool { effectiveTask == "generate" }
     /// `var`: a reorder re-announces every queued job's position over SSE, and
     /// the row's "#N in queue" is the only thing that changed — re-fetching
     /// each JobInfo to learn one integer would be a request per job per drag.

@@ -64,6 +64,26 @@ struct EditorGeometry: Equatable {
         return out
     }
 
+    /// The on-screen span of a time range, clipped to what is actually in
+    /// view: `(x, width)` for a frame, or nil when none of it is visible.
+    ///
+    /// Not the same thing as two calls to `x(at:)`, and the difference is a
+    /// real bug rather than a nicety. A block drawn as
+    /// `.frame(width: x(at: end) - x(at: start)).offset(x: x(at: start))`
+    /// *looks* right, because the offset cancels the overhang — but the frame
+    /// is still as wide as the whole range, most of it off-screen, and a
+    /// SwiftUI stack sizes itself to its widest child. One section a minute
+    /// long, zoomed in, was enough to make the editor's whole column wider
+    /// than its well and shove the waveform sideways.
+    func clipped(from startS: Double, to endS: Double)
+        -> (x: CGFloat, width: CGFloat)? {
+        guard width > 0 else { return nil }
+        let lo = max(0, x(at: min(startS, endS)))
+        let hi = min(width, x(at: max(startS, endS)))
+        guard hi > lo else { return nil }
+        return (lo, hi - lo)
+    }
+
     // MARK: viewport edges
 
     /// Which side of the overview strip's window is being dragged.

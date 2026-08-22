@@ -332,16 +332,82 @@ struct BenchSidebarCard<Content: View>: View {
     }
 }
 
+// MARK: - Sidebar control
+
+/// The window's sidebar, as every screen's top bar sees it.
+///
+/// Passed through the environment rather than down eight screen signatures:
+/// the state belongs to `MainWindow` and the control belongs in a bar that
+/// every screen already draws, with nothing in between that has any business
+/// knowing about either.
+struct SidebarControl {
+    var isCollapsed = false
+    /// The window is too narrow to show the sidebar at all, so the button
+    /// says so instead of pretending it can change anything.
+    var isLocked = false
+    /// Nil where there is no sidebar to toggle — previews, and the offscreen
+    /// hosts the layout tests render into.
+    var toggle: (() -> Void)?
+}
+
+private struct SidebarControlKey: EnvironmentKey {
+    // Computed, not stored: `SidebarControl` carries a closure and so is not
+    // Sendable, which makes a stored static a shared-mutable-state error under
+    // strict concurrency. A fresh empty value per read costs nothing and is
+    // what "no sidebar here" means anyway.
+    static var defaultValue: SidebarControl { SidebarControl() }
+}
+
+extension EnvironmentValues {
+    var sidebarControl: SidebarControl {
+        get { self[SidebarControlKey.self] }
+        set { self[SidebarControlKey.self] = newValue }
+    }
+}
+
+/// The sidebar toggle, immediately left of every screen's title.
+struct SidebarToggleButton: View {
+    let control: SidebarControl
+
+    var body: some View {
+        Button { control.toggle?() } label: {
+            Image(systemName: "sidebar.leading")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(control.isLocked ? Bench.Palette.textFaintest
+                                                  : Bench.Palette.textSecondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(control.isLocked)
+        .help(control.isLocked
+              ? "The window is too narrow to show the sidebar"
+              : control.isCollapsed ? "Show the sidebar" : "Hide the sidebar")
+        .accessibilityLabel(control.isCollapsed ? "Show the sidebar"
+                                               : "Hide the sidebar")
+    }
+}
+
 // MARK: - Top bar
 
-/// The 52 pt strip at the top of every screen: title on the left, whatever the
-/// screen needs on the right.
+/// The 52 pt strip at the top of every screen: the sidebar toggle and the
+/// title on the left, whatever the screen needs on the right.
 struct BenchTopBar<Leading: View, Trailing: View>: View {
+    @Environment(\.sidebarControl) private var sidebar
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         HStack(spacing: 14) {
+            if sidebar.toggle != nil {
+                SidebarToggleButton(control: sidebar)
+                    // With the sidebar gone the traffic lights have nothing to
+                    // sit over but this bar, so the row starts clear of them.
+                    // Padding rather than a spacer: a spacer would also take
+                    // the stack's 14 pt on both sides of itself.
+                    .padding(.leading, sidebar.isCollapsed
+                             ? Bench.Metrics.trafficLightInset : 0)
+            }
             leading()
             Spacer(minLength: 8)
             trailing()

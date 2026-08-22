@@ -183,6 +183,10 @@ extension Bench {
     enum Metrics {
         static let sidebarWidth: CGFloat = 230
         static let topBarHeight: CGFloat = 52
+        /// How far into a screen's top bar the window's traffic lights reach.
+        /// Only spent when the sidebar is collapsed: with it open the lights
+        /// sit over the blank strip the sidebar reserves for them.
+        static let trafficLightInset: CGFloat = 56
         static let filterBarHeight: CGFloat = 48
         static let transportHeight: CGFloat = 66
         static let timelineLaneHeight: CGFloat = 100

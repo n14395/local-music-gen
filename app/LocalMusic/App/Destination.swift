@@ -38,6 +38,18 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    /// Where the app opens.
+    ///
+    /// Actions rather than Generate for the same reason Actions is declared
+    /// first: it is the wider door. A gallery of every recipe the app knows
+    /// answers "what can this do?" on its own, while an empty prompt box only
+    /// helps somebody who already knows what to type.
+    ///
+    /// The destination is not persisted, so this is every launch, not just the
+    /// first one — deliberately: coming back to where the app *starts* is
+    /// steadier than coming back to wherever you happened to stop.
+    static let launch: Destination = .actions
+
     var title: String {
         switch self {
         case .generate: "Generate"
@@ -65,5 +77,20 @@ enum Destination: String, CaseIterable, Identifiable, Codable {
 
     static func inSection(_ section: Section) -> [Destination] {
         allCases.filter { $0.section == section }
+    }
+}
+
+extension Destination {
+    /// Which of the two job-driven sidebar rows a running job spins.
+    ///
+    /// Style Transfer, the Editor and Models report their own work and are
+    /// subtracted by the caller; everything else is a generate or a transform,
+    /// and those are the two rows here.
+    ///
+    /// Pure and static so the routing has a test. The bug it replaces was a
+    /// `task == nil` check standing in for "is this a generate?", which is
+    /// false for every job a current engine reports.
+    static func busyOwner(task: String?) -> Destination {
+        (task ?? "generate") == "generate" ? .generate : .actions
     }
 }

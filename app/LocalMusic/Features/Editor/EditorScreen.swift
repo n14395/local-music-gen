@@ -131,6 +131,7 @@ struct EditorScreen: View {
                         .font(Bench.Typo.mono(11))
                         .foregroundStyle(Bench.Palette.textFaintest)
                         .lineLimit(1)
+                    closeButton
                 }
             })
         } trailing: {
@@ -160,6 +161,35 @@ struct EditorScreen: View {
             .disabled(isFrozen)
             .opacity(isFrozen ? 0.4 : 1)
         }
+    }
+
+    /// Puts the track away and returns to the welcome screen.
+    ///
+    /// Beside the name it closes rather than over with Undo/Revert/Apply, and
+    /// for a reason beyond grouping: that trailing row is disabled and dimmed
+    /// while a render is in flight, and closing is the one thing that stays
+    /// legal then. `close()` leaves an in-flight apply running and owning its
+    /// own material, so the take still lands in the Library — the screen is
+    /// what you are putting away, not the work.
+    ///
+    /// No confirmation and no warning about unapplied edits: `close()` flushes
+    /// the edit list to the row on the way out, so reopening the track brings
+    /// every pending edit back. Nothing is lost, so nothing needs asking.
+    private var closeButton: some View {
+        Button {
+            store.close()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Bench.Palette.textFaint)
+                // Padding inside the content shape: transparent padding takes
+                // no hits, so without this the target is the 10 pt glyph.
+                .padding(.horizontal, 7).padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Close this track")
+        .accessibilityLabel("Close track")
     }
 
     private var statusBadge: some View {

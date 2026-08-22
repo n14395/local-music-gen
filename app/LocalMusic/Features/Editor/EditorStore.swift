@@ -380,7 +380,10 @@ final class EditorStore {
         analysis = nil
         selection = nil
         cursorS = 0
-        clipboard = []
+        // The clipboard deliberately survives, exactly as it does when you
+        // switch tracks: `canPaste` refuses a slice from another recording,
+        // and keeping it is what lets the menu say WHY rather than greying out
+        // in silence. Closing a track is not a reason to forget what you cut.
         // An apply in flight belongs to the material it was started for, not
         // to the screen: leaving the Editor must not make it look finished.
         if applyOwnerId == nil { applyStage = .idle }

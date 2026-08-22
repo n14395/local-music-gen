@@ -278,12 +278,13 @@ actor BackendProcessManager {
         client = nil
         crashTimes.append(Date())
         crashTimes.removeAll { $0 < Date().addingTimeInterval(-300) }
-        await MainActor.run { [status] in
+        let lastLine = await MainActor.run { [status] () -> String? in
             status.eventStreamConnected = false
             status.restartCount += 1
+            return status.stderrTail.last
         }
         if crashTimes.count > 3 {
-            await setPhase(.failed(reason: "The engine crashed repeatedly. Check the logs."))
+            await setPhase(.failed(reason: Self.repeatedCrashReason(lastLine: lastLine)))
             return
         }
         await setPhase(.restarting)
@@ -313,9 +314,35 @@ actor BackendProcessManager {
         df.dateFormat = "yyyy-MM-dd"
         let url = StoragePaths.engineLogs
             .appendingPathComponent("backend-\(df.string(from: Date())).log")
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        // Create it only when it is not there. `createFile` *replaces* an
+        // existing file, so pairing it with the seekToEnd below always landed
+        // at zero: every engine launch wiped the day's log, and the launch
+        // that follows a crash is a restart — which erased the record of the
+        // crash that caused it. "Check the logs" then pointed at an empty
+        // file. The day's file is the unit here, so runs append to it and the
+        // marker below says where each one begins.
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
         stderrLog = try? FileHandle(forWritingTo: url)
         try? stderrLog?.seekToEnd()
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        try? stderrLog?.write(contentsOf: Data("\n=== engine start \(stamp) ===\n".utf8))
+    }
+
+    /// What the sidebar says when the engine will not stay up.
+    ///
+    /// Carries the engine's own last words when it left any. "Check the logs"
+    /// is only useful advice if the logs say something, and the line that
+    /// killed the engine is almost always the last one it wrote — a dyld
+    /// failure, a missing model file, a traceback's final line. Trimmed
+    /// because this lands in a sidebar, not a terminal.
+    static func repeatedCrashReason(lastLine: String?) -> String {
+        let head = "The engine crashed repeatedly."
+        let line = (lastLine ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return "\(head) Check the logs." }
+        let clipped = line.count > 160 ? String(line.prefix(159)) + "\u{2026}" : line
+        return "\(head) Last output: \(clipped)"
     }
 
     private static func randomToken() -> String {

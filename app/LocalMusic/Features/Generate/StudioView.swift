@@ -61,7 +61,7 @@ struct StudioView: View {
     /// take over the composer.
     private var renderingJobs: [JobsStore.ActiveJob] {
         jobs.displayJobs.filter {
-            !$0.status.isTerminal && ($0.info.task ?? "generate") == "generate"
+            !$0.status.isTerminal && $0.info.isGenerate
         }
     }
 

@@ -535,3 +535,89 @@ final class EditorClipboardAndTrimTests: XCTestCase {
                        [-36, -42, -48, -54, -60])
     }
 }
+
+// MARK: - Closing the open track
+
+@MainActor
+final class EditorCloseTests: XCTestCase {
+    private func makeEnv() throws -> AppEnvironment {
+        let env = AppEnvironment(database: try DatabaseManager.inMemory())
+        for (id, title) in [("s1", "Tone"), ("s2", "Other")] {
+            env.library.insert(SongRecord(
+                id: id, title: title, prompt: "", lyrics: nil, modelId: "m",
+                modelName: "M", groupId: nil, paramsJSON: "{}", durationS: 100,
+                sampleRate: 44100, fileName: "\(id).wav", seedUsed: nil,
+                createdAt: Date(), rating: 0, notes: "", favorite: false))
+        }
+        return env
+    }
+
+    /// The button's whole job: the track goes away and the welcome screen is
+    /// what `material == nil` draws.
+    func testCloseReturnsToTheWelcomeScreen() throws {
+        let env = try makeEnv()
+        env.editor.open(songId: "s1")
+        XCTAssertNotNil(env.editor.material)
+
+        env.editor.close()
+        XCTAssertNil(env.editor.material, "the screen falls back to its empty state")
+        XCTAssertTrue(env.editor.document.isEmpty)
+        XCTAssertNil(env.editor.selection)
+        XCTAssertFalse(env.editor.isPlaying)
+    }
+
+    /// Why the button needs no confirmation: closing flushes the edit list to
+    /// the row, so reopening brings back every unapplied edit.
+    func testUnappliedEditsSurviveACloseAndReopen() throws {
+        let env = try makeEnv()
+        env.editor.open(songId: "s1")
+        env.editor.selection = EditRange(start: 10, end: 30)
+        env.editor.deleteSelection()
+        let editsBefore = env.editor.document.editCount
+        XCTAssertGreaterThan(editsBefore, 0)
+        XCTAssertTrue(env.editor.isDirty)
+
+        env.editor.close()
+        XCTAssertTrue(env.editor.document.isEmpty, "closed means nothing open")
+
+        env.editor.open(songId: "s1")
+        XCTAssertEqual(env.editor.document.editCount, editsBefore,
+                       "the edit list came back with the track")
+        XCTAssertTrue(env.editor.isDirty)
+    }
+
+    /// Closing must not forget what you cut. `canPaste` still refuses a slice
+    /// from another recording, but the clipboard is kept so the menu can
+    /// explain itself instead of greying out in silence.
+    func testCloseKeepsTheClipboardSoPasteCanExplainItself() throws {
+        let env = try makeEnv()
+        env.editor.open(songId: "s1")
+        env.editor.selection = EditRange(start: 10, end: 20)
+        env.editor.copySelection()
+        XCTAssertTrue(env.editor.canPaste)
+
+        env.editor.close()
+        XCTAssertFalse(env.editor.clipboard.isEmpty,
+                       "a close is not a reason to forget the clipboard")
+        XCTAssertEqual(env.editor.clipboardSourceTitle, "Tone")
+
+        // Reopening the source it came from makes it usable again.
+        env.editor.open(songId: "s1")
+        XCTAssertTrue(env.editor.canPaste)
+
+        // A different track refuses it, but can still say where it came from.
+        env.editor.open(songId: "s2")
+        XCTAssertFalse(env.editor.canPaste)
+        XCTAssertEqual(env.editor.clipboardSourceTitle, "Tone")
+    }
+
+    /// Undo must not reach back into a track that is no longer open.
+    func testCloseClearsUndoForTheClosedTrack() throws {
+        let env = try makeEnv()
+        env.editor.open(songId: "s1")
+        env.editor.selection = EditRange(start: 10, end: 30)
+        env.editor.deleteSelection()
+        env.editor.close()
+        XCTAssertTrue(env.editor.document.isEmpty)
+    }
+}

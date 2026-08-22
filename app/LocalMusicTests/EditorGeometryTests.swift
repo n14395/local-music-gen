@@ -56,6 +56,70 @@ final class EditorGeometryTests: XCTestCase {
     }
 
     /// Snap radius is in *pixels*, so it feels the same at every zoom.
+    // MARK: clipping a block to the viewport
+
+    /// The invariant the editor's layout depends on: a block's frame is never
+    /// wider than the well it is drawn in.
+    ///
+    /// It used to be. A section band was framed at its *true* width and
+    /// offset back into place, which looks identical on screen and is not the
+    /// same thing at all — a SwiftUI stack sizes itself to its widest child,
+    /// so one minute-long section, zoomed in, made the editor's column wider
+    /// than its well and shoved the waveform sideways. The gap down the left
+    /// grew the further in you scrolled.
+    func testAClippedBlockNeverExceedsTheViewport() {
+        let g = geo(start: 100, px: 49, width: 980, duration: 222)
+        for (start, end) in [(0.0, 222.0), (0.0, 120.0), (90.0, 300.0),
+                             (105.0, 110.0)] {
+            let span = g.clipped(from: start, to: end)
+            XCTAssertNotNil(span, "\(start)…\(end)")
+            XCTAssertLessThanOrEqual(span!.width, g.width, "\(start)…\(end)")
+            XCTAssertGreaterThanOrEqual(span!.x, 0, "\(start)…\(end)")
+            XCTAssertLessThanOrEqual(span!.x + span!.width, g.width + 0.001)
+        }
+    }
+
+    /// A range that is wholly in view is untouched — clipping must not shrink
+    /// what already fits.
+    func testARangeInsideTheViewportIsUnchanged() {
+        let g = geo(start: 20, px: 10, width: 800, duration: 200)
+        let span = g.clipped(from: 30, to: 50)
+        XCTAssertEqual(span?.x ?? -1, 100, accuracy: 1e-9)
+        XCTAssertEqual(span?.width ?? -1, 200, accuracy: 1e-9)
+    }
+
+    func testARangeEntirelyOffScreenIsNotDrawn() {
+        let g = geo(start: 100, px: 10, width: 800, duration: 400)
+        XCTAssertNil(g.clipped(from: 0, to: 90))       // ends before the left
+        XCTAssertNil(g.clipped(from: 200, to: 300))    // starts past the right
+        XCTAssertNil(g.clipped(from: 50, to: 50))      // no length at all
+    }
+
+    /// Half in view: only the half that is in view has a width.
+    func testARangeStraddlingAnEdgeIsCutAtIt() {
+        let g = geo(start: 100, px: 10, width: 800, duration: 400)
+        let left = g.clipped(from: 50, to: 120)
+        XCTAssertEqual(left?.x ?? -1, 0, accuracy: 1e-9)
+        XCTAssertEqual(left?.width ?? -1, 200, accuracy: 1e-9)
+        let right = g.clipped(from: 150, to: 400)
+        XCTAssertEqual(right?.x ?? -1, 500, accuracy: 1e-9)
+        XCTAssertEqual(right?.width ?? -1, 300, accuracy: 1e-9)
+    }
+
+    /// Backwards ranges happen — a selection dragged right to left — and are
+    /// the same span either way round.
+    func testABackwardsRangeIsTheSameSpan() {
+        let g = geo(start: 20, px: 10, width: 800, duration: 200)
+        XCTAssertEqual(g.clipped(from: 50, to: 30)?.x,
+                       g.clipped(from: 30, to: 50)?.x)
+        XCTAssertEqual(g.clipped(from: 50, to: 30)?.width,
+                       g.clipped(from: 30, to: 50)?.width)
+    }
+
+    func testNoWidthMeansNothingToDraw() {
+        XCTAssertNil(geo(width: 0).clipped(from: 0, to: 10))
+    }
+
     // MARK: dragging the overview window's edges
 
     /// The gesture's whole premise: the edge you are holding moves, the other

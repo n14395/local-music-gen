@@ -16,6 +16,18 @@ final class SidebarNavTests: XCTestCase {
         XCTAssertEqual(Destination.inSection(.browse), [.library, .models])
     }
 
+    /// The app opens on Actions. Named on `Destination` rather than left as a
+    /// literal in `MainWindow`'s `@State` so the launch screen is something a
+    /// test can hold, not a default that can be changed by accident while
+    /// editing the line above it.
+    func testTheAppLaunchesOnActions() {
+        XCTAssertEqual(Destination.launch, .actions)
+        XCTAssertEqual(Destination.launch.section, .make)
+        XCTAssertEqual(Destination.inSection(.make).first, Destination.launch,
+                       "the launch screen is the first row, so nothing in the "
+                       + "sidebar is selected above the selection")
+    }
+
     /// The label moved and the identity did not. A destination is written to
     /// `@AppStorage` by raw value, so renaming the case to match its new label
     /// must not send everyone who last used it back to the default screen.
@@ -90,5 +102,57 @@ final class SidebarNavTests: XCTestCase {
             XCTAssertTrue(box.insetBy(dx: -0.01, dy: -0.01).contains(drawn),
                           "\(drawn) escapes \(box)")
         }
+    }
+}
+
+// MARK: - Which row spins
+
+@MainActor
+final class SidebarBusyTests: XCTestCase {
+    /// The bug this replaces: a current engine echoes `"generate"` for an
+    /// ordinary render, so the old `task == nil` test was false for the very
+    /// jobs it meant to catch, and Studio's spinner appeared beside Actions.
+    func testAGenerateJobSpinsGenerateNotActions() {
+        XCTAssertEqual(Destination.busyOwner(task: "generate"), .generate)
+    }
+
+    /// A pre-task engine sends no task at all, and that has always meant
+    /// "generate". Both spellings must land on the same row.
+    func testAMissingTaskIsStillAGenerate() {
+        XCTAssertEqual(Destination.busyOwner(task: nil), .generate)
+    }
+
+    func testTransformsSpinActions() {
+        for task in ["separate", "mix", "stylise", "transcribe", "analyse"] {
+            XCTAssertEqual(Destination.busyOwner(task: task), .actions,
+                           "\(task) belongs to Actions")
+        }
+    }
+
+    /// The two rows are exhaustive and mutually exclusive: every job spins
+    /// exactly one of them, so neither can be left dark by a predicate that
+    /// forgot a case.
+    func testEveryJobSpinsExactlyOneRow() {
+        for task in [nil, "generate", "separate", "mix", "stylise"] {
+            let owner = Destination.busyOwner(task: task)
+            XCTAssertTrue(owner == .generate || owner == .actions)
+        }
+    }
+
+    /// `JobInfo` is where nil is resolved, so no caller has to remember.
+    func testJobInfoResolvesTheAbsentTask() {
+        XCTAssertEqual(job(task: nil).effectiveTask, "generate")
+        XCTAssertTrue(job(task: nil).isGenerate)
+        XCTAssertTrue(job(task: "generate").isGenerate)
+        XCTAssertFalse(job(task: "mix").isGenerate)
+        XCTAssertEqual(job(task: "mix").effectiveTask, "mix")
+    }
+
+    private func job(task: String?) -> JobInfo {
+        JobInfo(jobId: "j1", groupId: "grp_1", modelId: "m1", task: task,
+                status: .generating, queuePosition: nil, prompt: "", lyrics: nil,
+                durationS: nil, count: 1, params: [:],
+                createdAt: "2026-08-22T00:00:00Z", progress: nil, result: nil,
+                error: nil)
     }
 }

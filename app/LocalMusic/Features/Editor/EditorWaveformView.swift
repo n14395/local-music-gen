@@ -78,9 +78,25 @@ struct EditorWellView: View {
             Bench.Palette.sidebar
             ForEach(Array(store.grid.sections.enumerated()), id: \.offset) {
                 _, section in
-                let x0 = geometry.x(at: section.startS)
-                let x1 = geometry.x(at: section.endS)
-                if x1 > 0, x0 < geometry.width {
+                // Clipped to the viewport rather than drawn at its true
+                // width and left to hang off the edges. Two reasons, and the
+                // second one is why this shape is worth copying:
+                //
+                // A section can be minutes long, and zoomed in that is a
+                // frame thousands of points wide. A stack sizes itself to its
+                // widest child, so the row became wider than the well, the
+                // column became wider than the well, and the VStack centred a
+                // 980 pt waveform inside it — an empty gap down the left of
+                // the editor that grew the further in you scrolled. The
+                // container guard below is the structural half of that fix;
+                // this is the half that stops asking for the impossible.
+                //
+                // It also keeps the label readable: scrolled into the middle
+                // of a long section, its name used to be off-screen with it,
+                // so the one band that could tell you where you were said
+                // nothing.
+                if let span = geometry.clipped(from: section.startS,
+                                               to: section.endS) {
                     let color = Bench.Palette.stem(section.group)
                     Text(section.label)
                         .font(Bench.Typo.mono(9, .semibold))
@@ -88,12 +104,12 @@ struct EditorWellView: View {
                         .foregroundStyle(color)
                         .lineLimit(1)
                         .padding(.horizontal, 8)
-                        .frame(width: max(24, x1 - x0), height: 16,
+                        .frame(width: max(24, span.width), height: 16,
                                alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 4)
                             .fill(color.opacity(0.14)))
                         .clipped()
-                        .offset(x: x0, y: 5)
+                        .offset(x: span.x, y: 5)
                         .onTapGesture {
                             store.selection = EditRange(start: section.startS,
                                                         end: section.endS)
@@ -101,6 +117,12 @@ struct EditorWellView: View {
                 }
             }
         }
+        // The row is as wide as it was offered, whatever its children ask
+        // for. Without this one over-wide child re-inflates the column and
+        // the gap comes back — and the next such child will not be a
+        // section, so the guard belongs here rather than in the arithmetic
+        // above.
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: 26)
         .clipped()
         .overlay(alignment: .bottom) {
@@ -200,7 +222,10 @@ struct EditorWellView: View {
             playheadLine(geometry)
             selectionTooltip(geometry)
         }
-        .frame(maxHeight: .infinity)
+        // Same guard, same reason: a selection spanning the whole track is
+        // thousands of points wide when zoomed in, and its overlay would
+        // otherwise size this stack.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipped()
         .contentShape(Rectangle())
         .gesture(selectionGesture(geometry))
