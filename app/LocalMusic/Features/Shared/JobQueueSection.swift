@@ -52,6 +52,7 @@ struct JobQueueSection: View {
                           modelName: jobs.modelName(job.info.modelId),
                           movable: movable,
                           isDropTarget: dropTarget == job.id,
+                          isCanceling: jobs.isCanceling(job.id),
                           onCancel: { Task { await jobs.cancel(job.id) } },
                           onDismiss: { jobs.dismiss(job.id) },
                           // Take a: a multi-take job made several tracks and
@@ -133,6 +134,9 @@ struct JobRow: View {
     /// about the rows either side of this one.
     var movable = false
     var isDropTarget = false
+    /// The cancel has been asked for and the job has not stopped yet — see
+    /// `JobsStore.canceling`.
+    var isCanceling = false
     let onCancel: () -> Void
     let onDismiss: () -> Void
     /// Present only on a row that finished and left a track behind, which is
@@ -228,9 +232,11 @@ struct JobRow: View {
                 .foregroundStyle(Bench.Palette.textMuted)
         }
         if isRunning {
-            Button("Cancel", action: onCancel)
+            Button(isCanceling ? "Canceling…" : "Cancel", action: onCancel)
                 .buttonStyle(.bench(.quiet))
                 .controlSize(.small)
+                .disabled(isCanceling)
+                .opacity(isCanceling ? 0.6 : 1)
         } else {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")

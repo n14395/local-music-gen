@@ -20,6 +20,7 @@ struct StudioView: View {
     let notifications: NotificationService
     let prefill: PrefillBox
     let actions: SongActions
+    let settings: AppSettings
     let onOpenModels: () -> Void
 
     enum Mode: String { case simple, full }
@@ -37,14 +38,38 @@ struct StudioView: View {
     /// it, so it stays visibly a default — it follows the library forward on
     /// its own, and it is never something you have to clear before typing.
     @State private var name = ""
-    @State private var durationS: Double = 10
-    @State private var count = 1
+    @State private var durationS: Double
+    @State private var count: Int
     @State private var formState = ParameterFormState(specs: [])
     /// Reference audio waiting to land in the (possibly not-yet-rebuilt) form.
     @State private var pendingMelody: URL?
     /// Set when the user asks to go back to composing while a render runs.
     @State private var showingComposer = false
     @State private var showingModelChooser = false
+
+    /// Explicit only to seed two `@State`s from Settings — length and take
+    /// count start where Settings says, then belong to the user (and to
+    /// `clampToModel`) exactly as before.
+    @MainActor
+    init(catalog: ModelCatalogStore, jobs: JobsStore, library: LibraryStore,
+         playback: PlaybackController, telemetry: TelemetryStore,
+         timings: RenderTimingStore, notifications: NotificationService,
+         prefill: PrefillBox, actions: SongActions, settings: AppSettings,
+         onOpenModels: @escaping () -> Void) {
+        self.catalog = catalog
+        self.jobs = jobs
+        self.library = library
+        self.playback = playback
+        self.telemetry = telemetry
+        self.timings = timings
+        self.notifications = notifications
+        self.prefill = prefill
+        self.actions = actions
+        self.settings = settings
+        self.onOpenModels = onOpenModels
+        _durationS = State(initialValue: settings.defaultDurationS)
+        _count = State(initialValue: max(1, settings.defaultTakes))
+    }
 
     private var installed: [ModelInfo] {
         catalog.models.filter {
@@ -637,7 +662,39 @@ struct StudioView: View {
     // `prefill.pending = nil` happens after the branch and not inside it.
 
     private func syncSelection() {
-        if model == nil { selectedModelId = installed.first?.id }
+        if model == nil {
+            selectedModelId = preferredModelId ?? installed.first?.id
+        }
+    }
+
+    private var preferredModelId: String? {
+        Self.preferredModelId(
+            policy: settings.studioModelPolicy,
+            lastUsed: settings.studioLastModelId,
+            fixed: settings.studioFixedModelId,
+            installed: installed.map {
+                ($0.id, catalog.isFavourite($0.id))
+            })
+    }
+
+    /// Settings' opening-model policy, resolved against what is actually
+    /// installed. nil falls through to catalog order — which is also every
+    /// policy's answer when its pick is missing (deleted, never set), rather
+    /// than an empty composer.
+    static func preferredModelId(
+        policy: AppSettings.StudioModelPolicy, lastUsed: String?,
+        fixed: String?, installed: [(id: String, isFavourite: Bool)]
+    ) -> String? {
+        switch policy {
+        case .catalogOrder:
+            nil
+        case .lastUsed:
+            installed.first { $0.id == lastUsed }?.id
+        case .favourite:
+            installed.first(where: \.isFavourite)?.id
+        case .fixed:
+            installed.first { $0.id == fixed }?.id
+        }
     }
 
     private func applyPrefill() {
@@ -706,8 +763,18 @@ struct StudioView: View {
         let lyricsValue = model.capabilities.supportsLyrics
             && !lyrics.trimmingCharacters(in: .whitespaces).isEmpty ? lyrics : nil
         notice = nil
+        // Recorded whatever the opening-model policy is, so switching to
+        // "the one I last used" later has a history to read.
+        settings.studioLastModelId = model.id
         Task {
             var params = formState.params
+            // "Hold the seed": a seed field left on random borrows the last
+            // take's. A seed the user typed is theirs and stays.
+            if settings.holdSeed, let seed = jobs.lastSeedUsed,
+               model.capabilities.params.contains(where: { $0.key == "seed" }),
+               params["seed"] == nil || params["seed"] == .null {
+                params["seed"] = .int(Int(seed))
+            }
             for (key, url) in formState.audioSelections {
                 guard let uploadId = await jobs.uploadAudio(fileURL: url) else {
                     return  // uploadAudio surfaced the error
@@ -717,14 +784,16 @@ struct StudioView: View {
             await jobs.submit(modelId: model.id, prompt: prompt,
                               lyrics: lyricsValue, durationS: durationS,
                               count: count, params: params,
-                              // No preview is ever asked for. Only four of the
-                              // eleven generative families could decode one, so
-                              // the render card grew a control and a live
-                              // waveform for some models and not others; it now
-                              // reads the same whichever you pick. `submit`
-                              // still takes the flag (contract 5.6) and the
-                              // engine still honours it — nothing here passes
-                              // it.
+                              // Previews are a Settings opt-in, off by
+                              // default: only some generative families can
+                              // decode mid-render, so with them on the render
+                              // card shows a live waveform for some models
+                              // and not others (which is why the per-render
+                              // control was removed). Gated on the model too:
+                              // the engine 422-refuses a preview it cannot
+                              // produce rather than silently ignoring it.
+                              preview: settings.livePreview
+                                  && model.capabilities.canPreview,
                               // A field still showing the default sends no
                               // name at all, so the number is allocated when
                               // the take lands. Pinning "track042" here would
@@ -800,6 +869,7 @@ struct StudioPromptEditor: View {
 
     var body: some View {
         TextEditor(text: $text)
+            .tint(Bench.Palette.accent)
             .font(font)
             .lineSpacing(7)
             .scrollContentBackground(.hidden)

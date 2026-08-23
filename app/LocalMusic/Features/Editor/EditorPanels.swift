@@ -511,10 +511,24 @@ struct EditorApplyCard: View {
 struct EditorExportSheet: View {
     @Bindable var store: EditorStore
     @Environment(\.dismiss) private var dismiss
+    /// Ambient, optional: absent (previews, tests) leaves the struct's own
+    /// wav/pcm24 defaults.
+    @Environment(AppSettings.self) private var appSettings: AppSettings?
 
     @State private var choice = EditorStore.ExportChoice()
 
     var body: some View {
+        content.onAppear {
+            // Settings' preferred format/depth, as the sheet's starting
+            // point; the pickers below still override per export.
+            if let settings = appSettings {
+                choice.format = settings.exportFormat
+                choice.bitDepth = settings.exportDepth
+            }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Export selection")

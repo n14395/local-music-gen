@@ -23,7 +23,8 @@ import wave
 from importlib.metadata import entry_points
 
 from . import messages
-from .adapter import CancelledError, CancelToken, drop_preview
+from .adapter import (CancelledError, CancelToken, UnstoppableWorkError,
+                      drop_preview)
 
 
 def _watch_parent(ppid: int) -> None:
@@ -281,6 +282,15 @@ def main() -> None:
             return
         try:
             if msg["t"] == "load":
+                # A fresh token, for the same reason generate and task take
+                # one: `progress` closes over whatever `cancel` names now, and
+                # a load that inherited the last job's *cancelled* token raised
+                # CancelledError on its first progress call. The supervisor read
+                # that as "cancelled" and marked a job nobody had cancelled —
+                # so the next take on a warm worker died instantly whenever it
+                # needed a different model of the same family, and a pinned
+                # model silently stopped being kept resident after any cancel.
+                cancel = CancelToken()
                 # Loading a second model into a live worker must release the
                 # first: rebinding alone leaves the old weights referenced by
                 # the adapter until GC gets round to it, and MLX/MPS memory is
@@ -335,6 +345,20 @@ def main() -> None:
                               artifacts=[dataclasses.asdict(a)
                                          for a in task_result.artifacts],
                               meta=task_result.meta)
+        except UnstoppableWorkError as e:
+            # Report the cancel first — the supervisor reads this and ends the
+            # job as "canceled" — then leave, because something in here is
+            # still running and still on the GPU.
+            messages.send(proto_out, "error", kind="cancelled", message=str(e))
+            print(f"cancelled, and exiting: {e}", file=sys.stderr, flush=True)
+            proto_out.flush()
+            # os._exit, not a return: a normal exit finalises the interpreter,
+            # and finalisation with a live compute thread inside MLX/torch is
+            # exactly where a worker hangs instead of dying. The supervisor is
+            # already holding this job's cancel deadline, so a worker that
+            # failed to leave would be SIGKILLed anyway — this just makes the
+            # ordinary case immediate and quiet.
+            os._exit(0)
         except CancelledError:
             messages.send(proto_out, "error", kind="cancelled", message="cancelled")
         except MemoryError:

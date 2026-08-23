@@ -447,6 +447,10 @@ where F.FormatInput: Equatable, F.FormatOutput == String {
     var body: some View {
         TextField("", value: $value, format: format)
             .textFieldStyle(.plain)
+            // `.tint` is what colours the insertion caret; without it the
+            // caret renders in the system accent, the one stray non-Bench
+            // colour on the screen.
+            .tint(Bench.Palette.accent)
             .font(Bench.Typo.value)
             .foregroundStyle(Bench.Palette.textPrimary)
             .multilineTextAlignment(.trailing)
@@ -472,6 +476,7 @@ struct BenchTextField: View {
     var body: some View {
         TextField("", text: $text)
             .textFieldStyle(.plain)
+            .tint(Bench.Palette.accent)
             .font(font)
             .foregroundStyle(Bench.Palette.textPrimary)
             // Drawn rather than handed to `TextField`: its own placeholder
@@ -631,6 +636,7 @@ struct BenchSearchField: View {
                 .foregroundStyle(Bench.Palette.textFaint)
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
+                .tint(Bench.Palette.accent)
                 .font(Bench.Typo.secondary)
                 .foregroundStyle(Bench.Palette.textPrimary)
         }

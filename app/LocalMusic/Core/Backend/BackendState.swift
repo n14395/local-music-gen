@@ -33,6 +33,9 @@ final class BackendStatusStore {
     /// What the warm worker holds, from worker.state events ("loading"/"loaded").
     var workerModelId: String?
     var workerModelState: String?
+    /// The Settings-derived config the running engine was spawned with; nil
+    /// for attach mode and for engines launched before Settings had a say.
+    var launchedEngineConfig: EngineLaunchConfig?
 
     func appendStderr(_ line: String) {
         stderrTail.append(line)

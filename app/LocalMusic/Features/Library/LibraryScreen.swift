@@ -18,6 +18,7 @@ struct LibraryScreen: View {
     let parts: PartsStore
     let jobs: JobsStore
     let playback: PlaybackController
+    let settings: AppSettings
     @Binding var scope: LibraryScope
     /// A track the shell wants shown, set from outside and cleared here once
     /// acted on. `nil` the rest of the time, which is most of the time.
@@ -106,7 +107,7 @@ struct LibraryScreen: View {
             library.filters.favoritesOnly = false
             library.filters.hasEdits = false
             if promotedSort, library.filters.sort == .recentlyEdited {
-                library.filters.sort = .newest
+                library.filters.sort = settings.libraryDefaultSort
                 promotedSort = false
             }
             library.filters.artist = nil
@@ -257,6 +258,13 @@ struct LibraryScreen: View {
             ForEach(LibraryRepository.Sort.allCases, id: \.self) { sort in
                 Button(LibraryScreen.label(for: sort)) {
                     library.filters.sort = sort
+                    // Picking from the menu is a choice even when it lands on
+                    // the value the Edited scope promoted to — the revert on
+                    // the way out must not undo it.
+                    promotedSort = false
+                    if settings.libraryRemembersSort {
+                        settings.libraryDefaultSort = sort
+                    }
                 }
             }
         }
@@ -717,17 +725,19 @@ struct LibraryScreen: View {
         // The Edited scope is a list of edits, so it leads with the newest
         // one — but only as its own default; a sort you chose survives. It
         // is put back on the way out, or every other scope would sit on a
-        // sort that only means anything here.
+        // sort that only means anything here. "Default" is the Settings
+        // default, not `.newest` — a user who defaults to rating has not
+        // chosen anything either.
         if scope == .edited {
-            if library.filters.sort == .newest {
+            if library.filters.sort == settings.libraryDefaultSort {
                 library.filters.sort = .recentlyEdited
                 promotedSort = true
             }
         } else if promotedSort, library.filters.sort == .recentlyEdited {
             // Only the promotion is undone. Choosing "recently edited"
-            // yourself, in any scope, is a choice — putting it back to
-            // "newest" on the way out would be overriding it.
-            library.filters.sort = .newest
+            // yourself, in any scope, is a choice — putting it back on the
+            // way out would be overriding it.
+            library.filters.sort = settings.libraryDefaultSort
             promotedSort = false
         }
         if scope != .imported { library.filters.artist = nil }
@@ -751,6 +761,7 @@ struct LibraryScreen: View {
     /// freshly opened Renders scope as "filtered".
     private var scopeBaseline: LibraryRepository.Filters {
         var baseline = LibraryRepository.Filters()
+        baseline.sort = settings.libraryDefaultSort
         baseline.origin = scope.origin.map { .only($0.rawValue) } ?? .any
         baseline.favoritesOnly = scope == .favourites
         baseline.hasEdits = scope == .edited

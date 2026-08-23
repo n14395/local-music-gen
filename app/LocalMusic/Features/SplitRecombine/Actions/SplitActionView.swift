@@ -15,6 +15,7 @@ struct SplitActionView: View {
     /// The engine's one-line explanation of what this split does.
     let note: String
     let sourceId: String?
+    let settings: AppSettings
     let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
@@ -313,13 +314,18 @@ struct SplitActionView: View {
                                             library: library)
         }
         if selectedModelId == nil {
-            // The card's favourite when it is installed — several of these
-            // tasks have a specialist that is strictly better at one job and
+            // Settings' default separator leads, for separations only —
+            // transcription recipes have specialists of their own. Then the
+            // card's favourite when it is installed: several of these tasks
+            // have a specialist that is strictly better at one job and
             // invisible in an alphabetical list. Still only a preference: the
             // picker below lists everything that can run the task.
-            selectedModelId = recipe.prefersModelIds.first(where: { id in
-                eligibleModels.contains { $0.id == id }
-            }) ?? eligibleModels.first?.id
+            let chosen = task == "separate" ? settings.defaultSeparatorId : nil
+            selectedModelId = [chosen].compactMap(\.self)
+                .first(where: { id in eligibleModels.contains { $0.id == id } })
+                ?? recipe.prefersModelIds.first(where: { id in
+                    eligibleModels.contains { $0.id == id }
+                }) ?? eligibleModels.first?.id
         }
         rebuildForm()
     }

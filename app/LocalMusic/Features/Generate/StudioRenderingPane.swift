@@ -160,10 +160,20 @@ struct StudioRenderingPane: View {
             .help("Post a notification when this take finishes, even if the "
                   + "app is in front of you")
             Spacer(minLength: 8)
-            Button("Cancel take") {
+            let canceling = jobs.isCanceling(job.id)
+            Button(canceling ? "Canceling…" : "Cancel take") {
                 Task { await jobs.cancel(job.id) }
             }
             .buttonStyle(.bench(.destructive))
+            // Disabled rather than merely relabelled: the second press had
+            // nothing to do, and a button that stays live through a wait it
+            // cannot shorten invites one.
+            .disabled(canceling)
+            .opacity(canceling ? 0.6 : 1)
+            .help(canceling
+                  ? "Asked the engine to stop — some models only stop at the "
+                    + "end of a step, and the take is dropped either way"
+                  : "Stop this take")
         }
     }
 

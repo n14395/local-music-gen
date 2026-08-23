@@ -29,10 +29,13 @@ struct ModelsScreen: View {
     /// Persisted, and shared with the sidebar's storage card: "Free up
     /// space…" narrows the list to what is actually taking up room, which
     /// means it has to be able to set this from outside the screen.
-    @AppStorage("models.onlyInstalled") private var onlyInstalled = false
+    private var onlyInstalled: Bool {
+        get { catalog.onlyInstalledFilter }
+        nonmutating set { catalog.onlyInstalledFilter = newValue }
+    }
     /// Persisted rather than per-visit: a user who went looking for the long
     /// tail shouldn't have it snap shut every time they leave the screen.
-    @AppStorage("showAllModels") private var showAllModels = false
+    @AppStorage("models.showAll") private var showAllModels = false
 
     // MARK: - Filtering
 
@@ -244,8 +247,11 @@ struct ModelsScreen: View {
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(onlyInstalled ? Bench.Palette.textSecondary
                                                    : Bench.Palette.textQuaternary)
-                Toggle(isOn: $onlyInstalled) { EmptyView() }
-                    .toggleStyle(.bench(width: 34))
+                Toggle(isOn: Binding(get: { onlyInstalled },
+                                     set: { onlyInstalled = $0 })) {
+                    EmptyView()
+                }
+                .toggleStyle(.bench(width: 34))
             }
             .fixedSize()
         }

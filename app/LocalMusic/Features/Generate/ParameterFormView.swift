@@ -207,6 +207,7 @@ struct ParameterFormView: View {
                 get: { state.stringValue(spec) },
                 set: { state.setString(spec, $0) }))
                 .textFieldStyle(.plain)
+                .tint(Bench.Palette.accent)
                 .font(Bench.Typo.secondary)
                 .foregroundStyle(Bench.Palette.textPrimary)
                 .padding(.horizontal, 10).padding(.vertical, 8)

@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if env.hasRunningJob {
+        if env.hasRunningJob, env.settings.confirmQuitWhileRendering {
             let alert = NSAlert()
             alert.messageText = "A generation is still running"
             alert.informativeText = "Quitting cancels the current generation. Quit anyway?"

@@ -46,9 +46,23 @@ struct BackendDebugView: View {
                 BenchInfoRow("Restarts", "\(status.restartCount)",
                              mono: true, labelWidth: 96)
                 if let modelId = status.workerModelId {
-                    BenchInfoRow("Worker", modelId + (status.workerModelState
-                                                          .map { " · \($0)" } ?? ""),
-                                 mono: true, labelWidth: 96)
+                    BenchInfoRow(label: "Worker", labelWidth: 96) {
+                        HStack(spacing: 10) {
+                            Text(modelId + (status.workerModelState
+                                    .map { " · \($0)" } ?? ""))
+                                .font(Bench.Typo.mono(12))
+                                .foregroundStyle(Bench.Palette.textPrimary)
+                            // The eject that used to live in the titlebar and
+                            // was lost in the sidebar-footer refactor. The
+                            // engine 409s while a job runs; the refusal is
+                            // echoed into the log tail below rather than
+                            // swallowed.
+                            Button("Unload") { unloadWorker() }
+                                .buttonStyle(.bench(.quiet))
+                                .disabled(status.workerModelState == "loading")
+                                .help("Free the resident model's memory now")
+                        }
+                    }
                 }
             }
 
@@ -103,6 +117,18 @@ struct BackendDebugView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func unloadWorker() {
+        Task {
+            guard let client = await manager.client else { return }
+            do {
+                try await client.unloadWorker()
+            } catch {
+                status.appendStderr(
+                    "[unload] refused: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Readings

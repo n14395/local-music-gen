@@ -18,9 +18,15 @@ from __future__ import annotations
 import inspect
 import os
 import shutil
+import threading
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb)
+                                     ModelAdapter, ProgressCb,
+                                     UnstoppableWorkError)
+
+# How often the cancel token is checked while generate_music runs. Short enough
+# that the button feels connected, long enough to be free.
+_CANCEL_POLL_S = 0.25
 
 DIT_CONFIG = "acestep-v15-turbo"
 LM_MODEL = "acestep-5Hz-lm-1.7B"
@@ -256,8 +262,10 @@ class ACEStepAdapter(ModelAdapter):
 
         save_dir = os.path.join(self.work_dir, "acestep-out")
         os.makedirs(save_dir, exist_ok=True)
-        result = generate_music(self.dit, self.llm, gen_params, gen_config,
-                                save_dir=save_dir, progress=progress_shim)
+        result = self._generate_cancellably(
+            lambda: generate_music(self.dit, self.llm, gen_params, gen_config,
+                                   save_dir=save_dir, progress=progress_shim),
+            cancel)
         if cancel.cancelled:
             raise CancelledError()
         if not getattr(result, "success", False):
@@ -280,6 +288,58 @@ class ACEStepAdapter(ModelAdapter):
             pass
         return GenerateResult(wav_path=out_path, duration_s=info.duration,
                               sample_rate=info.samplerate, seed_used=seed_used)
+
+    @staticmethod
+    def _generate_cancellably(call, cancel: CancelToken):
+        """Run `call` on a thread this adapter owns, so the cancel token can be
+        read while it runs.
+
+        The progress callback cannot serve as the cancel check for this family,
+        which is what it was doing. Upstream's `generate_music` hands the real
+        work to its own `service-generate` thread, drives our shim from a
+        *separate* progress-estimator thread, and calls that shim inside
+        `except Exception: pass` (`handler/progress.py`) — so the CancelledError
+        the shim raises during diffusion is raised on the wrong thread and then
+        thrown away. Meanwhile upstream's own thread is joined with a 600 s
+        timeout, and there is no per-step hook to reach it through: pressing
+        Cancel take did nothing at all for the length of a render.
+
+        So the token is polled here instead, on the thread that can act on it.
+
+        What we cannot do is stop the work. Python cannot interrupt a thread,
+        upstream offers no way in, and the diffusion holds the GPU either way —
+        upstream's own timeout path admits as much ("the CUDA operation may
+        still be running in the background"), and the worker log shows exactly
+        that: an abandoned DiT loop still stepping while the next job's LM phase
+        started in the same process, each starving the other. Hence
+        UnstoppableWorkError: the job is cancelled, and the process goes with
+        it, because process death is the only unload this codebase trusts.
+        """
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["value"] = call()
+            except BaseException as e:  # noqa: BLE001 — re-raised on the caller
+                box["error"] = e
+
+        thread = threading.Thread(target=run, name="acestep-generate",
+                                  daemon=True)
+        thread.start()
+        while True:
+            thread.join(timeout=_CANCEL_POLL_S)
+            if not thread.is_alive():
+                break
+            if cancel.cancelled:
+                raise UnstoppableWorkError(
+                    "ACE-Step cannot stop a generation once it has started")
+        if "error" in box:
+            # Includes the CancelledError the shim raises from upstream's own
+            # main-thread progress calls, which unwinds cleanly and leaves the
+            # worker reusable — the good case, and the reason this is not
+            # simply UnstoppableWorkError every time.
+            raise box["error"]
+        return box.get("value")
 
     @staticmethod
     def _build_flexible(cls, kwargs: dict):

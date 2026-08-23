@@ -22,6 +22,8 @@ struct LibrarySelectionInspector: View {
 
     @State private var confirmDelete = false
     @State private var exportNotice: String?
+    /// Ambient, optional — see `SongDetailView`; absent means "ask".
+    @Environment(AppSettings.self) private var appSettings: AppSettings?
 
     var body: some View {
         ScrollView {
@@ -154,7 +156,13 @@ struct LibrarySelectionInspector: View {
             LibraryActionTile(
                 title: "Delete…", tone: .destructive,
                 help: "Delete all \(selection.count) and their audio files",
-                action: { confirmDelete = true })
+                action: {
+                    if appSettings?.confirmDeletes ?? true {
+                        confirmDelete = true
+                    } else {
+                        deleteAll()
+                    }
+                })
         }
     }
 

@@ -14,6 +14,7 @@ from . import CONTRACT, VERSION
 from .api import build_app
 from .config import Settings
 from .events import EventBus
+from .retention import outputs_retention_days, sweep_outputs
 from .state import EngineState
 from .watchdog import watch_parent
 
@@ -27,6 +28,26 @@ async def telemetry_loop(state: EngineState, bus: EventBus) -> None:
         await asyncio.sleep(2.0 if state.queue.telemetry_worker() else 10.0)
         if bus.subscribers:
             bus.emit("system.telemetry", state.usage())
+
+
+async def retention_loop(state: EngineState, settings: Settings) -> None:
+    """Sweep aged Outputs/<job_id> dirs — once at startup, then daily.
+
+    Everything the user keeps is moved into the app's library at ingest, so
+    what this deletes is the residue: failed and cancelled jobs' partials,
+    takes from sessions that never collected them. Live jobs are exempted by
+    id on top of the day-scale age threshold."""
+    days = outputs_retention_days()
+    if not days:
+        return
+    while True:
+        removed = await asyncio.to_thread(
+            sweep_outputs, settings.output_dir, days,
+            keep=state.queue.live_job_ids())
+        if removed:
+            print(f"retention: removed {len(removed)} output dir(s) "
+                  f"older than {days} days", file=sys.stderr)
+        await asyncio.sleep(86400)
 
 
 async def run(settings: Settings) -> None:
@@ -58,6 +79,7 @@ async def run(settings: Settings) -> None:
         background_tasks.append(
             asyncio.create_task(watch_parent(settings.parent_pid, kill_workers)))
     background_tasks.append(asyncio.create_task(telemetry_loop(state, bus)))
+    background_tasks.append(asyncio.create_task(retention_loop(state, settings)))
 
     async def write_handshake() -> None:
         while not server.started:

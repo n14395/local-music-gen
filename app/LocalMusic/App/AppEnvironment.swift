@@ -65,6 +65,9 @@ final class StudioBox {
 /// Dependency container wiring the app together.
 @MainActor
 final class AppEnvironment {
+    /// First, deliberately: its init migrates legacy defaults keys, and the
+    /// stores below read the renamed keys.
+    let settings: AppSettings
     let prefill = PrefillBox()
     let studio = StudioBox()
     let notifications = NotificationService()
@@ -107,7 +110,9 @@ final class AppEnvironment {
     }
 
     init(modeOverride: BackendLaunchMode? = nil,
-         database: DatabaseManager? = nil) {
+         database: DatabaseManager? = nil,
+         settings: AppSettings? = nil) {
+        self.settings = settings ?? AppSettings()
         let status = BackendStatusStore()
         self.backendStatus = status
         self.catalog = ModelCatalogStore(backend: status)
@@ -141,7 +146,46 @@ final class AppEnvironment {
             Task { @MainActor in
                 self?.route(item)
             }
-        }, modeOverride: modeOverride)
+        }, modeOverride: modeOverride,
+           launchConfig: { [settings = self.settings] in
+            await settings.engineLaunchConfig
+        })
+
+        // Settings policies, as live reads — a toggle applies to the next
+        // delete and to rows already finished, not to the next launch.
+        library.usesTrash = { [settings = self.settings] in
+            settings.deleteToTrash
+        }
+        partsStore.usesTrash = { [settings = self.settings] in
+            settings.deleteToTrash
+        }
+        jobsStore.autoClearAfterS = { [settings = self.settings] in
+            settings.queueAutoClear.seconds
+        }
+        jobsStore.autoArm = { [settings = self.settings] in
+            settings.autoArmRenders
+        }
+        notifications.prefs = { [settings = self.settings] in
+            .init(enabled: settings.notificationsEnabled,
+                  alwaysDeliver: settings.notifyAlways,
+                  sound: settings.notificationSound,
+                  dockBounce: settings.dockBounce)
+        }
+        library.filters.sort = self.settings.libraryDefaultSort
+        // Where a fresh bench and the Editor's normalise slider start;
+        // session tweaks in either place stay theirs.
+        workbench.targetLufs = self.settings.targetLufs
+        workbench.autoMatchTempo = self.settings.autoMatchTempo
+        workbench.autoMatchKey = self.settings.autoMatchKey
+        workbench.keepTracks = self.settings.keepStems
+        editor.houseTargetLufs = { [settings = self.settings] in
+            settings.targetLufs
+        }
+        // The engine's pin is in-memory by contract; the app is what makes it
+        // survive a restart. Recorded on change, replayed on `.connected`.
+        catalog.onPinChanged = { [settings = self.settings] id in
+            settings.pinnedModelId = id
+        }
 
         jobsStore.modelName = { [weak self] id in
             self?.catalog.models.first { $0.id == id }?.displayName ?? id
@@ -211,9 +255,10 @@ final class AppEnvironment {
                 stop: { editor.stopPreview() },
                 seek: { editor.seekPreview(to: $0) })
         }
-        nowPlaying.start()
+        if self.settings.nowPlayingEnabled { nowPlaying.start() }
 
         editor.notifyApplied = { [weak self] title in
+            guard self?.settings.notifyEditsApplied ?? true else { return }
             self?.notifications.notifyIfInactive(
                 title: "Edits applied",
                 body: "“\(title)” now plays the edited version.")
@@ -221,14 +266,21 @@ final class AppEnvironment {
     }
 
     /// Analysis (tempo/key/beats) powers part badges and later alignment, so
-    /// run it opportunistically whenever new audio appears — if an analyzer is
-    /// installed and the song hasn't been analyzed yet.
+    /// run it opportunistically whenever new audio appears — if Settings
+    /// allows it, an analyzer is installed and the song hasn't been analyzed
+    /// yet.
     private func autoAnalyze(song: SongRecord) {
-        guard ((try? partsRepo.analysis(ownerId: song.id)) ?? nil) == nil,
-              let analyzer = catalog.models.first(where: {
-                  $0.installState == .installed
-                      && $0.capabilities.supportedTasks.contains("analyze")
-              }) else { return }
+        let analyzers = catalog.models.filter {
+            $0.installState == .installed
+                && $0.capabilities.supportedTasks.contains("analyze")
+        }
+        // Settings may name an analyzer; one that is gone falls back to the
+        // first installed rather than silently not analyzing.
+        guard settings.autoAnalyze,
+              ((try? partsRepo.analysis(ownerId: song.id)) ?? nil) == nil,
+              let analyzer = analyzers.first(where: {
+                  $0.id == settings.analyzerModelId
+              }) ?? analyzers.first else { return }
         Task { [jobsStore] in
             await jobsStore.submitAnalyze(
                 modelId: analyzer.id, ownerId: song.id, ownerType: "song",
@@ -282,6 +334,18 @@ final class AppEnvironment {
                     // A hold survives a dropped stream and an app relaunch, so
                     // it is re-read here rather than assumed released.
                     jobsStore.applyHold(from: system)
+                    // Replay the persisted pin onto a fresh engine — but only
+                    // onto one with no pin of its own (a reconnect mid-session
+                    // must not overwrite a pin set elsewhere), and only while
+                    // the model is still installed.
+                    if system.pinnedModelId == nil,
+                       let pinned = settings.pinnedModelId,
+                       catalog.models.contains(where: {
+                           $0.id == pinned && $0.installState == .installed
+                       }) {
+                        try? await client?.setPin(modelId: pinned, enabled: true)
+                        await catalog.refresh()
+                    }
                 }
                 storage.refresh()
             }
@@ -339,9 +403,16 @@ final class AppEnvironment {
         }
     }
 
+    /// Whether each *event* deserves a notice is decided here, where the
+    /// events are routed; how one is delivered (master toggle, foreground,
+    /// sound, bounce) is `NotificationService.Prefs`. Armed jobs skip the
+    /// per-event gate the way they skip the master toggle — the user asked
+    /// about that specific job, after any of these switches were set.
     private func notify(for event: EngineEvent) {
         switch event {
         case .jobQueued:
+            // No point requesting permission for notices that are all off.
+            guard settings.notificationsEnabled else { break }
             notifications.requestAuthorizationIfNeeded()
         case .jobCompleted(let jobId):
             // Spent before the Editor guard below, or an armed edit render
@@ -355,11 +426,12 @@ final class AppEnvironment {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
             // A job the user armed from the render card is told about either
-            // way; everything else only when the app is in the background.
+            // way; everything else only when the app is in the background,
+            // and only when the event's switch is on.
             if armed {
                 notifications.notify(title: "Your track is ready",
                                      body: String(title.prefix(80)))
-            } else {
+            } else if settings.notifyTrackReady {
                 notifications.notifyIfInactive(title: "Your track is ready",
                                                body: String(title.prefix(80)))
             }
@@ -374,11 +446,12 @@ final class AppEnvironment {
             let body = "\(title.prefix(50)) — \(error.message)"
             if armed {
                 notifications.notify(title: "Generation failed", body: body)
-            } else {
+            } else if settings.notifyJobFailed {
                 notifications.notifyIfInactive(title: "Generation failed",
                                                body: body)
             }
         case .downloadCompleted(_, let modelId, let runtimeOnly):
+            guard settings.notifyDownloadCompleted else { break }
             let name = catalog.models.first { $0.id == modelId }?.displayName
                 ?? modelId
             // A runtime install fetched no model, and saying one arrived would
@@ -391,12 +464,14 @@ final class AppEnvironment {
             // The counterpart of the "Model installed" notice above. Without
             // it a download that died while the app was in the background is
             // indistinguishable from one that finished.
+            guard settings.notifyDownloadFailed else { break }
             let name = catalog.models.first { $0.id == modelId }?.displayName
                 ?? modelId
             notifications.notifyIfInactive(
                 title: "Download failed",
                 body: "\(name) — \(error.message.prefix(100))")
         case .engineWarning(let message):
+            guard settings.notifyEngineWarning else { break }
             notifications.notifyIfInactive(title: "Engine warning",
                                            body: String(message.prefix(120)))
         default:
@@ -410,16 +485,44 @@ final class AppEnvironment {
         // to be notified, but the *answer* has to be known before then so the
         // render card can tell an armed take it will land quietly.
         Task { await notifications.refresh() }
+        pruneHousekeeping()
     }
 
-    /// "Unload model" in the titlebar; the engine refuses while a job runs and
-    /// the titlebar clears via the resulting worker.state event.
+    /// Launch-time disk housekeeping the engine cannot do: the daily
+    /// `backend-*.log` files the *app* writes (same retention as the engine's
+    /// outputs sweep) and the Editor-backups size cap. Both no-op at their
+    /// default settings.
+    func pruneHousekeeping() {
+        let logDays = settings.engineFileRetentionDays
+        let backupCap = Int64(settings.backupsCapGB * 1_000_000_000)
+        Task.detached(priority: .utility) {
+            FilePruning.pruneByAge(in: StoragePaths.engineLogs,
+                                   olderThanDays: logDays)
+            FilePruning.capBySize(in: StoragePaths.libraryBackups,
+                                  capBytes: backupCap)
+        }
+    }
+
+    /// Free the resident model now; the engine refuses while a job runs and
+    /// the sidebar's engine card clears via the resulting worker.state event.
+    /// The engine panel's Unload button goes through the client directly to
+    /// echo a refusal into the log tail; this fire-and-forget form is for
+    /// flows (and tests) that only care that an idle model gets dropped.
     func unloadModel() {
         Task {
             if let client = await backendManager.client {
                 try? await client.unloadWorker()
             }
         }
+    }
+
+    /// Settings' Now Playing toggle, applied live. `start()` is idempotent,
+    /// so enabling after a launch that never started the bridge registers the
+    /// commands now; disabling flips the bridge's own switch, which hands the
+    /// tile back and keeps the observation loop from re-claiming it.
+    func setNowPlaying(enabled: Bool) {
+        nowPlaying.isEnabled = enabled
+        if enabled { nowPlaying.start() }
     }
 
     func shutdown() async {

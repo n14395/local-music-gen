@@ -118,7 +118,7 @@ struct MainWindow: View {
                          editor: destination == .editor ? env.editor : nil,
                          isQueueOpen: queuePanel.isOpen,
                          onToggleQueue: {
-                             withAnimation(Self.panelMotion) { queuePanel.toggle() }
+                             withAnimation(panelMotion) { queuePanel.toggle() }
                          },
                          onToggleCompare: {
                              libraryCompare.toggle(playback: env.playback)
@@ -137,6 +137,11 @@ struct MainWindow: View {
         // where they are, and everything else in that band reaches the content.
         .ignoresSafeArea(.container, edges: .top)
         .preferredColorScheme(.dark)
+        // Settings, ambiently: the confirmation gates live on leaf views
+        // (song and part inspectors), and threading a parameter through
+        // every layer for a yes/no would make Settings look like a
+        // dependency of screens that merely honour one preference.
+        .environment(env.settings)
         // The floor rises with the pinned rail rather than letting it eat the
         // screen behind it: 1100 is already fully spent by Studio in Full
         // control (230 pt of sidebar, a 576 pt parameter panel).
@@ -172,7 +177,7 @@ struct MainWindow: View {
             isCollapsed: sidebarIsCollapsed,
             isLocked: sidebarFit.isCramped,
             toggle: {
-                withAnimation(Self.panelMotion) { sidebarCollapsed.toggle() }
+                withAnimation(panelMotion) { sidebarCollapsed.toggle() }
             }))
         // A screen with a wider requirement can arrive without the window
         // changing size at all — opening the Editor is exactly that — so the
@@ -183,12 +188,12 @@ struct MainWindow: View {
             destination = .generate
         } }
         .onChange(of: isRenderingWork) {
-            withAnimation(Self.panelMotion) {
+            withAnimation(panelMotion) {
                 queuePanel.workChanged(isWorking: isRenderingWork)
             }
         }
         .onChange(of: queueIsEmpty) {
-            withAnimation(Self.panelMotion) {
+            withAnimation(panelMotion) {
                 queuePanel.contentsChanged(isEmpty: queueIsEmpty)
             }
         }
@@ -462,7 +467,11 @@ struct MainWindow: View {
                      downloads: env.downloadsStore.downloads.count).isEmpty
     }
 
-    private static let panelMotion = Animation.easeOut(duration: 0.22)
+    /// nil (no animation at all) under Settings' reduce-motion; every use
+    /// goes through `withAnimation`, which treats nil as "just do it".
+    private var panelMotion: Animation? {
+        env.settings.reduceMotion ? nil : .easeOut(duration: 0.22)
+    }
     // The old 1100 pt window floor lives on as `SidebarFit.contentMinWidth`
     // plus the sidebar it used to include. It is not a constant here any more
     // because the sidebar is no longer always part of the sum.
@@ -494,7 +503,7 @@ struct MainWindow: View {
     }
 
     private func refitSidebar() {
-        withAnimation(Self.panelMotion) {
+        withAnimation(panelMotion) {
             sidebarFit.widthChanged(windowWidth,
                                     contentMinWidth: contentMinWidth)
         }
@@ -516,7 +525,7 @@ struct MainWindow: View {
             songId: songId, scope: LibraryScope(origin: song.originKind))
         destination = .library
         if queueFloats {
-            withAnimation(Self.panelMotion) { queuePanel.close() }
+            withAnimation(panelMotion) { queuePanel.close() }
         }
     }
 
@@ -535,7 +544,7 @@ struct MainWindow: View {
                 QueueRail(jobs: env.jobsStore, downloads: env.downloadsStore,
                           catalog: env.catalog, isPinned: queueIsPinned,
                           onClose: {
-                              withAnimation(Self.panelMotion) { queuePanel.close() }
+                              withAnimation(panelMotion) { queuePanel.close() }
                           },
                           onTogglePin: {
                               // Toggling what is *drawn*, not what is stored:
@@ -543,7 +552,7 @@ struct MainWindow: View {
                               // and clicking it has to unpin — flipping the
                               // preference alone would leave it pinned and the
                               // button looking broken.
-                              withAnimation(Self.panelMotion) {
+                              withAnimation(panelMotion) {
                                   queuePinned = !queueIsPinned
                                   queuePanel.pinChanged()
                               }
@@ -566,10 +575,12 @@ struct MainWindow: View {
                        telemetry: env.telemetry, timings: env.renderTimings,
                        notifications: env.notifications,
                        prefill: env.prefill, actions: songActions,
+                       settings: env.settings,
                        onOpenModels: { openModels(for: nil) })
         case .library:
             LibraryScreen(library: env.library, parts: env.partsStore,
                           jobs: env.jobsStore, playback: env.playback,
+                          settings: env.settings,
                           scope: $libraryScope, reveal: $libraryReveal,
                           actions: songActions,
                           onAddToWorkbench: { part in
@@ -591,6 +602,7 @@ struct MainWindow: View {
                                 onOpenModels: { openModels(for: $0) })
         case .actions:
             ActionsScreen(
+                settings: env.settings,
                 catalog: env.catalog, library: env.library,
                 parts: env.partsStore, jobs: env.jobsStore,
                 playback: env.playback, workbench: env.workbench,
@@ -680,7 +692,13 @@ struct MainWindow: View {
                 // Confirmed here rather than at each call site: this is the
                 // one action in the app that discards audio the user cannot
                 // get back, and the row menu used to fire it on one click.
-                pendingRevert = song
+                // Settings can waive the asking; the render-in-flight refusal
+                // inside `revert` still applies either way.
+                if env.settings.confirmRevert {
+                    pendingRevert = song
+                } else {
+                    revert(song)
+                }
             })
     }
 
@@ -965,9 +983,13 @@ private struct SidebarFooterCard: View {
     let destination: Destination
     let libraryScope: LibraryScope
 
-    /// Shared with `ModelsScreen`, so the storage card can point the list at
-    /// what is on disk.
-    @AppStorage("models.onlyInstalled") private var onlyInstalled = false
+    /// Shared with `ModelsScreen` through the catalog store, so the storage
+    /// card can point the list at what is on disk — for this session, not as
+    /// a rewritten preference.
+    private var onlyInstalled: Bool {
+        get { env.catalog.onlyInstalledFilter }
+        nonmutating set { env.catalog.onlyInstalledFilter = newValue }
+    }
 
     var body: some View {
         switch destination {

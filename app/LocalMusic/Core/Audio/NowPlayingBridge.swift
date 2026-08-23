@@ -80,6 +80,17 @@ final class NowPlayingBridge {
 
     // MARK: lifecycle
 
+    /// Settings' Now Playing toggle. Off, the bridge stops claiming the tile
+    /// and ignores transport commands; the observation loop keeps running so
+    /// turning it back on re-publishes at the next change — `relinquish()`
+    /// alone would be undone by that same loop.
+    var isEnabled = true {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            if isEnabled { refresh() } else { relinquish() }
+        }
+    }
+
     func start() {
         guard !started else { return }
         started = true
@@ -148,7 +159,7 @@ final class NowPlayingBridge {
     }
 
     func perform(_ kind: Command) {
-        guard let source = current() else { return }
+        guard isEnabled, let source = current() else { return }
         switch kind {
         case .play: if !source.isPlaying { source.toggle() }
         case .pause: if source.isPlaying { source.toggle() }
@@ -178,7 +189,7 @@ final class NowPlayingBridge {
 
     private func refresh() {
         let centre = MPNowPlayingInfoCenter.default()
-        guard let source = current() else {
+        guard isEnabled, let source = current() else {
             // Nothing has played: leave the slot alone rather than claiming it
             // with an empty tile.
             centre.nowPlayingInfo = nil

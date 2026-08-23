@@ -37,10 +37,12 @@ struct SongDetailView: View {
 
     @State private var editor = SongEditor()
     @State private var confirmDelete = false
-    @State private var confirmRevert = false
     /// True while the stashed original is what the transport is playing —
     /// the pane's own A/B, distinct from the library's two-row compare.
     @State private var playingOriginal = false
+    /// Ambient, optional: previews and tests host this pane without an
+    /// environment, and "no settings" must read as "ask", the safe default.
+    @Environment(AppSettings.self) private var appSettings: AppSettings?
 
     private var isCurrent: Bool { playback.currentSongId == song.id }
 
@@ -86,22 +88,28 @@ struct SongDetailView: View {
         // The pane can go away without a field ever losing focus — a popover
         // dismissed, a tab switched — so buffered edits are written on the way out.
         .onDisappear { editor.flush(in: library) }
-        .confirmationDialog("Revert “\(song.title)” to the original?",
-                            isPresented: $confirmRevert) {
-            Button("Revert — discard the edits", role: .destructive) {
-                actions.revertEdits(song)
-            }
-        } message: {
-            Text("The file goes back to the untouched original and the edit "
-                 + "list is cleared.")
-        }
         .confirmationDialog("Delete “\(song.title)”?", isPresented: $confirmDelete) {
             Button("Delete song and audio file", role: .destructive) {
-                playback.stop(songId: song.id)
-                library.delete(song)
-                onDeleted()
+                deleteNow()
             }
         }
+    }
+
+    /// The shell's `revertEdits` already confirms (once, for every surface
+    /// that offers a revert) — this pane used to hold a dialog of its own in
+    /// front of it, so the menu item asked twice.
+    private func requestDelete() {
+        if appSettings?.confirmDeletes ?? true {
+            confirmDelete = true
+        } else {
+            deleteNow()
+        }
+    }
+
+    private func deleteNow() {
+        playback.stop(songId: song.id)
+        library.delete(song)
+        onDeleted()
     }
 
     // MARK: header
@@ -112,6 +120,7 @@ struct SongDetailView: View {
                 TextField("Title", text: $editor.title,
                           onCommit: { editor.commitTitle(in: library) })
                     .textFieldStyle(.plain)
+                    .tint(Bench.Palette.accent)
                     .font(Bench.Typo.inspectorTitle)
                     .tracking(-0.17)
                     .foregroundStyle(Bench.Palette.textPrimary)
@@ -172,7 +181,7 @@ struct SongDetailView: View {
                 }
                 .disabled(!hasBackup)
                 Button("Revert to original…", role: .destructive) {
-                    confirmRevert = true
+                    actions.revertEdits(song)
                 }
             }
             if song.originKind == .recombined {
@@ -187,7 +196,7 @@ struct SongDetailView: View {
                 NSWorkspace.shared.activateFileViewerSelecting([song.fileURL])
             }
             Divider()
-            Button("Delete…", role: .destructive) { confirmDelete = true }
+            Button("Delete…", role: .destructive) { requestDelete() }
         } label: {
             Text("···")
                 .font(.system(size: 15, weight: .semibold))
@@ -508,6 +517,7 @@ struct SongDetailView: View {
     private var notes: some View {
         TextEditor(text: $editor.notes)
             .textEditorStyle(.plain)
+            .tint(Bench.Palette.accent)
             .scrollContentBackground(.hidden)
             .font(Bench.Typo.secondary)
             .foregroundStyle(Bench.Palette.textSecondary)
@@ -562,7 +572,7 @@ struct SongDetailView: View {
                 }
                 LibraryActionTile(title: "Delete…", tone: .destructive,
                                   help: "Delete this track and its audio file") {
-                    confirmDelete = true
+                    requestDelete()
                 }
             }
         }

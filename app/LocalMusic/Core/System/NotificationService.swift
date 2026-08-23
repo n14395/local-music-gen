@@ -34,6 +34,25 @@ private final class ForegroundPresenter: NSObject, UNUserNotificationCenterDeleg
 /// difference between a button that works and a button that lies.
 @MainActor @Observable
 final class NotificationService {
+    /// How the user wants delivery to behave — the Settings window's say.
+    /// Which *events* are worth a notification is decided at the call sites
+    /// (`AppEnvironment.notify(for:)`), where the events live; this struct is
+    /// only about what posting one looks like.
+    struct Prefs {
+        /// Gates `notifyIfInactive` — every notice the app raises on its own.
+        /// `notify` (the armed, asked-for-by-hand path) ignores it: pressing
+        /// "Notify me when it lands" is consent given after this toggle was.
+        var enabled = true
+        /// Deliver even while the app is frontmost.
+        var alwaysDeliver = false
+        var sound = true
+        var dockBounce = true
+    }
+
+    /// A live read into Settings, defaulting to the historical behavior so
+    /// tests and previews need no wiring.
+    var prefs: @MainActor () -> Prefs = { Prefs() }
+
     /// What the system will currently let through. Refreshed at launch and
     /// after every request, so the UI can say "you have these turned off"
     /// rather than arming something that cannot fire.
@@ -112,25 +131,42 @@ final class NotificationService {
 
     /// Post only when the app is in the background — the default for every
     /// notice the app raises on its own initiative. A banner over the window
-    /// you are already looking at tells you nothing you cannot see.
+    /// you are already looking at tells you nothing you cannot see, unless
+    /// the user has said they want it anyway (`Prefs.alwaysDeliver`).
     func notifyIfInactive(title: String, body: String) {
-        guard !NSApp.isActive else { return }
-        notify(title: title, body: body)
+        let prefs = prefs()
+        guard Self.deliversUnprompted(prefs: prefs,
+                                      appActive: NSApp.isActive) else { return }
+        post(title: title, body: body, prefs: prefs)
+    }
+
+    /// The `notifyIfInactive` decision, pure: an unprompted notice goes out
+    /// when the master switch is on and the app is in the background — or in
+    /// front with the user having asked for that too.
+    static func deliversUnprompted(prefs: Prefs, appActive: Bool) -> Bool {
+        prefs.enabled && (prefs.alwaysDeliver || !appActive)
     }
 
     /// Post whether or not the app is frontmost. Only for a notification the
     /// user armed by hand ("Notify me when it lands"): they asked to be told,
     /// and a render long enough to be worth arming is one you go and do
-    /// something else during — including something else in this app.
+    /// something else during — including something else in this app. The
+    /// master toggle does not apply here, for the same reason.
     func notify(title: String, body: String) {
+        post(title: title, body: body, prefs: prefs())
+    }
+
+    private func post(title: String, body: String, prefs: Prefs) {
         guard !Self.isTesting else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = prefs.sound ? .default : nil
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
-        NSApp.requestUserAttention(.informationalRequest)
+        if prefs.dockBounce {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
     }
 }

@@ -571,7 +571,12 @@ JobInfo = {
 
 Output files are written complete (`.part` + rename) under `--output-dir/<job_id>/`
 **before** `job.completed` fires. The app moves them into its library (same volume →
-atomic rename). The engine may garbage-collect `Outputs/` entries older than 24 h.
+atomic rename). The engine garbage-collects `Outputs/<job_id>/` directories left
+untouched for `LOCALMUSIC_OUTPUTS_RETENTION_DAYS` days (default 14; `0` keeps
+everything) — swept at startup and daily, never touching a non-terminal job's
+directory. Terminal jobs are also evicted from the in-memory history past
+`LOCALMUSIC_JOB_HISTORY_CAP` total jobs (default 200; `0` unbounded), oldest
+first; a purged job answers `404` like any unknown id.
 
 ### 5.3 Cancel
 
@@ -633,7 +638,7 @@ Result shape (replaces `outputs` for task jobs):
 unknown kinds. `label` carries the human/slot identity (stem name, instrument;
 `preview:<label>` marks an audio audition render paired with the same-label
 midi artifact). Artifact files obey the 5.2 delivery invariants (complete
-before `job.completed`, under `Outputs/<job_id>/`, 24 h GC).
+before `job.completed`, under `Outputs/<job_id>/`, retention GC per 5.2).
 
 The `mix` task's `mix_spec` json param (built by the app from stored analysis;
 all beat math is precomputed — the dsp worker performs no analysis):
@@ -962,8 +967,11 @@ This is not a separate event — it arrives as an ordinary `job.log` line.
 Under `~/Library/Application Support/LocalMusic/` (the app passes the concrete dirs):
 
 - App-owned (engine never touches): `Database/`, `Library/`.
-- Engine-owned (rooted at `--data-dir` / `--output-dir`): `envs/`, `Outputs/`,
-  `Backend/logs/`, `installed/` (markers), `uploads/`.
+- Engine-owned (rooted at `--data-dir` / `--output-dir`): `envs/`, `Outputs/`
+  (retention-swept, see 5.2), `Backend/logs/`, `installed/` (markers),
+  `uploads/`. `worker-<family>.log` files are bounded: a log past 10 MB starts
+  over at the next worker spawn. The daily `backend-YYYY-MM-DD.log` files are
+  written by the *app*, which also prunes them on the outputs retention window.
 - Model weights live in the **shared system Hugging Face cache**
   (`~/.cache/huggingface`, standard `HF_HOME` semantics; an inherited `HF_HOME`
   env var overrides — the verification suite uses that for isolation). Weights

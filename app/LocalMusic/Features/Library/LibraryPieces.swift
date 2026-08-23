@@ -275,6 +275,7 @@ struct LibraryTagField: View {
             if adding {
                 TextField("tag", text: $draft)
                     .textFieldStyle(.plain)
+                    .tint(Bench.Palette.accent)
                     .font(Bench.Typo.caption)
                     .foregroundStyle(Bench.Palette.textPrimary)
                     .frame(width: 84)

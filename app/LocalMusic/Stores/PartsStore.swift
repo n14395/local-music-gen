@@ -13,6 +13,10 @@ final class PartsStore {
     }
     var lastError: String?
 
+    /// Whether deletions send the user's files to the Trash — see
+    /// `LibraryStore.usesTrash`.
+    var usesTrash: @MainActor () -> Bool = { true }
+
     init(repo: PartsRepository) {
         self.repo = repo
         refresh()
@@ -106,17 +110,7 @@ final class PartsStore {
     }
 
     func delete(_ part: PartRecord) {
-        try? FileManager.default.removeItem(at: part.fileURL)
-        if let preview = part.previewURL {
-            try? FileManager.default.removeItem(at: preview)
-        }
-        try? FileManager.default.removeItem(at: part.waveformURL)
-        LibraryStore.removeEditorLeftovers(id: part.id)
-        do {
-            try repo.delete(id: part.id)
-        } catch {
-            lastError = "Could not delete part: \(error.localizedDescription)"
-        }
+        deleteWithoutRefresh(part)
         refresh()
     }
 
@@ -124,20 +118,23 @@ final class PartsStore {
     /// why one refresh rather than one per row.
     func delete(_ parts: [PartRecord]) {
         guard !parts.isEmpty else { return }
-        for part in parts {
-            try? FileManager.default.removeItem(at: part.fileURL)
-            if let preview = part.previewURL {
-                try? FileManager.default.removeItem(at: preview)
-            }
-            try? FileManager.default.removeItem(at: part.waveformURL)
-            LibraryStore.removeEditorLeftovers(id: part.id)
-            do {
-                try repo.delete(id: part.id)
-            } catch {
-                lastError = "Could not delete part: \(error.localizedDescription)"
-            }
-        }
+        for part in parts { deleteWithoutRefresh(part) }
         refresh()
+    }
+
+    private func deleteWithoutRefresh(_ part: PartRecord) {
+        let toTrash = usesTrash()
+        FileDisposal.dispose(part.fileURL, toTrash: toTrash)
+        if let preview = part.previewURL {
+            try? FileManager.default.removeItem(at: preview)
+        }
+        try? FileManager.default.removeItem(at: part.waveformURL)
+        LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash)
+        do {
+            try repo.delete(id: part.id)
+        } catch {
+            lastError = "Could not delete part: \(error.localizedDescription)"
+        }
     }
 
     func update(_ parts: [PartRecord]) {

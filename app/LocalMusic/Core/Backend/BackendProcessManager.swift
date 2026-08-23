@@ -20,13 +20,20 @@ actor BackendProcessManager {
     private var stderrLog: FileHandle?
 
     private let modeOverride: BackendLaunchMode?
+    /// Settings' engine knobs, read fresh at every spawn so a restart picks
+    /// up the values as they are now. nil (the default, and every test's)
+    /// launches with the engine's own defaults, exactly as before.
+    private let launchConfig: @Sendable () async -> EngineLaunchConfig?
 
     init(status: BackendStatusStore,
          onEvent: @escaping @Sendable (EventStreamClient.StreamItem) -> Void,
-         modeOverride: BackendLaunchMode? = nil) {
+         modeOverride: BackendLaunchMode? = nil,
+         launchConfig: @escaping @Sendable () async -> EngineLaunchConfig? =
+            { nil }) {
         self.status = status
         self.onEvent = onEvent
         self.modeOverride = modeOverride
+        self.launchConfig = launchConfig
     }
 
     // MARK: lifecycle
@@ -93,6 +100,7 @@ actor BackendProcessManager {
         try? FileManager.default.removeItem(at: StoragePaths.engineHandshake)
         try? StoragePaths.ensureDirectories()
 
+        let config = await launchConfig()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: command[0])
         p.arguments = Array(command.dropFirst()) + [
@@ -100,9 +108,12 @@ actor BackendProcessManager {
             "--parent-pid", String(ProcessInfo.processInfo.processIdentifier),
             "--data-dir", StoragePaths.engineData.path,
             "--output-dir", StoragePaths.engineOutputs.path,
-        ]
+        ] + (config?.arguments ?? [])
         var env = ProcessInfo.processInfo.environment
         env["LOCALMUSIC_AUTH_TOKEN"] = token
+        if let config {
+            env.merge(config.environment) { _, new in new }
+        }
         p.environment = env
 
         let stderrPipe = Pipe()
@@ -136,6 +147,9 @@ actor BackendProcessManager {
         process = p
         try? String(p.processIdentifier).write(to: StoragePaths.enginePidFile,
                                                atomically: true, encoding: .utf8)
+        // Published so Settings can compare what the engine is running with
+        // against what it would launch with now — the pending-restart banner.
+        await MainActor.run { [status] in status.launchedEngineConfig = config }
         await connect(handshakeFile: StoragePaths.engineHandshake)
     }
 

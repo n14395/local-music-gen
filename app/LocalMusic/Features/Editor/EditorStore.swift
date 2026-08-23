@@ -78,6 +78,9 @@ final class EditorStore {
     var onSnippetReady: (SongRecord, SnippetIntent) -> Void = { _, _ in }
     /// The apply finished while the user asked to be told and moved on.
     var notifyApplied: (String) -> Void = { _ in }
+    /// Where the normalise slider starts when it is switched on — Settings'
+    /// house loudness. A live read so a change applies to the next toggle-on.
+    var houseTargetLufs: @MainActor () -> Double = { -14 }
 
     enum SnippetIntent: Equatable {
         case continueFrom, splitRegion, findMatches

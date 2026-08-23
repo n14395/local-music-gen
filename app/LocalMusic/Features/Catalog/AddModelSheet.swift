@@ -33,6 +33,7 @@ struct AddModelSheet: View {
             HStack(spacing: 8) {
                 TextField("org/model-name", text: $repoId)
                     .textFieldStyle(.plain)
+                    .tint(Bench.Palette.accent)
                     .font(Bench.Typo.mono(12))
                     .foregroundStyle(Bench.Palette.textPrimary)
                     .padding(.horizontal, 11).padding(.vertical, 8)

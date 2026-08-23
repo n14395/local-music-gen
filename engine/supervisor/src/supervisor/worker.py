@@ -44,6 +44,16 @@ class PreviewSink(Protocol):
 
 
 class Worker:
+    # A worker log past this starts over on the next spawn (see __init__).
+    LOG_CAP_BYTES = 10 * 1024 * 1024
+
+    @staticmethod
+    def _log_oversized(path: str) -> bool:
+        try:
+            return os.path.getsize(path) > Worker.LOG_CAP_BYTES
+        except OSError:
+            return False
+
     def __init__(self, family: str, python_path: str, settings: Settings,
                  bus: EventBus, log_suffix: str | None = None) -> None:
         self.family = family
@@ -78,7 +88,12 @@ class Worker:
         # mlxaudio), and they must not share one log handle — kill() closes it.
         name = f"worker-{family}-{log_suffix}" if log_suffix else f"worker-{family}"
         log_path = os.path.join(settings.logs_dir, f"{name}.log")
-        self._log = open(log_path, "ab", buffering=0)
+        # Bounded, not rotated: appends normally (the previous worker's last
+        # lines are the crash evidence a respawn must not erase), but a file
+        # past the cap starts over — these were never pruned and a chatty
+        # family's log grew for the life of the install.
+        mode = "wb" if self._log_oversized(log_path) else "ab"
+        self._log = open(log_path, mode, buffering=0)
         # start_new_session: the worker gets its own process group so kill() can take
         # down anything it spawned.
         self.proc = subprocess.Popen(

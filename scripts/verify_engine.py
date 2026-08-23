@@ -151,6 +151,76 @@ def check_warm_pool_logic() -> None:
           q._expire_small_locked(now) is None)
 
 
+def check_retention_logic() -> None:
+    """Outputs sweeping and job-history trimming, without an engine.
+
+    Both are pure enough to drive with staged mtimes and stand-in jobs; the
+    live daily loop only strings these together with a sleep.
+    """
+    print("• retention policy (logic)")
+    sys.path.insert(0, os.path.join(SUP, "src"))
+    from supervisor import jobqueue as jq
+    from supervisor.retention import outputs_retention_days, sweep_outputs
+
+    check("retention defaults to 14 days when the env is unset",
+          "LOCALMUSIC_OUTPUTS_RETENTION_DAYS" not in os.environ
+          and outputs_retention_days() == 14)
+
+    out = tempfile.mkdtemp(prefix="localmusic-verify-retention-")
+    now = time.time()
+    old_age = now - 20 * 86400
+    for name, mtime in (("job_old", old_age), ("job_live", old_age),
+                        ("job_new", now - 3600)):
+        d = os.path.join(out, name)
+        os.makedirs(d)
+        with open(os.path.join(d, "take-0.wav"), "wb") as f:
+            f.write(b"RIFF")
+        os.utime(d, (mtime, mtime))
+    with open(os.path.join(out, "stray.txt"), "w") as f:
+        f.write("not ours")
+    os.utime(os.path.join(out, "stray.txt"), (old_age, old_age))
+
+    removed = sweep_outputs(out, 14, keep={"job_live"}, now=now)
+    left = sorted(os.listdir(out))
+    check("aged output dirs are removed, live and fresh ones kept",
+          removed == ["job_old"] and "job_live" in left and "job_new" in left,
+          f"removed={removed} left={left}")
+    check("stray top-level files are not the sweep's to delete",
+          "stray.txt" in left)
+    check("retention 0 keeps everything",
+          sweep_outputs(out, 0, now=now) == []
+          and sorted(os.listdir(out)) == left)
+
+    class _Job:
+        def __init__(self, jid: str, status: str, created_at: str) -> None:
+            self.id, self.status, self.created_at = jid, status, created_at
+
+    q = object.__new__(jq.JobQueue)   # no runner thread, no registry
+    q.jobs = {}
+    for i in range(5):
+        jid = f"job_{i}"
+        q.jobs[jid] = _Job(jid, "succeeded", f"2026-08-0{i + 1}T00:00:00Z")
+    q.jobs["job_run"] = _Job("job_run", "generating", "2026-08-01T00:00:00Z")
+    cap = jq.JOB_HISTORY_CAP
+    try:
+        jq.JOB_HISTORY_CAP = 4
+        q._trim_history_locked()
+        check("history trim evicts the oldest terminal jobs past the cap",
+              sorted(q.jobs) == ["job_2", "job_3", "job_4", "job_run"],
+              str(sorted(q.jobs)))
+        jq.JOB_HISTORY_CAP = 1
+        q._trim_history_locked()
+        check("a running job is never evicted, even over the cap",
+              "job_run" in q.jobs, str(sorted(q.jobs)))
+        jq.JOB_HISTORY_CAP = 0
+        before = dict(q.jobs)
+        q._trim_history_locked()
+        check("cap 0 disables history trimming", q.jobs == before)
+    finally:
+        jq.JOB_HISTORY_CAP = cap
+    check("history cap defaults to 200", cap == 200, str(cap))
+
+
 def check_catalog_curation() -> None:
     """The shipped catalog's curation, which no runtime test would notice.
 
@@ -370,6 +440,7 @@ def main() -> int:
     check_catalog_curation()
     check_adapter_binaries()
     check_warm_pool_logic()
+    check_retention_logic()
 
     print("• bootstrap & system")
     proc = spawn(tmp, token, os.getpid())

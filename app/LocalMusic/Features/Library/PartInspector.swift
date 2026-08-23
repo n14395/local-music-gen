@@ -41,6 +41,8 @@ struct PartInspector: View {
     let onDeleted: () -> Void
 
     @State private var confirmDelete = false
+    /// Ambient, optional — see `SongDetailView`; absent means "ask".
+    @Environment(AppSettings.self) private var appSettings: AppSettings?
     /// The buffered name and the part it was typed for.
     ///
     /// Keyed by id rather than read straight off `part`, for the reason
@@ -116,11 +118,23 @@ struct PartInspector: View {
         .background(Bench.Palette.panel)
         .confirmationDialog("Delete “\(part.name)”?", isPresented: $confirmDelete) {
             Button("Delete part and its files", role: .destructive) {
-                playback.stop(songId: part.id)
-                parts.delete(part)
-                onDeleted()
+                deleteNow()
             }
         }
+    }
+
+    private func requestDelete() {
+        if appSettings?.confirmDeletes ?? true {
+            confirmDelete = true
+        } else {
+            deleteNow()
+        }
+    }
+
+    private func deleteNow() {
+        playback.stop(songId: part.id)
+        parts.delete(part)
+        onDeleted()
     }
 
     // MARK: header
@@ -155,6 +169,7 @@ struct PartInspector: View {
             set: { draft = (part.id, $0) }),
             onCommit: { commitName() })
             .textFieldStyle(.plain)
+            .tint(Bench.Palette.accent)
             .font(Bench.Typo.inspectorTitle)
             .tracking(-0.17)
             .foregroundStyle(Bench.Palette.textPrimary)
@@ -191,7 +206,7 @@ struct PartInspector: View {
                     NSWorkspace.shared.activateFileViewerSelecting([part.fileURL])
                 }
                 Divider()
-                Button("Delete…", role: .destructive) { confirmDelete = true }
+                Button("Delete…", role: .destructive) { requestDelete() }
             } label: {
                 Text("···")
                     .font(.system(size: 15, weight: .semibold))
@@ -381,7 +396,7 @@ struct PartInspector: View {
             }
             LibraryActionTile(title: "Delete…", tone: .destructive,
                               help: "Delete this part and its files") {
-                confirmDelete = true
+                requestDelete()
             }
         }
     }

@@ -46,6 +46,7 @@ struct LyricsEditor: View {
             }
 
             TextEditor(text: $lyrics)
+                .tint(Bench.Palette.accent)
                 .font(Bench.Typo.mono(14))
                 .lineSpacing(6)
                 .scrollContentBackground(.hidden)

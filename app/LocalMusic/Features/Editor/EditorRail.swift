@@ -345,7 +345,8 @@ private struct AdjustTab: View {
             HStack(spacing: 10) {
                 Button {
                     store.setNormalize(
-                        lufs: store.document.normalizeLufs == nil ? -14 : nil)
+                        lufs: store.document.normalizeLufs == nil
+                            ? store.houseTargetLufs() : nil)
                 } label: {
                     HStack(spacing: 10) {
                         radio(on: store.document.normalizeLufs != nil)
@@ -359,7 +360,8 @@ private struct AdjustTab: View {
                 .buttonStyle(.plain)
                 Spacer()
                 Text(String(format: "%.0f LUFS",
-                            store.document.normalizeLufs ?? -14))
+                            store.document.normalizeLufs
+                                ?? store.houseTargetLufs()))
                     .font(Bench.Typo.mono(12, .semibold))
                     .foregroundStyle(store.document.normalizeLufs == nil
                         ? Bench.Palette.textQuaternary : Bench.Palette.accent)
@@ -368,7 +370,8 @@ private struct AdjustTab: View {
                 BenchSliderRow(
                     label: "Target",
                     value: Binding(
-                        get: { store.document.normalizeLufs ?? -14 },
+                        get: { store.document.normalizeLufs
+                            ?? store.houseTargetLufs() },
                         set: { store.setNormalize(lufs: $0) }),
                     range: -30...(-6), step: 0.5, labelWidth: 52,
                     format: { String(format: "%.1f", $0) })

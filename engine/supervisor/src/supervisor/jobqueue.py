@@ -37,6 +37,18 @@ from .worker import Worker, WorkerDied
 
 CANCEL_GRACE_S = 10.0
 
+TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
+
+# Terminal jobs are kept as history for the app's queue rail, but the dict
+# grew without bound over a long engine run. Oldest terminal rows are evicted
+# past this many total jobs; live jobs are never counted out. 0 = unbounded.
+JOB_HISTORY_CAP = int(os.environ.get("LOCALMUSIC_JOB_HISTORY_CAP") or 200)
+
+# How often the cancel watchdog re-checks the deadline it is waiting on. It
+# sleeps on an event the whole time, so this is only the resolution of "the
+# grace period has expired", not a poll of anything expensive.
+CANCEL_POLL_S = 0.5
+
 # "generate" is the classic prompt→audio pipeline; the rest are promptless
 # task jobs returning typed artifacts. A model opts in via capabilities.tasks
 # (absent ⇒ ["generate"]).
@@ -141,6 +153,13 @@ class JobQueue:
         self.wake = threading.Event()
         self.runner = threading.Thread(target=self._run_forever, daemon=True)
         self.runner.start()
+        # The cancel grace period is enforced from its own thread, because the
+        # runner thread is inside the blocking wait it would have to interrupt.
+        # See _enforce_cancels_forever.
+        self.cancel_wake = threading.Event()
+        self.canceller = threading.Thread(target=self._enforce_cancels_forever,
+                                          daemon=True)
+        self.canceller.start()
 
     # MARK: API surface
 
@@ -250,8 +269,34 @@ class JobQueue:
                 self.bus.emit_threadsafe(
                     "job.log", {"job_id": job.id,
                                 "line": f"dropped unknown param '{k}'"})
+            self._trim_history_locked()
         self.wake.set()
         return {"group_id": group_id, "jobs": [{"job_id": job.id, "model_id": mid}]}
+
+    def _trim_history_locked(self) -> None:
+        """Evict the oldest terminal jobs past JOB_HISTORY_CAP total.
+
+        Only terminal rows are candidates — a queued job is a promise, not
+        history — so a queue deeper than the cap simply is not trimmed until
+        it drains. Eviction order is created_at (ISO-8601, so lexical order
+        is chronological), id breaking exact ties.
+        """
+        if not JOB_HISTORY_CAP or len(self.jobs) <= JOB_HISTORY_CAP:
+            return
+        terminal = sorted(
+            (job for job in self.jobs.values()
+             if job.status in TERMINAL_STATUSES),
+            key=lambda job: (job.created_at, job.id))
+        overflow = len(self.jobs) - JOB_HISTORY_CAP
+        for job in terminal[:overflow]:
+            del self.jobs[job.id]
+
+    def live_job_ids(self) -> set[str]:
+        """Jobs the outputs-retention sweep must never touch: anything not
+        terminal is (or is about to be) writing into its output dir."""
+        with self.lock:
+            return {jid for jid, job in self.jobs.items()
+                    if job.status not in TERMINAL_STATUSES}
 
     def _resolve_json_uploads(self, key: str, value) -> str:
         """Parse a json param, replace every "up_…" string with its resolved
@@ -283,7 +328,7 @@ class JobQueue:
             job = self.jobs.get(job_id)
             if job is None:
                 raise SubmitError(404, "NOT_FOUND", "unknown job")
-            if job.status in ("succeeded", "failed", "canceled"):
+            if job.status in TERMINAL_STATUSES:
                 raise SubmitError(409, "JOB_NOT_CANCELABLE", "job already terminal")
             if job.status == "queued":
                 job.status = "canceled"
@@ -297,6 +342,10 @@ class JobQueue:
             # slot while an unrelated model sits resident.
             if job.worker:
                 job.worker.request_cancel()
+        # Outside the lock, and unconditional: the request above is cooperative
+        # and may never be honoured, so the grace period starts running whether
+        # or not there was a worker to ask.
+        self.cancel_wake.set()
 
     def hold(self, held: bool) -> None:
         """Stop starting queued jobs (contract 5.7).
@@ -701,6 +750,20 @@ class JobQueue:
         worker.current_job_id = job.id
         job.worker = worker
 
+        # A cancel that arrived while this job had no worker yet had nowhere to
+        # send its request — and the window above is not small, because
+        # envs.ensure() may be installing a family runtime. Ending it here
+        # rather than forwarding the request keeps the worker clean: nothing has
+        # been sent to it, so there is no stale cancel for the next command to
+        # trip over.
+        if job.cancel_requested:
+            # current_job_id by hand: this returns above _run_job's own
+            # try/finally, and a worker left owning a cancelled job's id
+            # attributes its next lines of stderr to it.
+            worker.current_job_id = None
+            self._canceled(job)
+            return
+
         if not worker.ready_seen:
             try:
                 worker.wait_until({"ready"}, timeout=60)
@@ -774,7 +837,6 @@ class JobQueue:
                     # fraction that may be null
                     self._progress(job, "generating", overall, m, take=take,
                                    **staged)
-                    self._watch_cancel(job)
 
                 def on_preview(path: str, sample_rate: int, duration_s: float,
                                step: int | None, take: int = i) -> None:
@@ -829,7 +891,6 @@ class JobQueue:
 
         def on_progress(f: float | None, m: str, **staged) -> None:
             self._progress(job, "generating", f, m, **staged)
-            self._watch_cancel(job)
 
         worker.send({"t": "task", "job_id": job.id, "task": job.task,
                      "params": job.params, "out_dir": out_dir})
@@ -908,11 +969,69 @@ class JobQueue:
             except OSError:
                 pass
 
-    def _watch_cancel(self, job: Job) -> None:
-        """Hard-kill backstop: worker ignored a cancel past its grace period."""
-        if (job.cancel_requested and job.cancel_deadline
-                and time.monotonic() > job.cancel_deadline and job.worker):
-            job.worker.kill()
+    def _enforce_cancels_forever(self) -> None:
+        """Hard-kill backstop: SIGKILL a worker that ignored a cancel past its
+        grace period (contract 5.3).
+
+        On its own thread, and this is the whole point of the thread. This used
+        to be a call at the top of the progress callback, which made the
+        backstop depend on the worker still reporting progress — precisely what
+        a worker that has stopped yielding no longer does. ACE-Step is the
+        worked example: it runs its diffusion on an internal thread, drives our
+        progress shim from a *separate* estimator thread, and wraps the call in
+        `except Exception: pass` — so the CancelledError the shim raises is
+        swallowed, the shim stops forwarding progress, and the one thing that
+        could have killed the worker was the one thing the cancel had just
+        switched off. The take then ran to completion (or to upstream's own 600
+        s timeout) with the button pressed and nothing happening.
+
+        Nothing here consults the worker: a deadline that has passed is enough,
+        which is the only claim that survives a worker that has gone silent.
+        """
+        while True:
+            # Cleared before the deadline is read, so a cancel arriving during
+            # the read is still holding the event set when we reach wait().
+            self.cancel_wake.clear()
+            with self.lock:
+                deadline = self._next_cancel_deadline_locked()
+            if deadline is None:
+                # Nothing armed; cancel() will wake us when something is.
+                self.cancel_wake.wait()
+            else:
+                # Bounded even with a deadline in hand: a job cancelled during
+                # its runtime install has no worker to kill yet, and the retry
+                # has to come from somewhere.
+                self.cancel_wake.wait(
+                    min(CANCEL_POLL_S, max(0.0, deadline - time.monotonic())))
+            self._enforce_cancels()
+
+    def _next_cancel_deadline_locked(self) -> float | None:
+        """The soonest grace period still running. Caller holds self.lock."""
+        deadlines = [job.cancel_deadline for job in self.jobs.values()
+                     if job.cancel_requested and job.cancel_deadline
+                     and job.status not in TERMINAL_STATUSES]
+        return min(deadlines) if deadlines else None
+
+    def _enforce_cancels(self) -> None:
+        now = time.monotonic()
+        doomed: list[tuple[Job, Worker]] = []
+        with self.lock:
+            for job in self.jobs.values():
+                if (job.cancel_requested and job.cancel_deadline
+                        and now > job.cancel_deadline and job.worker
+                        and job.status not in TERMINAL_STATUSES):
+                    # Disarmed as it fires: the kill is what ends this job, and
+                    # a deadline left standing would re-kill whatever worker
+                    # the pool hands out next.
+                    job.cancel_deadline = None
+                    doomed.append((job, job.worker))
+        for job, worker in doomed:
+            worker._log_write(
+                f"[job {job.id}] cancel ignored for {CANCEL_GRACE_S:.0f}s "
+                f"— killing the worker\n".encode())
+            # Outside the lock: the runner thread is about to see EOF on this
+            # worker's stdout and will want the lock to finish the job.
+            worker.kill()
 
     def _handle_worker_error(self, job: Job, msg: dict) -> None:
         kind = msg.get("kind", "runtime")

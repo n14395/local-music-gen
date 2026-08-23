@@ -58,7 +58,7 @@ final class ModelFavouritesTests: XCTestCase {
     /// test run cannot leave favourites in the real app's preferences — the
     /// test host *is* the app bundle, so its defaults are the user's.
     func testTogglePersistsAndIsIndependentOfLicences() {
-        let key = "favouriteModels"
+        let key = "catalog.favourites"
         let saved = UserDefaults.standard.stringArray(forKey: key)
         defer { UserDefaults.standard.set(saved, forKey: key) }
         UserDefaults.standard.removeObject(forKey: key)
@@ -83,7 +83,7 @@ final class ModelFavouritesTests: XCTestCase {
     /// are a local preference with no row anywhere. Hearting every model in
     /// sight must leave the Library's count at zero.
     func testHeartingModelsDoesNotTouchTheLibraryFavourites() throws {
-        let key = "favouriteModels"
+        let key = "catalog.favourites"
         let saved = UserDefaults.standard.stringArray(forKey: key)
         defer { UserDefaults.standard.set(saved, forKey: key) }
         UserDefaults.standard.removeObject(forKey: key)

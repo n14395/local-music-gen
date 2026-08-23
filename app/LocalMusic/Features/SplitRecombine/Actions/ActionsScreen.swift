@@ -9,6 +9,7 @@ import SwiftUI
 /// elsewhere ("Split this song", "Find matches") lands directly on a configured
 /// page, and so leaving Actions and coming back does not lose your place.
 struct ActionsScreen: View {
+    let settings: AppSettings
     let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
@@ -381,7 +382,8 @@ struct ActionsScreen: View {
         switch recipe.engine {
         case .split(let task, let note):
             SplitActionView(recipe: recipe, task: task, note: note,
-                            sourceId: sourceId, catalog: catalog,
+                            sourceId: sourceId, settings: settings,
+                            catalog: catalog,
                             library: library, parts: parts, jobs: jobs,
                             playback: playback, onOpenModels: { onOpenModels(requirement(for: recipe)) },
                             onBack: back)

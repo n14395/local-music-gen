@@ -95,6 +95,21 @@ class CancelledError(Exception):
     """Raised by adapters when they observe a cancel request."""
 
 
+class UnstoppableWorkError(CancelledError):
+    """Cancelled, but the adapter could not unwind what it had already started.
+
+    Some upstream pipelines run their real work on a thread of their own and
+    expose no hook into it (ACE-Step's `generate_music` is the example), so
+    there is no point at which an adapter can make that work stop. Raising this
+    instead of a plain `CancelledError` says the difference out loud: the job is
+    cancelled, and this worker process is not fit to be reused, because
+    something inside it is still computing and still holding the accelerator.
+
+    `worker_main` answers it by ending the process — which is this codebase's
+    only real unload — after reporting the cancel.
+    """
+
+
 @dataclass
 class GenerateResult:
     wav_path: str

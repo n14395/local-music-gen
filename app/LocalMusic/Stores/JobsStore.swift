@@ -259,6 +259,16 @@ final class JobsStore {
         notifyOnLanding.remove(jobId) != nil
     }
 
+    /// Settings' "always tell me when a render lands": every Generate submit
+    /// arrives pre-armed, exactly as if the render card's button had been
+    /// pressed on it. Task jobs are not armed — the button never was on them.
+    var autoArm: @MainActor () -> Bool = { false }
+
+    /// The seed of the newest generated take (take a of its batch) — what
+    /// Settings' "hold the seed" reuses on the next submit. Session-scoped,
+    /// like the queue itself.
+    private(set) var lastSeedUsed: Int64?
+
     /// Ever-increasing id for `RenderLogLine`. Store-wide rather than
     /// per-job: ids only have to be unique within the list that draws them,
     /// and one counter cannot collide across a queue.
@@ -270,7 +280,7 @@ final class JobsStore {
     var onPartsIngested: ([PartRecord]) -> Void = { _ in }
     /// A finished Editor render, with why it was made. The audio artifact's
     /// file still sits in the engine's Outputs directory; the handler moves
-    /// it or the 24 h GC takes it.
+    /// it, or the engine's retention sweep collects it eventually.
     var onEditorArtifact: (JobInfo, JobResult, EditorRenderPurpose) -> Void = {
         _, _, _ in }
 
@@ -343,10 +353,12 @@ final class JobsStore {
                 durationS: durationS, count: count, params: params,
                 force: false, preview: preview))
             lastError = nil
+            let armed = autoArm()
             for ref in created.jobs {
                 if let chosen, !chosen.isEmpty {
                     pendingContext[ref.jobId] = .generate(name: chosen)
                 }
+                if armed { setNotifyOnLanding(ref.jobId, true) }
                 await track(jobId: ref.jobId)
             }
             return created
@@ -796,8 +808,35 @@ final class JobsStore {
         return false
     }
 
+    /// Jobs whose cancel has been asked for and not yet landed.
+    ///
+    /// The request is the fast half; stopping a model mid-take is not. Between
+    /// the two there used to be nothing to look at — the button kept saying
+    /// "Cancel take", the percentage sat where the last progress event left it,
+    /// and a cancel that was working perfectly well was indistinguishable from
+    /// a dead button. Pressing it twice was the only thing left to try.
+    private(set) var canceling: Set<String> = []
+
+    func isCanceling(_ jobId: String) -> Bool { canceling.contains(jobId) }
+
+    /// Ask the engine to stop this job (contract §5.3).
+    ///
+    /// The id stays in `canceling` until the job reaches a terminal state,
+    /// which is the engine's answer rather than ours — a 202 only means the
+    /// request was accepted, and the take is still running when it arrives.
     func cancel(_ jobId: String) async {
-        try? await client?.cancelJob(jobId)
+        guard let client else { return }
+        canceling.insert(jobId)
+        do {
+            try await client.cancelJob(jobId)
+        } catch {
+            canceling.remove(jobId)
+            // 409 JOB_NOT_CANCELABLE: it finished between the click and the
+            // request. Nothing went wrong and there is nothing to say — the
+            // row is about to settle into whatever it became.
+            if (error as? APIError)?.code == "JOB_NOT_CANCELABLE" { return }
+            lastError = error.localizedDescription
+        }
     }
 
     /// Hold the render queue, or release it (contract §5.7).
@@ -931,15 +970,62 @@ final class JobsStore {
     func dismiss(_ jobId: String) {
         active.removeValue(forKey: jobId)
         pendingContext.removeValue(forKey: jobId)
+        canceling.remove(jobId)
+        // And the auto-clear stamp: a row dismissed by hand and somehow
+        // re-adopted starts its grace over rather than expiring on sight.
+        finishedSeenAt.removeValue(forKey: jobId)
     }
 
     /// Clear every row that has stopped — succeeded, failed or cancelled.
     ///
-    /// Finished rows now wait to be dismissed rather than disappearing on a
-    /// timer, which is the point; but a day's work is fifty of them, and
-    /// "manually dismissed" should not have to mean fifty clicks.
+    /// Finished rows wait to be dismissed rather than disappearing on a
+    /// timer by default; but a day's work is fifty of them, and "manually
+    /// dismissed" should not have to mean fifty clicks.
     func dismissFinished() {
         for job in active.values where job.status.isTerminal { dismiss(job.id) }
+    }
+
+    // MARK: auto-clear
+
+    /// How long a finished row stays before being dismissed on the user's
+    /// behalf; nil (the default) keeps rows until dismissed by hand. A closure
+    /// into Settings so a change applies to rows already finished.
+    var autoClearAfterS: @MainActor () -> TimeInterval? = { nil }
+
+    /// When each terminal row was first *seen* terminal. Stamped by the sweep
+    /// rather than at every status assignment — terminal transitions happen in
+    /// a dozen ingest paths, and a row kept for minutes does not care about a
+    /// few seconds of stamping slack.
+    private var finishedSeenAt: [String: Date] = [:]
+    private var autoClearTask: Task<Void, Never>?
+
+    /// Kick the sweeper. Called on every engine event and on a Settings
+    /// change; cheap when the timer is already running or the policy is off.
+    func ensureAutoClearRunning() {
+        guard autoClearTask == nil, autoClearAfterS() != nil,
+              !active.isEmpty else { return }
+        // Inherits the store's MainActor context; only the sleeps yield.
+        autoClearTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.sweepFinished() else { break }
+            }
+            self?.autoClearTask = nil
+        }
+    }
+
+    /// One tick: stamp newly-terminal rows, dismiss the expired, and say
+    /// whether there is anything left to watch.
+    @discardableResult
+    func sweepFinished(now: Date = Date()) -> Bool {
+        finishedSeenAt = finishedSeenAt.filter { active[$0.key] != nil }
+        guard let after = autoClearAfterS() else { return false }
+        for job in active.values where job.status.isTerminal {
+            let seen = finishedSeenAt[job.id] ?? now
+            finishedSeenAt[job.id] = seen
+            if now.timeIntervalSince(seen) >= after { dismiss(job.id) }
+        }
+        return !active.isEmpty
     }
 
     /// Put a row on the list that this store did not submit.
@@ -997,20 +1083,27 @@ final class JobsStore {
             // the engine drops a succeeded job's previews; keeping the path
             // would leave the card drawing from a file that is gone
             active[jobId]?.preview = nil
+            // A take that landed while the cancel was in flight: the request
+            // lost, and the row must stop claiming otherwise.
+            canceling.remove(jobId)
             // The arming is NOT cleared here: this runs before the notifier
             // reads it. `takeNotifyOnLanding` spends it instead.
             Task { await ingest(jobId: jobId) }
         case .jobFailed(let jobId, let error):
             active[jobId]?.status = .failed
             active[jobId]?.error = error
+            canceling.remove(jobId)
         case .jobCanceled(let jobId):
             active[jobId]?.status = .canceled
             notifyOnLanding.remove(jobId)
+            canceling.remove(jobId)
         case .queueState(let held, _):
             queueHeld = held
         default:
             break
         }
+        // Any of the cases above can be the one that made a row terminal.
+        ensureAutoClearRunning()
     }
 
     // MARK: ingest
@@ -1059,6 +1152,7 @@ final class JobsStore {
         // typed name — rather than as four unrelated tracks. The DB is
         // consulted once, and only when the name was left at its default.
         let outputs = result.outputs ?? []
+        if let seed = outputs.first?.seedUsed { lastSeedUsed = seed }
         let chosen: String?
         if case .generate(let name)? = pendingContext[jobId] { chosen = name }
         else { chosen = nil }
@@ -1468,6 +1562,4 @@ final class JobsStore {
             .replacingOccurrences(of: " ", with: "-")
             .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
     }
-
-    /// Finished jobs leave the queue view after a short grace period.
 }

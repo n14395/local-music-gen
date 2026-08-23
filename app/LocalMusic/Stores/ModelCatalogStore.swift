@@ -16,6 +16,13 @@ final class ModelCatalogStore {
     /// argument is a question people route around.
     private let backend: BackendStatusStore?
 
+    /// The Models list's "only installed" filter. Session state on the store
+    /// because two surfaces drive it — the screen's own toggle and the
+    /// sidebar storage card's "Free up space…" — and because persisting it
+    /// (as it once was) meant that button silently rewrote a preference that
+    /// then greeted the next launch filtered, with nothing saying why.
+    var onlyInstalledFilter = false
+
     /// True once the catalog has come back from the engine at least once.
     /// Until then an empty `models` means "we don't know yet", not "nothing is
     /// installed" — the difference the UI needs to show a spinner instead of a
@@ -26,7 +33,7 @@ final class ModelCatalogStore {
     private(set) var acceptedLicenses: Set<String> {
         didSet {
             UserDefaults.standard.set(Array(acceptedLicenses),
-                                      forKey: "acceptedLicenses")
+                                      forKey: "catalog.acceptedLicenses")
         }
     }
 
@@ -42,7 +49,7 @@ final class ModelCatalogStore {
     private(set) var favouriteModelIds: Set<String> {
         didSet {
             UserDefaults.standard.set(Array(favouriteModelIds),
-                                      forKey: "favouriteModels")
+                                      forKey: "catalog.favourites")
         }
     }
 
@@ -66,11 +73,23 @@ final class ModelCatalogStore {
 
     init(backend: BackendStatusStore? = nil) {
         self.backend = backend
+        // Keys carry the `catalog.` prefix since the Settings rework;
+        // `AppSettings.migrateLegacyKeys` moved old values across before any
+        // store is constructed.
         acceptedLicenses = Set(UserDefaults.standard
-            .stringArray(forKey: "acceptedLicenses") ?? [])
+            .stringArray(forKey: "catalog.acceptedLicenses") ?? [])
         favouriteModelIds = Set(UserDefaults.standard
-            .stringArray(forKey: "favouriteModels") ?? [])
+            .stringArray(forKey: "catalog.favourites") ?? [])
         hasHFToken = Keychain.get(account: "hf-token") != nil
+    }
+
+    /// Re-read the persisted sets after something outside this store rewrote
+    /// them — "Reset all preferences" in Settings is the one caller.
+    func reloadPersisted() {
+        acceptedLicenses = Set(UserDefaults.standard
+            .stringArray(forKey: "catalog.acceptedLicenses") ?? [])
+        favouriteModelIds = Set(UserDefaults.standard
+            .stringArray(forKey: "catalog.favourites") ?? [])
     }
 
     /// Whether `models` can be believed yet, and why not when it cannot.
@@ -92,6 +111,13 @@ final class ModelCatalogStore {
 
     func acceptLicense(for model: ModelInfo) {
         acceptedLicenses.insert(model.id)
+    }
+
+    /// Forget an acceptance — the next download of that model shows its
+    /// license sheet again. Settings' review list is the only caller; the
+    /// set was append-only before it existed.
+    func revokeLicense(modelId: String) {
+        acceptedLicenses.remove(modelId)
     }
 
     func refresh() async {
@@ -141,11 +167,17 @@ final class ModelCatalogStore {
         await refresh()
     }
 
+    /// Announced after the engine accepts a pin change — the pinned id, or
+    /// nil for an unpin. AppEnvironment records it so the pin can be replayed
+    /// onto the next engine start.
+    var onPinChanged: @MainActor (String?) -> Void = { _ in }
+
     func setPin(_ model: ModelInfo, enabled: Bool) async {
         guard let client else { return }
         do {
             try await client.setPin(modelId: model.id, enabled: enabled)
             lastError = nil
+            onPinChanged(enabled ? model.id : nil)
         } catch {
             lastError = error.localizedDescription
         }

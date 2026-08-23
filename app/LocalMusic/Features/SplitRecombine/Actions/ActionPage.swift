@@ -478,6 +478,7 @@ struct ActionTextField: View {
     var body: some View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
+            .tint(Bench.Palette.accent)
             .font(font)
             .foregroundStyle(Bench.Palette.textPrimary)
             .padding(.horizontal, 11).padding(.vertical, 9)

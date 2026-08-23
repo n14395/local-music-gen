@@ -22,6 +22,11 @@ final class LibraryStore {
 
     var onSongsImported: ([SongRecord]) -> Void = { _ in }
 
+    /// Whether deletions send the user's files to the Trash. A closure into
+    /// Settings rather than a copied flag, so flipping the toggle applies to
+    /// the very next delete.
+    var usesTrash: @MainActor () -> Bool = { true }
+
     /// Import external audio files as library songs (origin "imported").
     @discardableResult
     func importSongs(urls: [URL]) async -> [SongRecord] {
@@ -173,9 +178,12 @@ final class LibraryStore {
     /// peak cache drawn from it. Matched on the id prefix rather than a
     /// recomputed name — an applied track's file has been renamed, and the
     /// backup that outlives it must still be found.
-    static func removeEditorLeftovers(id: String) {
+    /// The backup is the pre-edit original — user content, so it follows the
+    /// same Trash policy as the file it backs; the peak cache is derived and
+    /// always goes outright.
+    static func removeEditorLeftovers(id: String, toTrash: Bool = false) {
         for backup in StoragePaths.backups(forId: id) {
-            try? FileManager.default.removeItem(at: backup)
+            FileDisposal.dispose(backup, toTrash: toTrash)
         }
         try? FileManager.default.removeItem(
             at: StoragePaths.libraryWaveforms
@@ -199,23 +207,24 @@ final class LibraryStore {
     }
 
     private func deleteWithoutRefresh(_ song: SongRecord) {
+        let toTrash = usesTrash()
         // Parts are derivatives: their rows cascade with the song row, so the
         // files must go first.
         if let partsRepo {
             for part in (try? partsRepo.allParts(forSong: song.id)) ?? [] {
-                try? FileManager.default.removeItem(at: part.fileURL)
+                FileDisposal.dispose(part.fileURL, toTrash: toTrash)
                 if let preview = part.previewURL {
                     try? FileManager.default.removeItem(at: preview)
                 }
                 try? FileManager.default.removeItem(at: part.waveformURL)
-                LibraryStore.removeEditorLeftovers(id: part.id)
+                LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash)
                 try? partsRepo.deleteAnalysis(ownerId: part.id)
             }
             try? partsRepo.deleteAnalysis(ownerId: song.id)
         }
-        try? FileManager.default.removeItem(at: song.fileURL)
+        FileDisposal.dispose(song.fileURL, toTrash: toTrash)
         try? FileManager.default.removeItem(at: song.waveformURL)
-        LibraryStore.removeEditorLeftovers(id: song.id)
+        LibraryStore.removeEditorLeftovers(id: song.id, toTrash: toTrash)
         try? repo.delete(id: song.id)
     }
 
