@@ -83,6 +83,13 @@ final class WorkbenchModel {
     var keepTracks = false
     var outputName = ""
 
+    /// Jobs this bench submitted (Create Mix, Reimagine) that the full-page
+    /// render view watches. On the model rather than the screen so the render
+    /// is still on show after navigating away and back mid-mix. A receipt,
+    /// like `StyleTransferModel.pendingRuns` — the results live in the queue
+    /// and the Library.
+    var renderingJobIds: Set<String> = []
+
     // MARK: target grid
 
     var effectiveTargetBpm: Double? {

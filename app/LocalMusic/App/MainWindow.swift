@@ -599,6 +599,9 @@ struct MainWindow: View {
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
                                 jobs: env.jobsStore, playback: env.playback,
+                                telemetry: env.telemetry,
+                                timings: env.renderTimings,
+                                notifications: env.notifications,
                                 onOpenModels: { openModels(for: $0) })
         case .actions:
             ActionsScreen(
@@ -625,6 +628,9 @@ struct MainWindow: View {
             WorkbenchScreen(model: env.workbench, catalog: env.catalog,
                             library: env.library, parts: env.partsStore,
                             jobs: env.jobsStore, playback: env.playback,
+                            telemetry: env.telemetry,
+                            timings: env.renderTimings,
+                            notifications: env.notifications,
                             notices: $workbenchNotices,
                             onOpenModels: { openModels(for: nil) },
                             onOpenStyleTransfer: { preset, sourceId in

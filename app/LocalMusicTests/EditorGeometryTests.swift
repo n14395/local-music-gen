@@ -200,6 +200,57 @@ final class EditorGeometryTests: XCTestCase {
         XCTAssertEqual(noTrack.draggingEdge(.end, to: 10), noTrack)
     }
 
+    // MARK: resize
+
+    /// The bug this exists to stop: resizing the window used to leave
+    /// pixels-per-second alone, so the seconds in view moved with the window
+    /// and the overview strip's window grew or shrank on its own.
+    func testResizingKeepsTheSecondsInView() {
+        let g = geo(start: 20, px: 10, width: 800)   // 80 s in view, 20–100
+        let wider = g.resized(toWidth: 1200)
+        XCTAssertEqual(wider.visibleSeconds, 80, accuracy: 1e-6)
+        XCTAssertEqual(wider.visibleStartS, 20, accuracy: 1e-6)
+        XCTAssertEqual(wider.pxPerSecond, 15, accuracy: 1e-6)
+        let narrower = g.resized(toWidth: 400)
+        XCTAssertEqual(narrower.visibleSeconds, 80, accuracy: 1e-6)
+        XCTAssertEqual(narrower.visibleStartS, 20, accuracy: 1e-6)
+    }
+
+    /// Fit is a span like any other, so it survives a resize as fit rather
+    /// than as the pixel scale that happened to mean fit at the old width.
+    func testResizingKeepsAFittedTrackFitted() {
+        let g = geo(start: 0, px: EditorGeometry.fitZoom(durationS: 200,
+                                                         width: 800))
+        let out = g.resized(toWidth: 1200)
+        XCTAssertEqual(out.pxPerSecond,
+                       EditorGeometry.fitZoom(durationS: 200, width: 1200),
+                       accuracy: 1e-6)
+        XCTAssertEqual(out.visibleSeconds, 200, accuracy: 1e-6)
+    }
+
+    /// Widening at full magnification cannot hold the span — there is no zoom
+    /// past `maxZoom` to spend on it — so the extra seconds arrive and the
+    /// window still has to land inside the track.
+    func testResizingAtMaxZoomTakesTheExtraSeconds() {
+        let g = geo(start: 197, px: EditorGeometry.maxZoom, width: 800)
+        let out = g.resized(toWidth: 1600)
+        XCTAssertEqual(out.pxPerSecond, EditorGeometry.maxZoom, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleSeconds, 4, accuracy: 1e-6)
+        // The window was 197–199 and cannot start at 197 now without running
+        // off the end, so it slides back rather than overhanging.
+        XCTAssertEqual(out.visibleStartS, 196, accuracy: 1e-6)
+        XCTAssertEqual(out.visibleEndS, 200, accuracy: 1e-6)
+    }
+
+    /// Before the first layout there is no scale to preserve; the width is
+    /// recorded and the fit sentinel left for the view to resolve.
+    func testResizingFromNothingIsJustTheNewWidth() {
+        let g = geo(px: 0, width: 0)
+        let out = g.resized(toWidth: 800)
+        XCTAssertEqual(out.width, 800)
+        XCTAssertEqual(out.pxPerSecond, 0)
+    }
+
     func testSnapUsesAScreenRadius() {
         let coarse = geo(px: 10)            // 8 px = 0.8 s
         XCTAssertEqual(coarse.snapped(10.5, candidates: [10, 12]), 10,

@@ -7,6 +7,7 @@ from .config import Settings
 from .downloader import DownloadManager
 from .events import EventBus
 from .jobqueue import JobQueue
+from .library import LibraryManager
 from .registry import Registry
 
 
@@ -21,6 +22,7 @@ class EngineState:
         self.registry = Registry(settings)
         self.downloads = DownloadManager(self.registry, bus, lambda: self.hf_token)
         self.queue = JobQueue(self.registry, bus, settings)
+        self.library = LibraryManager(self.registry, bus, self)
         # Last working set any worker reported. It describes the Mac, not the
         # process, so it stays true after that worker exits — which is the only
         # way an idle engine can report a ceiling at all.

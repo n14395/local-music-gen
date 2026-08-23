@@ -280,6 +280,20 @@ class Registry:
         with open(self._marker_path(model_id), "w") as f:
             json.dump({"bytes": bytes_total}, f)
 
+    def is_marked(self, model_id: str) -> bool:
+        """Was this model's download completed? A claim about history, not
+        about the bytes on disk right now — `is_installed` is the one that
+        checks whether the weights are still there."""
+        return os.path.exists(self._marker_path(model_id))
+
+    def marked_bytes(self, model_id: str) -> int:
+        """What the completed download recorded, or 0 if that is unreadable."""
+        try:
+            with open(self._marker_path(model_id)) as f:
+                return int(json.load(f)["bytes"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return 0
+
     def remove_marker(self, model_id: str) -> None:
         try:
             os.unlink(self._marker_path(model_id))
@@ -291,7 +305,7 @@ class Registry:
         # manual cache cleanup, or historically a shared-repo delete). Trusting
         # a stale marker sends jobs to a worker with no snapshots — an opaque
         # crash instead of a "Download" button.
-        if not os.path.exists(self._marker_path(model_id)):
+        if not self.is_marked(model_id):
             return False
         snaps = self.snapshot_dirs(model_id)
         model = self.models[model_id]
@@ -325,7 +339,7 @@ class Registry:
         for other_id, other in self.models.items():
             if other_id == ignoring or other["family"] != family:
                 continue
-            if os.path.exists(self._marker_path(other_id)):
+            if self.is_marked(other_id):
                 return True
         return False
 
@@ -350,7 +364,7 @@ class Registry:
         self.clear_attempt(model_id)   # deleted ≠ interrupted mid-download
         still_needed = set()
         for other_id, other in self.models.items():
-            if other_id != model_id and os.path.exists(self._marker_path(other_id)):
+            if other_id != model_id and self.is_marked(other_id):
                 still_needed.update(r["repo_id"] for r in other["hf_repos"])
         for repo in self.models[model_id]["hf_repos"]:
             if repo["repo_id"] in still_needed:
@@ -360,11 +374,8 @@ class Registry:
     def info(self, model_id: str, active_download_state: str | None = None) -> dict:
         m = dict(self.models[model_id])
         if self.is_installed(model_id):
-            try:
-                with open(self._marker_path(model_id)) as f:
-                    installed_bytes = json.load(f)["bytes"]
-            except (OSError, json.JSONDecodeError, KeyError):
-                installed_bytes = self.cache_bytes(model_id)
+            installed_bytes = (self.marked_bytes(model_id)
+                               or self.cache_bytes(model_id))
             state = "installed"
         elif active_download_state:
             state, installed_bytes = "downloading", self.cache_bytes(model_id)

@@ -121,6 +121,9 @@ struct WorkbenchScreen: View {
     let parts: PartsStore
     let jobs: JobsStore
     let playback: PlaybackController
+    let telemetry: TelemetryStore
+    let timings: RenderTimingStore
+    let notifications: NotificationService
     /// One-off notes from reopening a finished mix (recovered tempo, missing
     /// parts, settings that were never recorded).
     @Binding var notices: [String]
@@ -145,36 +148,72 @@ struct WorkbenchScreen: View {
     @State private var peaksStore = PeaksStore()
     @State private var reimaginePrompt = ""
     @State private var reimagineModelId: String?
+    /// Set when the user asks for the bench back while a mix renders —
+    /// Generate's `showingComposer`, under this screen's name for it.
+    @State private var showingBench = false
 
     private var mixModel: ModelInfo? {
         MixModels.mixdown(in: catalog.models)
     }
 
+    /// The mixes and Reimagine passes this bench has in flight, as queue rows.
+    private var renderingJobs: [JobsStore.ActiveJob] {
+        let ids = model.renderingJobIds
+        return jobs.displayJobs.filter {
+            !$0.status.isTerminal && ids.contains($0.id)
+        }
+    }
+
+    private var isRendering: Bool { !renderingJobs.isEmpty }
+    private var showsRendering: Bool { isRendering && !showingBench }
+
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
             topBar
-            WorkbenchAlignBar(model: model,
-                              onAddPart: { showPicker = true },
-                              onAddAILayer: addAILayer)
-            if !notices.isEmpty { noticesStrip }
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            WorkbenchCommitBar(
-                model: model, jobs: jobs, outputPath: $outputPath,
-                mixModel: mixModel,
-                narration: narration, isPreviewing: preview.isPlaying,
-                reimaginePrompt: $reimaginePrompt,
-                reimagineModelId: $reimagineModelId,
-                reimagineModels: reimagineModels,
-                readiness: catalog.readiness,
-                canReimagine: reimagineSource != nil,
-                onPreview: togglePreview,
-                onCreateMix: createMix,
-                onReimagine: { Task { await createReimagine() } },
-                onOpenModels: onOpenModels)
+            if showsRendering {
+                // The same full-page render Generate shows. An exact mix is
+                // usually seconds; a Reimagine pass is a generation, and this
+                // is where you watch it. Done rows cover both shapes a bench
+                // run can land as.
+                StudioRenderingPane(jobs: jobs, library: library,
+                                    playback: playback, catalog: catalog,
+                                    telemetry: telemetry, timings: timings,
+                                    notifications: notifications,
+                                    renderingJobs: renderingJobs,
+                                    doneOrigins: [.recombined, .generated])
+            } else {
+                WorkbenchAlignBar(model: model,
+                                  onAddPart: { showPicker = true },
+                                  onAddAILayer: addAILayer)
+                if !notices.isEmpty { noticesStrip }
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WorkbenchCommitBar(
+                    model: model, jobs: jobs, outputPath: $outputPath,
+                    mixModel: mixModel,
+                    narration: narration, isPreviewing: preview.isPlaying,
+                    reimaginePrompt: $reimaginePrompt,
+                    reimagineModelId: $reimagineModelId,
+                    reimagineModels: reimagineModels,
+                    readiness: catalog.readiness,
+                    canReimagine: reimagineSource != nil,
+                    onPreview: togglePreview,
+                    onCreateMix: createMix,
+                    onReimagine: { Task { await createReimagine() } },
+                    onOpenModels: onOpenModels)
+            }
         }
         .background(Bench.Palette.windowBackground)
+        // Coming back to a finished mix should not leave you stranded on an
+        // empty rendering pane; the receipts go with it, so the next visit
+        // starts clean.
+        .onChange(of: isRendering) {
+            if !isRendering {
+                showingBench = false
+                model.renderingJobIds.removeAll()
+            }
+        }
         .sheet(isPresented: $showPicker) {
             PartPickerSheet(
                 slotLabel: "Any part or song",
@@ -228,6 +267,14 @@ struct WorkbenchScreen: View {
                     .foregroundStyle(Bench.Palette.textFaintest)
             }
         } trailing: {
+            if isRendering {
+                RenderStatusPill(
+                    label: showingBench
+                        ? "Back to render"
+                        : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
+                    showingBench.toggle()
+                }
+            }
             Menu {
                 Button("Pull everything to bar 1") { pullToStart() }
                     .disabled(model.clips.isEmpty)
@@ -474,10 +521,12 @@ struct WorkbenchScreen: View {
         let mode: StyleTransferMode =
             StyleTransferMode.cover.canRun(model) ? .cover : .shape
         params = mode.wireParams(.init(sourceUploadId: upload), model: model)
-        await jobs.submitGenerative(
+        if let created = await jobs.submitGenerative(
             modelId: model.id, prompt: reimaginePrompt, lyrics: nil,
             durationS: model.capabilities.duration.defaultS,
-            params: params, context: nil)
+            params: params, context: nil) {
+            self.model.renderingJobIds.formUnion(created.jobs.map(\.jobId))
+        }
     }
 
     private var previewItems: [MultiPartPlayer.Item] {
@@ -512,9 +561,12 @@ struct WorkbenchScreen: View {
             ? "Workbench mix" : model.outputName
         preview.stop()
         Task {
-            await jobs.submitRecombine(
+            if let created = await jobs.submitRecombine(
                 modelId: mixModel.id, recipeId: "workbench", title: title,
-                ingredients: model.ingredients(), options: model.options())
+                ingredients: model.ingredients(), options: model.options()) {
+                // The receipt the full-page render view watches.
+                model.renderingJobIds.formUnion(created.jobs.map(\.jobId))
+            }
         }
     }
 }

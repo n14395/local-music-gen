@@ -74,6 +74,7 @@ final class AppEnvironment {
     let backendStatus: BackendStatusStore
     let catalog: ModelCatalogStore
     let downloadsStore: DownloadsStore
+    let modelLibrary = ModelLibraryStore()
     let library: LibraryStore
     let partsStore: PartsStore
     let partsRepo: PartsRepository
@@ -320,6 +321,7 @@ final class AppEnvironment {
                 catalog.client = client
                 downloadsStore.client = client
                 jobsStore.client = client
+                modelLibrary.client = client
                 if let client, let token = Keychain.get(account: "hf-token") {
                     try? await client.setHFToken(token)
                 }
@@ -354,6 +356,7 @@ final class AppEnvironment {
         case .event(let event):
             downloadsStore.apply(event)
             jobsStore.apply(event)
+            modelLibrary.apply(event)
             switch event {
             case .modelsChanged, .downloadCompleted, .downloadFailed:
                 Task { await catalog.refresh() }
@@ -370,6 +373,15 @@ final class AppEnvironment {
             case .jobCanceled(let jobId):
                 styleTransfer.chainStepFailed(jobId: jobId,
                                               message: "cancelled")
+            case .libraryFinished(let op):
+                // Applied on any terminal state, not only success: a relocate
+                // that fell over halfway has still moved repositories, and the
+                // folder the engine should come back pointing at is the new
+                // one either way — the models that made it are there, and the
+                // rest can be downloaded again.
+                if op.restartRequired == true, let destination = op.destination {
+                    settings.hfHomePath = Self.librarySetting(for: destination)
+                }
             case .engineWarning(let message):
                 backendStatus.appendStderr("[warning] \(message)")
             default:
@@ -377,6 +389,16 @@ final class AppEnvironment {
             }
             notify(for: event)
         }
+    }
+
+    /// nil means "the shared Hugging Face default", which is what
+    /// `hfHomePath` stores for it — so choosing that folder explicitly has to
+    /// land on nil rather than on a hard-coded copy of the same path.
+    static func librarySetting(for path: String) -> String? {
+        let chosen = URL(fileURLWithPath: path).standardizedFileURL.path
+        let shared = URL(fileURLWithPath: NSString(string: "~/.cache/huggingface")
+            .expandingTildeInPath).standardizedFileURL.path
+        return chosen == shared ? nil : chosen
     }
 
     var hasRunningJob: Bool {

@@ -71,6 +71,8 @@ struct SettingsView: View {
                         case .queue:
                             queueCard($settings)
                         case .models:
+                            if libraryNeedsRestart { libraryRestartBanner }
+                            ModelLibraryCard(env: env)
                             huggingFaceCard
                             licencesCard
                         case .engine:
@@ -780,6 +782,44 @@ struct SettingsView: View {
         return launched != env.settings.engineLaunchConfig
     }
 
+    /// The library folder has changed on disk and the engine has not been told.
+    /// Distinct from the generic engine-settings banner because the
+    /// consequence is specific and alarming if left unexplained: until the
+    /// restart, every model reads as not downloaded.
+    private var libraryNeedsRestart: Bool {
+        env.modelLibrary.pendingRestartPath != nil
+    }
+
+    private var libraryRestartBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            StatusDot(color: Bench.Palette.warn, size: 6)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Restart the engine to use the new library folder.")
+                    .font(Bench.Typo.secondary)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+                Text("Until it restarts the engine is still reading the old "
+                     + "folder, so models will show as not downloaded.")
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Restart engine now") {
+                _ = env.modelLibrary.consumePendingRestart()
+                Task {
+                    await env.backendManager.restart()
+                    await env.modelLibrary.refresh()
+                }
+            }
+            .buttonStyle(.benchSecondary)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .benchCard(fill: Bench.Palette.warn.opacity(0.07),
+                   stroke: Bench.Palette.warn.opacity(0.25))
+    }
+
     private var restartBanner: some View {
         HStack(spacing: 10) {
             StatusDot(color: Bench.Palette.warn, size: 6)
@@ -878,20 +918,16 @@ struct SettingsView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                Button("Choose folder…", action: chooseCacheFolder)
-                    .buttonStyle(.benchSecondary)
-                if env.settings.hfHomePath != nil {
-                    Button("Use shared default") {
-                        env.settings.hfHomePath = nil
-                    }
-                    .buttonStyle(.bench(.quiet))
-                }
-            }
+            // Read-only here on purpose. This used to offer its own "Choose
+            // folder…", which changed a path and moved nothing — so the models
+            // stayed in the old folder and the catalog appeared to have
+            // un-downloaded itself. Changing the folder is a decision about
+            // what happens to tens of gigabytes, and it now lives with the
+            // rest of that decision on Models & Downloads.
+            Button("Manage in Models & Downloads") { pane = .models }
+                .buttonStyle(.bench(.quiet))
             caption("Where model weights live — the shared Hugging Face cache "
-                    + "by default, so other tools reuse them. Changing it "
-                    + "moves nothing: already-downloaded models stay where "
-                    + "they are, new downloads land in the new place.")
+                    + "by default, so other tools reuse them.")
             Divider().overlay(Bench.Palette.hairline)
             HStack(spacing: 12) {
                 Text("Keep render files for")
@@ -926,17 +962,6 @@ struct SettingsView: View {
 
     static func retentionLabel(_ days: Int) -> String {
         days == 0 ? "Forever" : "\(days) days"
-    }
-
-    private func chooseCacheFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.prompt = "Use This Folder"
-        if panel.runModal() == .OK, let url = panel.url {
-            env.settings.hfHomePath = url.path
-        }
     }
 
     private var licencesCard: some View {

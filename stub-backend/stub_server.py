@@ -587,6 +587,9 @@ class State:
         self.jobs: dict[str, Job] = {}
         self.job_order: list[str] = []      # queued job ids, submission order
         self.queue_held = False
+        # Contract 4.4: at most one library operation at a time.
+        self.library_operation: dict | None = None
+        self.library_cancel = False
         self.active_job: str | None = None
         self.hf_token: str | None = None
         self.pinned_model_id: str | None = None
@@ -1217,6 +1220,170 @@ async def system():
 @app.post("/v1/shutdown", status_code=202)
 async def shutdown():
     asyncio.get_running_loop().call_later(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    return {}
+
+
+# ----- model library (contract 4.4)
+#
+# Simulated, like the downloads are: the stub has no cache directory and no
+# bytes to move. It answers from the same install state the rest of the stub
+# keeps, so the Settings group draws real numbers that respond to a simulated
+# download — and the two long operations run on a timer rather than on files.
+
+
+LIBRARY_ROOT = os.path.expanduser("~/.cache/huggingface")
+
+
+def _library_repos():
+    """Our repos with simulated bytes, from the stub's own install state."""
+    out = []
+    for mid, model in STATE.models.items():
+        install = STATE.install[mid]
+        if install["install_state"] not in ("installed", "partial"):
+            continue
+        for repo in model["hf_repos"]:
+            out.append({
+                "repo_id": repo["repo_id"],
+                "path": os.path.join(LIBRARY_ROOT, "hub",
+                                     "models--" + repo["repo_id"].replace("/", "--")),
+                "bytes": install["installed_bytes"] or model["size_bytes"],
+                "state": ("installed"
+                          if install["install_state"] == "installed"
+                          else "partial"),
+                "model_ids": [mid],
+            })
+    return out
+
+
+@app.get("/v1/models/library")
+async def library_info():
+    repos = _library_repos()
+    ours = sum(r["bytes"] for r in repos)
+    installed = sum(r["bytes"] for r in repos if r["state"] == "installed")
+    usage = shutil.disk_usage(os.path.expanduser("~"))
+    return {
+        "path": LIBRARY_ROOT,
+        "is_default": True,
+        "bytes": ours,
+        "installed_bytes": installed,
+        "partial_bytes": ours - installed,
+        # Deliberately larger than ours: the shared cache is the default, and a
+        # client that only ever sees the two figures equal will not have drawn
+        # the "other tools" row it is supposed to.
+        "folder_bytes": ours + 4_000_000_000,
+        "model_count": sum(1 for r in repos if r["state"] == "installed"),
+        "partial_count": sum(1 for r in repos if r["state"] == "partial"),
+        "disk_total_bytes": usage.total,
+        "disk_free_bytes": usage.free,
+        "repos": repos,
+        "operation": STATE.library_operation,
+    }
+
+
+@app.get("/v1/models/library/verify")
+async def library_verify():
+    models = [{"model_id": mid, "display_name": m["display_name"],
+               "state": "ok",
+               "expected_bytes": STATE.install[mid]["installed_bytes"],
+               "actual_bytes": STATE.install[mid]["installed_bytes"]}
+              for mid, m in STATE.models.items()
+              if STATE.install[mid]["install_state"] == "installed"]
+    return {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "models": models, "problem_count": 0,
+            "partial_repos": [r for r in _library_repos()
+                              if r["state"] == "partial"]}
+
+
+async def _run_library_operation(op: dict) -> None:
+    """Six ticks of simulated work, so a client's progress bar is exercised."""
+    total = op["bytes_total"]
+    for step in range(1, 7):
+        await asyncio.sleep(0.25)
+        if STATE.library_cancel:
+            op["canceled"] = True
+            break
+        op["bytes_done"] = int(total * step / 6)
+        op["fraction"] = step / 6
+        STATE.bus.emit("library.progress", dict(op))
+    op["state"] = "succeeded"
+    op["fraction"] = 1.0
+    op["message"] = "done"
+    if op["mode"] == "clear":
+        wanted = ("partial",) if op.get("scope") == "partial" else (
+            "installed", "partial")
+        for mid in list(STATE.models):
+            if STATE.install[mid]["install_state"] in wanted:
+                STATE.install[mid] = {"install_state": "not_installed",
+                                      "installed_bytes": 0}
+        op["removed_model_ids"] = []
+    STATE.bus.emit("library.completed", dict(op))
+    STATE.bus.emit("models.changed", {})
+
+
+def _start_library_operation(mode: str, **plan):
+    if STATE.library_operation and STATE.library_operation["state"] == "running":
+        return None
+    if any(d["state"] in ("queued", "downloading") for d in STATE.downloads.values()):
+        return err(409, "DOWNLOAD_ACTIVE", "finish or cancel the downloads first")
+    if any(j["status"] not in ("succeeded", "failed", "canceled")
+           for j in STATE.jobs.values()):
+        return err(409, "ENGINE_BUSY", "finish or cancel the queued renders first")
+    STATE.library_cancel = False
+    op = {"operation_id": f"lib_{uuid.uuid4().hex[:12]}", "mode": mode,
+          "state": "running", "fraction": 0.0, "bytes_done": 0,
+          "error": None, "canceled": False, **plan}
+    STATE.library_operation = op
+    asyncio.create_task(_run_library_operation(op))
+    return {"operation_id": op["operation_id"]}
+
+
+@app.post("/v1/models/library/clear", status_code=202)
+async def library_clear(body: dict | None = None):
+    scope = (body or {}).get("scope") or "all"
+    if scope not in ("all", "partial"):
+        return err(422, "VALIDATION", 'scope must be "all" or "partial"')
+    repos = [r for r in _library_repos()
+             if scope == "all" or r["state"] == "partial"]
+    if not repos:
+        return err(409, "LIBRARY_EMPTY",
+                   "there are no unfinished downloads in this folder"
+                   if scope == "partial"
+                   else "there is nothing of ours in this folder")
+    started = _start_library_operation(
+        "clear", bytes_total=sum(r["bytes"] for r in repos), scope=scope,
+        message=f"removing {len(repos)} repositories", repo_count=len(repos))
+    if started is None:
+        return err(409, "LIBRARY_BUSY", "a library operation is already running")
+    return started
+
+
+@app.post("/v1/models/library/relocate", status_code=202)
+async def library_relocate(body: dict):
+    path = (body.get("path") or "").strip()
+    disposition = body.get("disposition") or "move"
+    if not path:
+        return err(422, "VALIDATION", "path is required")
+    if disposition not in ("move", "delete", "leave"):
+        return err(422, "VALIDATION", "unknown disposition")
+    # expanduser on both sides: a client sending "~/.cache/huggingface" means
+    # the same folder the engine reports, and the real engine treats it so.
+    if (os.path.abspath(os.path.expanduser(path))
+            == os.path.abspath(os.path.expanduser(LIBRARY_ROOT))):
+        return err(422, "VALIDATION", "that is already the library folder")
+    repos = [] if disposition == "leave" else _library_repos()
+    started = _start_library_operation(
+        "relocate", bytes_total=sum(r["bytes"] for r in repos),
+        message="moving models", destination=os.path.abspath(path),
+        disposition=disposition, repo_count=len(repos),
+        restart_required=True)
+    if started is None:
+        return err(409, "LIBRARY_BUSY", "a library operation is already running")
+    return started
+
+
+@app.post("/v1/models/library/cancel", status_code=202)
+async def library_cancel():
+    STATE.library_cancel = True
     return {}
 
 

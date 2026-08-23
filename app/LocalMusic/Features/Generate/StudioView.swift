@@ -101,8 +101,7 @@ struct StudioView: View {
             } else if showsRendering {
                 StudioRenderingPane(jobs: jobs, library: library,
                                     playback: playback, catalog: catalog,
-                                    actions: actions, telemetry: telemetry,
-                                    timings: timings,
+                                    telemetry: telemetry, timings: timings,
                                     notifications: notifications,
                                     renderingJobs: renderingJobs)
             } else {
@@ -147,25 +146,12 @@ struct StudioView: View {
         } trailing: {
             HStack(spacing: 10) {
                 if isRendering {
-                    Button {
+                    RenderStatusPill(
+                        label: showingComposer
+                            ? "Back to render"
+                            : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
                         showingComposer.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            BenchSpinner(size: 14)
-                            Text(showingComposer
-                                 ? "Back to render"
-                                 : QueueLoad.of(jobs: renderingJobs).renderingLabel)
-                                .font(Bench.Typo.secondaryEmphasis)
-                                .foregroundStyle(Bench.Palette.accent)
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button)
-                            .fill(Bench.Palette.accent.opacity(0.12)))
-                        .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button)
-                            .strokeBorder(Bench.Palette.accent.opacity(0.28), lineWidth: 1))
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                     .help(showingComposer ? "Watch the render" : "Set up another take")
                 }
                 if !showsRendering {

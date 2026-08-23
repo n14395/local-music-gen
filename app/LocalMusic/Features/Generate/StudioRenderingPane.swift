@@ -1,12 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// Studio while something is rendering.
+/// A screen while something it started is rendering.
 ///
 /// The complaint this answers is "no sense of progress". So: the take being
 /// made gets the whole top of the screen with a percentage you can read from
 /// across the room, the pipeline says which stage is running rather than
 /// hiding it in a message string, and finished takes stay playable underneath.
+///
+/// Grown in Generate, now shared: Style Transfer and the Workbench hand it
+/// their own `renderingJobs` and get the identical treatment, which is the
+/// point — a render looks like a render whichever workspace asked for it.
 ///
 /// The queue used to be a rail down the right of this pane. It is the shell's
 /// panel now (`QueueRail`), which the transport bar opens from any screen and
@@ -18,11 +22,18 @@ struct StudioRenderingPane: View {
     let library: LibraryStore
     let playback: PlaybackController
     let catalog: ModelCatalogStore
-    let actions: SongActions
     let telemetry: TelemetryStore
     let timings: RenderTimingStore
     let notifications: NotificationService
     let renderingJobs: [JobsStore.ActiveJob]
+    /// Which library rows count as "this run's" under DONE. Generate makes
+    /// `.generated` tracks; a Workbench mix lands as `.recombined`; empty
+    /// hides the section for a host that lists results its own way.
+    var doneOrigins: Set<SongOrigin> = [.generated]
+    /// Drawn in the hero's place when there is momentarily no job to show —
+    /// a chain between steps, a submit in flight. Without it the pane would
+    /// blink back to the workspace and forward again at every seam.
+    var waitingLine: String?
 
     /// Wall-clock stamps for the take on screen. Held here rather than in the
     /// pane below because it has to survive that pane being rebuilt on every
@@ -31,12 +42,13 @@ struct StudioRenderingPane: View {
 
     private var lead: JobsStore.ActiveJob? { renderingJobs.first }
 
-    /// Takes that finished while this batch was running, newest first —
-    /// generations only, since a file imported half an hour ago did not come
-    /// out of this run and reading as though it had would misreport the batch.
+    /// Takes that finished while this batch was running, newest first — from
+    /// this pane's own origins only, since a file imported half an hour ago
+    /// did not come out of this run and reading as though it had would
+    /// misreport the batch.
     private var doneRecently: [SongRecord] {
         library.recent.filter {
-            $0.originKind == .generated
+            doneOrigins.contains($0.originKind)
                 && Date().timeIntervalSince($0.createdAt) < 1800
         }
         .prefix(3).map { $0 }
@@ -45,7 +57,11 @@ struct StudioRenderingPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if let lead { heroCard(lead) }
+                if let lead {
+                    heroCard(lead)
+                } else if let waitingLine {
+                    waitingCard(waitingLine)
+                }
                 if !doneRecently.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("DONE").eyebrow()
@@ -62,6 +78,25 @@ struct StudioRenderingPane: View {
     }
 
     // MARK: - Hero
+
+    /// The seam between two chain steps, drawn with the hero's own weight so
+    /// the page does not collapse and re-grow around a one-second gap.
+    private func waitingCard(_ line: String) -> some View {
+        HStack(spacing: 14) {
+            BenchSpinner(size: 24, lineWidth: 2.5)
+            Text(line)
+                .font(Bench.Typo.inspectorTitle)
+                .tracking(-0.15)
+                .foregroundStyle(Bench.Palette.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .benchCard(stroke: Bench.Palette.accent.opacity(0.22),
+                   radius: Bench.Metrics.Radius.cardLarge)
+        .shadow(color: Bench.Palette.accent.opacity(0.18), radius: 30, y: 8)
+    }
 
     private func heroCard(_ job: JobsStore.ActiveJob) -> some View {
         let model = catalog.models.first { $0.id == job.info.modelId }

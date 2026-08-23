@@ -494,6 +494,100 @@ the model stays resident until unloaded or displaced. Refusals: `404 NOT_FOUND`,
 `409 MODEL_NOT_INSTALLED` (enable only). Pin state is not persisted across
 engine restarts. A failed pin load emits `engine.warning` and clears the pin.
 
+### 4.4 The model library
+
+Weights live in a Hugging Face cache directory — `HF_HOME`, defaulting to
+`~/.cache/huggingface`. That folder is **shared**: other Hugging Face tooling on
+the machine reads and writes the same cache, and repositories the app never
+asked for are the normal case. Every figure and every action in this section is
+therefore scoped through the catalog. A repository is *ours* when some entry in
+`GET /v1/models` names it in `hf_repos`; nothing else in the folder is measured,
+moved or removed, and an engine implementing this contract must hold that line.
+
+Two states of ours, distinguished because they mean different things to a user:
+**installed** (some entry referencing it has completed its download) and
+**partial** (bytes from an interrupted download, with no finished model to show
+for them). Both are counted, moved and cleared.
+
+Sizes are deduplicated by inode. A cached repo is `blobs/` plus a `snapshots/`
+tree of symlinks into it, and catalog entries can share a repo — so a naive sum
+of file sizes reports a library substantially larger than the disk holds.
+
+`GET /v1/models/library` →
+
+```jsonc
+{
+  "path": "/Users/x/.cache/huggingface",
+  "is_default": true,           // the shared ~/.cache/huggingface
+  "bytes": 33285996544,         // ours: installed + partial
+  "installed_bytes": 32000000000,
+  "partial_bytes": 1285996544,
+  "folder_bytes": 41000000000,  // the whole folder, ours and everyone else's
+  "model_count": 6,
+  "partial_count": 1,
+  "disk_total_bytes": 994662584320,
+  "disk_free_bytes": 164622213120,
+  "repos": [{"repo_id": "facebook/musicgen-small", "path": "…",
+             "bytes": 2371000000, "state": "installed" | "partial",
+             "model_ids": ["musicgen-small"]}],
+  "operation": LibraryOperation | null   // see below
+}
+```
+
+`folder_bytes` is reported beside `bytes` deliberately: in the shared default
+the two differ by whatever else is cached there, and a client showing only the
+app's own figure disagrees with the Finder for reasons the user cannot see.
+
+`GET /v1/models/library/verify` → a check of every completed download against
+the files actually present. An install marker is a claim about history; weights
+can vanish underneath it (a folder tidied by hand), and the symptom is
+otherwise a job failing inside a worker rather than a Download button.
+
+```jsonc
+{"checked_at": "…", "problem_count": 1, "partial_repos": [Repo],
+ "models": [{"model_id": "…", "display_name": "…",
+             "state": "ok" | "missing" | "incomplete" | "shrunk",
+             "expected_bytes": 0, "actual_bytes": 0}]}
+```
+
+Two long-running operations, at most one at a time. Both return
+`202 {"operation_id": "lib_…"}` and report through `library.progress` followed
+by exactly one `library.completed` or `library.failed` (§6). Both refuse with
+`409 DOWNLOAD_ACTIVE` while any download is running and `409 ENGINE_BUSY` while
+any job is queued or running — rearranging weights under a live worker is a
+crash.
+
+`POST /v1/models/library/clear {"scope": "all" | "partial"}` → remove models of
+ours from the current folder; `partial` takes only the interrupted downloads,
+which is a different decision from throwing away working models. Family
+runtimes go with the last model that needed them, exactly as a single delete
+does (§4.2). `409 LIBRARY_EMPTY` when the chosen scope matches nothing,
+`422 VALIDATION` for an unknown scope.
+
+`POST /v1/models/library/relocate {"path": "…", "disposition": "…"}` — point the
+library at a new folder. `disposition` says what becomes of the models in the
+old one:
+
+| disposition | effect |
+|---|---|
+| `move`   | moved to the new folder. A rename on the same volume, a copy across volumes — `409 INSUFFICIENT_DISK` if the copy would not fit. Symlink structure is preserved; dereferencing it would double the library's size on arrival. |
+| `delete` | removed from the old folder; the new one starts empty |
+| `leave`  | untouched; the new folder starts empty and those bytes are orphaned |
+
+Refusals: `422 VALIDATION` for an unknown disposition, an unwritable
+destination, the current folder, or a destination inside the current folder.
+
+**The engine reads `HF_HOME` once, at launch.** This endpoint only rearranges
+files; the client applies the new path and restarts the engine afterwards.
+Every event for a relocate carries `restart_required: true` — including a
+failed one, which needs the restart *more*, since some repositories are already
+at the destination. Until the restart, models in the new folder read as not
+installed.
+
+`POST /v1/models/library/cancel` → `202 {}` — stop after the file in flight.
+Not a rollback: a cancelled move leaves whole repositories on one side or the
+other, never half of one, and the terminal event names which went.
+
 ## 5. Jobs
 
 ### 5.1 Submit
@@ -935,6 +1029,9 @@ buffer of the last 500 events (best effort); after any reconnect the app also re
 | `job.canceled`       | `{"job_id"}` |
 | `queue.state`        | `{"held": true\|false, "active_job_id"}` — the §5.7 hold; `active_job_id` is the job the hold could not stop, and is normally non-null right after a pause |
 | `models.changed`     | `{}` — install-state invalidation → re-fetch `/v1/models` |
+| `library.progress`   | `LibraryOperation` — a clear or relocate under way (§4.4) |
+| `library.completed`  | `LibraryOperation` with `state: "succeeded"`; carries `removed_model_ids` / `moved_repo_ids` + `skipped_repo_ids`, and `canceled` |
+| `library.failed`     | `LibraryOperation` with `state: "failed"` and `error` |
 | `worker.state`       | `{"state":"loading"\|"loaded"\|"stopped","model_id","family"}` — what the warm worker holds (drives the app's titlebar) |
 | `system.telemetry`   | the `usage` object from `/v1/system` — every 2 s while a worker is alive, every 10 s idle, so the sidebar readout is live without polling. Same nullability rules; skipped entirely while no client is subscribed |
 | `engine.warning`     | `{"message"}` (e.g. MPS CPU-fallback, RAM > 85 %) |

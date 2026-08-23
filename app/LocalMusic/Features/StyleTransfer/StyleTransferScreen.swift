@@ -20,6 +20,9 @@ struct StyleTransferScreen: View {
     let parts: PartsStore
     let jobs: JobsStore
     let playback: PlaybackController
+    let telemetry: TelemetryStore
+    let timings: RenderTimingStore
+    let notifications: NotificationService
     let onOpenModels: (ModelRequirement?) -> Void
 
     /// Which slot the picker sheet is filling.
@@ -33,10 +36,31 @@ struct StyleTransferScreen: View {
     /// `model.overrides`, which is what survives that rebuild.
     @State private var formState = ParameterFormState(specs: [])
     @State private var showAdvanced = false
+    /// Set when the user asks for the controls back while a run is in flight
+    /// — Generate's `showingComposer`, under this screen's name for it.
+    @State private var showingWorkspace = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
 
     private var models: [ModelInfo] { catalog.models }
     private var chosen: ModelInfo? { model.model(in: models) }
+
+    /// The jobs this workspace is waiting on, as queue rows — what the
+    /// full-page render view draws. `outstandingJobIds` covers one-shot runs
+    /// and the chain's current step alike.
+    private var renderingJobs: [JobsStore.ActiveJob] {
+        let ids = model.outstandingJobIds
+        return jobs.displayJobs.filter {
+            !$0.status.isTerminal && ids.contains($0.id)
+        }
+    }
+
+    /// Chain-aware: between two chain steps there is a moment with no live
+    /// job, and the page must not blink back to the workspace across it.
+    private var isRendering: Bool {
+        !renderingJobs.isEmpty || model.isChainRunning
+    }
+
+    private var showsRendering: Bool { isRendering && !showingWorkspace }
     /// Whether anything on this screen may claim a model is missing. Every
     /// mode chip, the model picker and the commit bar all answer "is X
     /// installed" from `models`, which is empty for the first second of a
@@ -48,20 +72,34 @@ struct StyleTransferScreen: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             topBar
-            if model.pendingPreset != nil || model.notice != nil {
-                noticeStrip
-            }
-            HStack(spacing: 0) {
-                mainColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                BenchInspector(width: Bench.Metrics.Inspector.takes) {
-                    StyleTransferTakesRail(
-                        model: self.model, playback: playback,
-                        lastRun: lastRun, onReplay: replay)
+            if showsRendering {
+                // The same full-page render Generate shows: the run gets the
+                // whole screen, and the pill in the top bar is the way back
+                // to the controls. The takes rail goes with the workspace —
+                // its results reappear the moment the run lands and the page
+                // flips back on its own.
+                StudioRenderingPane(jobs: jobs, library: library,
+                                    playback: playback, catalog: catalog,
+                                    telemetry: telemetry, timings: timings,
+                                    notifications: notifications,
+                                    renderingJobs: renderingJobs,
+                                    waitingLine: chainWaitingLine)
+            } else {
+                if model.pendingPreset != nil || model.notice != nil {
+                    noticeStrip
                 }
+                HStack(spacing: 0) {
+                    mainColumn
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    BenchInspector(width: Bench.Metrics.Inspector.takes) {
+                        StyleTransferTakesRail(
+                            model: self.model, playback: playback,
+                            lastRun: lastRun, onReplay: replay)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                commitBar
             }
-            .frame(maxHeight: .infinity)
-            commitBar
         }
         .background(Bench.Palette.windowBackground)
         .onAppear(perform: restore)
@@ -69,9 +107,18 @@ struct StyleTransferScreen: View {
         .onChange(of: model.selectedModelId) { rebuildForm() }
         .onChange(of: catalog.models.count) { reconcile() }
         .onChange(of: parts.results) { model.refreshPlannerInput(parts: parts) }
+        // Coming back to a finished run should not leave you stranded on an
+        // empty rendering pane — same rule as Generate.
+        .onChange(of: isRendering) { if !isRendering { showingWorkspace = false } }
         .sheet(item: $picking) { target in
             picker(for: target)
         }
+    }
+
+    /// What the hero slot says across a chain's seams — which step of the
+    /// plan is (about to be) running.
+    private var chainWaitingLine: String {
+        model.chain.map { $0.plan.statusLine($0.progress) } ?? "Starting…"
     }
 
     // MARK: - Top bar
@@ -93,8 +140,15 @@ struct StyleTransferScreen: View {
             }
         } trailing: {
             HStack(spacing: 8) {
-                if model.isChainRunning {
-                    BenchSpinner(size: 12)
+                // The same pill Generate wears: the way between the run and
+                // the controls, and the sign that something is in flight.
+                if isRendering {
+                    RenderStatusPill(
+                        label: showingWorkspace
+                            ? "Back to render"
+                            : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
+                        showingWorkspace.toggle()
+                    }
                 }
                 // The engine has forgotten the job this chain is waiting on —
                 // a backend restart, a result that never ingested. Without an
@@ -108,7 +162,7 @@ struct StyleTransferScreen: View {
                 // jobs that are still running and leave their results
                 // unattributed in the Library — and the chain is the one thing
                 // here that cannot simply be started again cheaply.
-                if model.isConfigured {
+                if model.isConfigured, !showsRendering {
                     Button("Clear") { model.clearConfiguration() }
                         .buttonStyle(.bench(.quiet))
                         .disabled(model.isChainRunning)

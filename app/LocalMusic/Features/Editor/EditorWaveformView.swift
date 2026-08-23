@@ -66,6 +66,17 @@ struct EditorWellView: View {
         if store.pxPerSecond <= 0 {
             store.pxPerSecond = EditorGeometry.fitZoom(
                 durationS: store.timelineDurationS, width: width)
+        } else if store.wellWidth > 0, width != store.wellWidth {
+            // A resize keeps the seconds and rescales the pixels — see
+            // `EditorGeometry.resized(toWidth:)`. Only once a width has been
+            // laid out: the first pass has nothing to preserve.
+            let resized = EditorGeometry(
+                visibleStartS: store.visibleStartS,
+                pxPerSecond: store.pxPerSecond, width: store.wellWidth,
+                durationS: store.timelineDurationS)
+                .resized(toWidth: width)
+            store.pxPerSecond = resized.pxPerSecond
+            store.visibleStartS = resized.visibleStartS
         }
         store.wellWidth = width
         refetch(width: width)

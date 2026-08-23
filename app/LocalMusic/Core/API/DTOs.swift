@@ -584,6 +584,114 @@ struct JobsResponse: Codable, Sendable {
     let jobs: [JobInfo]
 }
 
+// MARK: - Model library
+
+/// The model library folder, measured through our own catalog (contract §4.6).
+///
+/// `bytes` and `folderBytes` are both here on purpose. The default library is
+/// the shared `~/.cache/huggingface`, so the folder usually holds repos other
+/// Hugging Face tools put there — which this app must neither count as its own
+/// nor touch. Showing only our figure would disagree with the Finder for
+/// reasons the user cannot see; showing both explains the gap.
+struct LibraryInfo: Codable, Sendable {
+    let path: String
+    /// Whether this is the shared `~/.cache/huggingface` default, which is
+    /// what makes the destructive actions worth a louder warning.
+    let isDefault: Bool
+    let bytes: Int64
+    let installedBytes: Int64
+    /// Bytes from interrupted downloads with no finished model to show for it.
+    let partialBytes: Int64
+    /// Everything in the folder, ours and everyone else's.
+    let folderBytes: Int64
+    let modelCount: Int
+    let partialCount: Int
+    let diskTotalBytes: Int64?
+    let diskFreeBytes: Int64?
+    let repos: [LibraryRepo]
+    let operation: LibraryOperation?
+
+    var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
+    /// What the folder holds for anything that is not this app.
+    var foreignBytes: Int64 { max(0, folderBytes - bytes) }
+}
+
+struct LibraryOperationStarted: Codable, Sendable {
+    let operationId: String
+}
+
+struct LibraryRepo: Codable, Sendable, Identifiable {
+    let repoId: String
+    let path: String
+    let bytes: Int64
+    /// `installed` | `partial`
+    let state: String
+    let modelIds: [String]
+
+    var id: String { repoId }
+    var isPartial: Bool { state == "partial" }
+}
+
+/// A clear or a relocate, while it runs. Long enough on a real library to need
+/// a progress bar rather than a spinner: a cross-disk move is a copy.
+struct LibraryOperation: Codable, Sendable {
+    let operationId: String
+    /// `clear` | `relocate`
+    let mode: String
+    /// `running` | `succeeded` | `failed`
+    let state: String
+    /// Null while the total is unknown; see `JobProgress` for the same rule.
+    let fraction: Double?
+    let bytesDone: Int64
+    let bytesTotal: Int64
+    let message: String
+    let error: APIErrorBody?
+    let destination: String?
+    /// `move` | `delete` | `leave` — what became of the models left behind.
+    let disposition: String?
+    let repoCount: Int?
+    let restartRequired: Bool?
+    let canceled: Bool?
+    let removedModelIds: [String]?
+    let movedRepoIds: [String]?
+    let skippedRepoIds: [String]?
+
+    var isRunning: Bool { state == "running" }
+}
+
+struct LibraryVerifyReport: Codable, Sendable {
+    let checkedAt: String
+    let models: [LibraryVerifyFinding]
+    let problemCount: Int
+    let partialRepos: [LibraryRepo]
+}
+
+struct LibraryVerifyFinding: Codable, Sendable, Identifiable {
+    let modelId: String
+    let displayName: String
+    /// `ok` | `missing` | `incomplete` | `shrunk`
+    let state: String
+    let expectedBytes: Int64
+    let actualBytes: Int64
+
+    var id: String { modelId }
+    var isProblem: Bool { state != "ok" }
+
+    var explanation: String {
+        switch state {
+        case "missing":
+            "Downloaded, but its files are no longer in the library folder."
+        case "incomplete":
+            "Some of its files are missing — a download that was interrupted, "
+            + "or a folder tidied up by hand."
+        case "shrunk":
+            "Smaller on disk than when it was downloaded."
+        default:
+            "Ready."
+        }
+    }
+}
+
 // MARK: - Errors
 
 struct APIErrorBody: Codable, Sendable {
@@ -628,6 +736,9 @@ enum EngineEvent: Sendable {
     /// *not* stop, which is what the UI has to say out loud.
     case queueState(held: Bool, activeJobId: String?)
     case modelsChanged
+    /// A library clear/relocate: progress, then exactly one terminal event.
+    case libraryProgress(LibraryOperation)
+    case libraryFinished(LibraryOperation)
     case workerState(state: String, modelId: String?, family: String?)
     case engineWarning(message: String)
 
@@ -681,6 +792,12 @@ enum EngineEvent: Sendable {
                 return .queueState(held: q.held, activeJobId: q.activeJobId)
             case "models.changed":
                 return .modelsChanged
+            case "library.progress":
+                return .libraryProgress(
+                    try decoder.decode(LibraryOperation.self, from: data))
+            case "library.completed", "library.failed":
+                return .libraryFinished(
+                    try decoder.decode(LibraryOperation.self, from: data))
             case "worker.state":
                 let d = try decoder.decode(WS.self, from: data)
                 return .workerState(state: d.state, modelId: d.modelId,

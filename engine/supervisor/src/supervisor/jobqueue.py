@@ -429,7 +429,15 @@ class JobQueue:
     def model_in_use(self, model_id: str) -> bool:
         with self.lock:
             return any(j.model_id == model_id
-                       and j.status not in ("succeeded", "failed", "canceled")
+                       and j.status not in TERMINAL_STATUSES
+                       for j in self.jobs.values())
+
+    def any_live_job(self) -> bool:
+        """Anything queued or running, of any model — what "the engine is busy"
+        means to an operation that rearranges the whole library rather than one
+        model's weights."""
+        with self.lock:
+            return any(j.status not in TERMINAL_STATUSES
                        for j in self.jobs.values())
 
     def release_family(self, family: str) -> bool:

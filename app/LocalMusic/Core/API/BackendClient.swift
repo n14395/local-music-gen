@@ -133,6 +133,43 @@ struct BackendClient: Sendable {
         catch { throw APIError.decoding(underlying: error) }
     }
 
+    // MARK: model library (contract §4.4)
+
+    func library() async throws -> LibraryInfo {
+        try await get("/v1/models/library")
+    }
+
+    func verifyLibrary() async throws -> LibraryVerifyReport {
+        try await get("/v1/models/library/verify")
+    }
+
+    /// Remove models of ours from the current library folder — `all` of them,
+    /// or just the `partial` ones left by interrupted downloads. Nothing else
+    /// in that folder is touched: it may be the shared Hugging Face cache,
+    /// full of repos this app never asked for.
+    @discardableResult
+    func clearLibrary(scope: String = "all") async throws -> String {
+        (try await post("/v1/models/library/clear", body: ["scope": scope])
+            as LibraryOperationStarted).operationId
+    }
+
+    /// Rearrange the files for a new library folder. `disposition` says what
+    /// becomes of the models in the old one: `move`, `delete` or `leave`.
+    ///
+    /// The engine reads HF_HOME once, at launch, so this only moves bytes —
+    /// the caller applies the new path and restarts the engine afterwards.
+    @discardableResult
+    func relocateLibrary(to path: String,
+                         disposition: String) async throws -> String {
+        (try await post("/v1/models/library/relocate",
+                        body: ["path": path, "disposition": disposition])
+            as LibraryOperationStarted).operationId
+    }
+
+    func cancelLibraryOperation() async throws {
+        try await send("POST", "/v1/models/library/cancel")
+    }
+
     func inspectModel(repoId: String) async throws -> ModelInfo {
         try await post("/v1/models/inspect", body: ["repo_id": repoId])
     }

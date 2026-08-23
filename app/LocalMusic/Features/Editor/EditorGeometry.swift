@@ -52,6 +52,34 @@ struct EditorGeometry: Equatable {
         return start.clamped(to: 0...maxStart)
     }
 
+    /// The viewport after the well is laid out at a new width.
+    ///
+    /// Zoom is stored as pixels-per-second, so leaving it alone across a
+    /// resize means the *time* in view changes with the window: widening the
+    /// window scrolled more of the track into the well and the overview
+    /// strip's window grew under the pointer, which reads as the editor
+    /// moving your view rather than the window changing size.
+    ///
+    /// So the seconds are what is held and the scale is what gives: the same
+    /// span stays in the well, drawn larger or smaller. Both limits still
+    /// apply — a window widened far enough to demand more than `maxZoom`
+    /// takes the extra seconds it cannot magnify away, and `clampedStart`
+    /// keeps the result inside the track.
+    func resized(toWidth newWidth: CGFloat) -> EditorGeometry {
+        guard newWidth > 0, width > 0, pxPerSecond > 0 else {
+            var out = self
+            out.width = newWidth
+            return out
+        }
+        let span = visibleSeconds
+        var out = self
+        out.width = newWidth
+        out.pxPerSecond = Self.clampZoom(newWidth / CGFloat(max(0.001, span)),
+                                         durationS: durationS, width: newWidth)
+        out.visibleStartS = out.clampedStart(visibleStartS)
+        return out
+    }
+
     /// A zoom change that keeps the moment under `anchorX` under it — the
     /// difference between zooming *into* the playhead and lurching past it.
     func zoomed(to newZoom: CGFloat, anchorX: CGFloat) -> EditorGeometry {

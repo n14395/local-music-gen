@@ -7,8 +7,8 @@ from .errors import err
 
 
 def build_app(state: EngineState) -> FastAPI:
-    from . import (downloads, jobs, models, system,  # deferred: avoids circular imports
-                   uploads)
+    from . import (downloads, jobs, library,  # deferred: avoids circular imports
+                   models, system, uploads)
 
     app = FastAPI()
     app.state.engine = state
@@ -22,6 +22,9 @@ def build_app(state: EngineState) -> FastAPI:
         return await call_next(request)
 
     app.include_router(system.router)
+    # Before models: "/v1/models/library" must not be caught by the
+    # "/v1/models/{model_id}" route, which would look it up as a model id.
+    app.include_router(library.router)
     app.include_router(models.router)
     app.include_router(downloads.router)
     app.include_router(jobs.router)
