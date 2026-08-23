@@ -98,6 +98,19 @@ struct EditorOverviewStrip: View {
             }
             // viewport window
             viewportWindow(width: width)
+            // Playhead — display only; the seek row beneath is where you
+            // grab it, and the line running into that row's knob is what
+            // says the two bands are one position. Drawn over the window so
+            // it stays visible inside it, and polled rather than observed:
+            // the position is a live query on the player while it plays.
+            TimelineView(.animation(minimumInterval: 1.0 / 30,
+                                    paused: !store.isPlaying)) { _ in
+                Rectangle()
+                    .fill(Bench.Palette.accent)
+                    .frame(width: 1.5)
+                    .offset(x: x(store.playheadS))
+            }
+            .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(Rectangle())

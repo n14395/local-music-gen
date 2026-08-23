@@ -311,7 +311,14 @@ struct EditorScreen: View {
                     if previewCaveats.count > 0 { honestyBanner }
                 }
                 Group {
-                    EditorOverviewStrip(store: store)
+                    // Tighter than the column's own spacing: the strip and
+                    // the seek row read as one unit — what you are looking
+                    // at, then what you are hearing — and the strip's
+                    // playhead line runs into the knob below it.
+                    VStack(spacing: 9) {
+                        EditorOverviewStrip(store: store)
+                        EditorSeekRow(store: store)
+                    }
                     EditorWellView(store: store)
                         .frame(maxHeight: .infinity)
                     toolbar

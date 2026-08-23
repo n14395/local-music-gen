@@ -115,7 +115,6 @@ struct MainWindow: View {
             TransportBar(playback: env.playback, slot: transportSlot,
                          queue: transportQueue,
                          engine: env.engineStatus,
-                         editor: destination == .editor ? env.editor : nil,
                          isQueueOpen: queuePanel.isOpen,
                          onToggleQueue: {
                              withAnimation(panelMotion) { queuePanel.toggle() }

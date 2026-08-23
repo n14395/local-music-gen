@@ -25,11 +25,6 @@ struct TransportBar: View {
     /// What the *engine* is doing. The bar is the only chrome on screen from
     /// every screen, which is the whole argument for it being here.
     let engine: EngineStatus
-    /// Set while the Editor is frontmost: the bar becomes the edit preview's
-    /// transport — loop and play-selection chips, the edited timeline as the
-    /// scrubber, a live level meter. Everything global (engine, queue) stays
-    /// where it always is; other screens see no change at all.
-    var editor: EditorStore?
     var isQueueOpen = false
 
     enum Slot: Equatable {
@@ -63,36 +58,33 @@ struct TransportBar: View {
     var onToggleCompare: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: editor?.material != nil ? 14 : 18) {
-            if let editor, editor.material != nil {
-                editorTransport(editor)
-            } else {
-                BenchTransportButton(isPlaying: playback.isPlaying) {
-                    playback.toggle()
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(playback.currentTitle)
-                        .font(Bench.Typo.secondaryEmphasis)
-                        .foregroundStyle(Bench.Palette.textPrimary)
-                        .lineLimit(1).truncationMode(.tail)
-                    if !playback.currentSubtitle.isEmpty {
-                        Text(playback.currentSubtitle.uppercased())
-                            .metaLine()
-                            .lineLimit(1)
-                    }
-                }
-                .frame(width: 190, alignment: .leading)
-
-                scrubber
-
-                Text("\(time(playback.currentTime)) / \(time(playback.duration))")
-                    .font(Bench.Typo.mono(12))
-                    .foregroundStyle(Bench.Palette.textTertiary)
-                    .fixedSize()
-
-                slotView
+        HStack(spacing: 18) {
+            BenchTransportButton(isPlaying: playback.isPlaying) {
+                playback.toggle()
             }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(playback.currentTitle)
+                    .font(Bench.Typo.secondaryEmphasis)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+                    .lineLimit(1).truncationMode(.tail)
+                if !playback.currentSubtitle.isEmpty {
+                    Text(playback.currentSubtitle.uppercased())
+                        .metaLine()
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 190, alignment: .leading)
+
+            scrubber
+
+            Text("\(time(playback.currentTime)) / \(time(playback.duration))")
+                .font(Bench.Typo.mono(12))
+                .foregroundStyle(Bench.Palette.textTertiary)
+                .fixedSize()
+
+            slotView
+
             engineButton
             queueButton
         }
@@ -171,130 +163,6 @@ struct TransportBar: View {
         }
         .buttonStyle(.plain)
         .help(active ? "Playing \(letter)" : "Switch to \(letter) — Tab")
-    }
-
-    // MARK: - Editor transport
-
-    /// E01's bottom bar: play/stop, the loop and play-selection chips, the
-    /// edited timeline as a strip, the edit clock, the level meter.
-    @ViewBuilder
-    private func editorTransport(_ editor: EditorStore) -> some View {
-        BenchTransportButton(isPlaying: editor.isPlaying) {
-            editor.togglePlayback()
-        }
-        Button {
-            editor.stopPreview()
-        } label: {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Bench.Palette.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 8,
-                                             style: .continuous)
-                    .fill(Bench.Palette.raised))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Stop and rewind")
-
-        editorChip("LOOP SELECTION", active: editor.loopSelection,
-                   enabled: editor.selection != nil,
-                   help: "Loop the selection while playing") {
-            editor.loopSelection.toggle()
-            if editor.loopSelection, editor.selection != nil {
-                editor.playSelection()
-            }
-        }
-        editorChip("PLAY SELECTION ⌥␣", active: false,
-                   enabled: editor.selection != nil,
-                   help: "Play just the selection") {
-            editor.playSelection()
-        }
-        editorChip("A / B ORIGINAL", active: editor.auditioningOriginal,
-                   enabled: !editor.document.isEmpty,
-                   help: "Switch between the edit and the untouched "
-                       + "original at the same position") {
-            editor.toggleOriginalAudition()
-        }
-
-        EditorMiniWave(store: editor)
-            .frame(height: 30)
-            .frame(maxWidth: .infinity)
-
-        TimelineView(.animation(minimumInterval: 0.25)) { _ in
-            Text("\(EditorClock.full(editor.playheadS)) / "
-                 + "\(EditorClock.full(editor.timelineDurationS))")
-                .font(Bench.Typo.mono(12))
-                .foregroundStyle(Bench.Palette.textTertiary)
-                .fixedSize()
-        }
-
-        editorMeter(editor)
-    }
-
-    private func editorChip(_ label: String, active: Bool, enabled: Bool,
-                            help: String,
-                            action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(Bench.Typo.mono(11, .semibold))
-                .foregroundStyle(active ? Bench.Palette.accent
-                                        : Bench.Palette.textQuaternary)
-                .padding(.horizontal, 11)
-                .frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 8,
-                                             style: .continuous)
-                    .fill(active ? Bench.Palette.accent.opacity(0.12)
-                                 : Bench.Palette.raised))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(active ? Bench.Palette.accent.opacity(0.28)
-                                         : Bench.Palette.cardStrokeSoft,
-                                  lineWidth: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
-        .help(help)
-    }
-
-    /// The preview's real level, from the tap on its mixer (Tier 3.7).
-    private func editorMeter(_ editor: EditorStore) -> some View {
-        HStack(spacing: 9) {
-            VStack(alignment: .leading, spacing: 3) {
-                meterBar("L", db: editor.player.meterDb?.left)
-                meterBar("R", db: editor.player.meterDb?.right)
-            }
-            Text(editor.player.meterDb.map {
-                String(format: "%.1f dB", max($0.left, $0.right))
-            } ?? "— dB")
-                .font(Bench.Typo.mono(10, .semibold))
-                .foregroundStyle(Bench.Palette.textQuaternary)
-                .frame(width: 52, alignment: .leading)
-        }
-        .fixedSize()
-    }
-
-    private func meterBar(_ label: String, db: Double?) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(Bench.Typo.mono(8, .semibold))
-                .foregroundStyle(Bench.Palette.textFaintest)
-                .frame(width: 6)
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.08))
-                Capsule().fill(Bench.Palette.ok)
-                    .frame(width: 62 * CGFloat(((db ?? -80) + 60) / 60)
-                        .clamped(to: 0...62))
-                Rectangle().fill(Bench.Palette.danger)
-                    .frame(width: 1.5)
-                    .offset(x: 62 * 59 / 60)
-            }
-            .frame(width: 62, height: 5)
-            .clipShape(Capsule())
-        }
     }
 
     // MARK: - Engine

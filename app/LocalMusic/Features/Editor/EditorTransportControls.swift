@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The edit preview's transport, as it sits in the overview strip's header.
+/// The edit preview's transport, as it sits in the seek row under the
+/// overview strip.
 ///
 /// It used to be the left two-thirds of the app's bottom bar, which made the
 /// Editor the one screen where the shared player was not the shared player.
@@ -9,9 +10,9 @@ import SwiftUI
 ///
 /// Icons rather than the old `LOOP SELECTION` / `PLAY SELECTION` / `A / B
 /// ORIGINAL` chips: those measured 118, 138 and 118 pt against 30 pt here, and
-/// the header has to share a row with the meter and the clock. Nothing is lost
-/// that was only in the label — each one names itself on hover, and the two
-/// with key equivalents say so there.
+/// the row has to share its width with the seek bar, the meter and the clock.
+/// Nothing is lost that was only in the label — each one names itself on
+/// hover, and the two with key equivalents say so there.
 struct EditorTransportControls: View {
     @Bindable var store: EditorStore
 
@@ -104,14 +105,10 @@ struct EditorTransportControls: View {
 
 /// The preview's real level, from the tap on its mixer.
 ///
-/// `showsReadout` is the first thing the header's ladder gives up: the bars
-/// carry the warning and the number is the commentary. The preview neither
-/// normalises nor limits, so this is the only notice that a stack of segments
-/// has summed past full scale — which is why the bars themselves are the last
-/// thing to go.
+/// The preview neither normalises nor limits, so this is the only notice that
+/// a stack of segments has summed past full scale.
 struct EditorPreviewMeter: View {
     let db: (left: Double, right: Double)?
-    var showsReadout = true
 
     var body: some View {
         HStack(spacing: 9) {
@@ -119,13 +116,11 @@ struct EditorPreviewMeter: View {
                 bar("L", db: db?.left)
                 bar("R", db: db?.right)
             }
-            if showsReadout {
-                Text(db.map { String(format: "%.1f dB", max($0.left, $0.right)) }
-                     ?? "— dB")
-                    .font(Bench.Typo.mono(10, .semibold))
-                    .foregroundStyle(Bench.Palette.textQuaternary)
-                    .frame(width: 52, alignment: .leading)
-            }
+            Text(db.map { String(format: "%.1f dB", max($0.left, $0.right)) }
+                 ?? "— dB")
+                .font(Bench.Typo.mono(10, .semibold))
+                .foregroundStyle(Bench.Palette.textQuaternary)
+                .frame(width: 52, alignment: .leading)
         }
         .fixedSize()
     }
@@ -152,24 +147,60 @@ struct EditorPreviewMeter: View {
 }
 
 /// Playhead over duration, ticking only while something is playing.
-///
-/// `showsDuration` is a ladder rung too, and a cheap one: the Editor's top bar
-/// already states the track's length in its stats line, so the total here is
-/// the convenience and the position is the information.
 struct EditorTransportClock: View {
     @Bindable var store: EditorStore
-    var showsDuration = true
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.25,
                                 paused: !store.isPlaying)) { _ in
-            Text(showsDuration
-                 ? "\(EditorClock.full(store.playheadS)) / "
-                   + "\(EditorClock.full(store.timelineDurationS))"
-                 : EditorClock.full(store.playheadS))
+            Text("\(EditorClock.full(store.playheadS)) / "
+                 + "\(EditorClock.full(store.timelineDurationS))")
                 .font(Bench.Typo.mono(12))
                 .foregroundStyle(Bench.Palette.textTertiary)
                 .fixedSize()
+        }
+    }
+}
+
+/// The whole-track seek bar: `BenchSlider`'s exact vocabulary — the 4 pt
+/// track, the 14 pt knob, the accent fill — carrying playhead semantics.
+/// Clicking or dragging anywhere is a seek, and only ever a seek: the strip
+/// above already means "move the view", and holding the two meanings on
+/// separate rows is what keeps both unambiguous.
+///
+/// Wrapped in a `TimelineView` because the playhead advances outside
+/// observation while playing: `currentPosition()` is a live query on the
+/// player, not a published property, so nothing else invalidates this view
+/// between frames.
+struct EditorSeekBar: View {
+    @Bindable var store: EditorStore
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30,
+                                paused: !store.isPlaying)) { _ in
+            BenchSlider(value: Binding(
+                get: { store.playheadS },
+                set: { store.seekPreview(to: $0) }),
+                range: 0...max(0.001, store.timelineDurationS))
+        }
+    }
+}
+
+/// The row between the overview strip and the well: the preview's transport,
+/// the whole-track seek bar, the clock and the level meter — the bottom bar's
+/// old editor anatomy, rebuilt against the timeline it plays. Shaped like the
+/// app's player on purpose, so it reads as "the editor's player" on sight
+/// while the bar at the bottom of the window is the app's player again.
+struct EditorSeekRow: View {
+    @Bindable var store: EditorStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            EditorTransportControls(store: store)
+            EditorSeekBar(store: store)
+                .frame(minWidth: 140, maxWidth: .infinity)
+            EditorTransportClock(store: store)
+            EditorPreviewMeter(db: store.player.meterDb)
         }
     }
 }

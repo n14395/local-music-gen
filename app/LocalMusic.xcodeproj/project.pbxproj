@@ -138,7 +138,6 @@
 		8B1B306807335FBE3DAEA933 /* PartsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CED74CCF48FA8B487CEA9CE /* PartsStore.swift */; };
 		8C264DA5F48FBF3A33F4D70C /* ModelTagFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5307DBDA3F48CFDA2DF8DD7 /* ModelTagFilterTests.swift */; };
 		8C66ADA6A52DC28BD53FB91E /* TimelineGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00F6464D1CDC41F35626993 /* TimelineGeometry.swift */; };
-		8C814DB31F0835755B72C900 /* EditorMiniWave.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762860D6C39220181103E79E /* EditorMiniWave.swift */; };
 		8CC4817F0DE0783F6034A0AD /* SidebarFitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C58FED1605A3387BC655CF87 /* SidebarFitTests.swift */; };
 		8DA1F26FC88F89A3565B9531 /* MixActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06EA0F3B7770C6114099DBE9 /* MixActionView.swift */; };
 		8EE06010FBF68508B91040F7 /* AddModelSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A260F3F596251D118ED4E49 /* AddModelSheet.swift */; };
@@ -357,7 +356,6 @@
 		6F995AC0C2998A19918F5C78 /* PartRatingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PartRatingTests.swift; sourceTree = "<group>"; };
 		74101A851B9B744A47052F22 /* QueuePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanel.swift; sourceTree = "<group>"; };
 		758C3FD077116A88D468CF9C /* WorkbenchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchModel.swift; sourceTree = "<group>"; };
-		762860D6C39220181103E79E /* EditorMiniWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMiniWave.swift; sourceTree = "<group>"; };
 		769B6D5FF5172E31AE50738B /* TransportBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportBar.swift; sourceTree = "<group>"; };
 		77754C5A3F0BB61D8CB4F92B /* TrackNamingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackNamingTests.swift; sourceTree = "<group>"; };
 		77AA31B8B5D08927123DDAB3 /* DownloadsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsStore.swift; sourceTree = "<group>"; };
@@ -603,7 +601,6 @@
 				2E45943EEF3665533186C435 /* EditMixPlan.swift */,
 				327EFB5E6598126FF7B8B632 /* EditModel.swift */,
 				85194D978CB01A787DEC1DD5 /* EditorGeometry.swift */,
-				762860D6C39220181103E79E /* EditorMiniWave.swift */,
 				6C357E277FBEDFD25268A999 /* EditorOverviewStrip.swift */,
 				F6E44BC0871BBE7BF8A4A02B /* EditorPanels.swift */,
 				1C21E8E3534DBF473656E2D5 /* EditorRail.swift */,
@@ -1074,7 +1071,6 @@
 				D272A308925FC0F80D6F63E8 /* EditMixPlan.swift in Sources */,
 				F5982FC46ADFE6552D34684E /* EditModel.swift in Sources */,
 				875A20BB8D70A1BEDCBC4B56 /* EditorGeometry.swift in Sources */,
-				8C814DB31F0835755B72C900 /* EditorMiniWave.swift in Sources */,
 				21B017A7490F20ECD12786C7 /* EditorOverviewStrip.swift in Sources */,
 				611FB224AFA3BF1BF43CAAEE /* EditorPanels.swift in Sources */,
 				D7ABB61CFBF6FA22305A89FF /* EditorRail.swift in Sources */,
