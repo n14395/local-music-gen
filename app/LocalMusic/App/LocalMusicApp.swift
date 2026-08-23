@@ -4,6 +4,8 @@ import SwiftUI
 struct LocalMusicApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    static let settingsWindowID = "settings"
+
     var body: some Scene {
         WindowGroup {
             MainWindow(env: appDelegate.env)
@@ -15,9 +17,42 @@ struct LocalMusicApp: App {
         // content view but not the top of it — SwiftUI keeps a titlebar-sized
         // safe area, which `MainWindow` ignores.
         .windowStyle(.hiddenTitleBar)
-        Settings {
+        // A `Window`, not the `Settings` scene. Settings ignores
+        // `.windowStyle(.hiddenTitleBar)` — it keeps its own titlebar, whose
+        // material paints an opaque band across the top 28 pt of the content,
+        // which is exactly where the redesign puts the section title and
+        // "Reset this section". A plain window takes the modifier, so the rail
+        // gets the traffic lights over its reserved header and the content
+        // header lines up beside them, as in the main window.
+        Window("Settings", id: Self.settingsWindowID) {
             SettingsView(env: appDelegate.env)
         }
+        .windowStyle(.hiddenTitleBar)
+        // The floor is the content's own `minWidth`/`minHeight`; the window is
+        // resizable above it, because the Models section holds a library card
+        // taller than any one size suits.
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1020, height: 740)
+        .commands {
+            // ⌘, still opens it, and still sits where macOS puts Settings in
+            // the app menu — replacing the item the `Settings` scene would
+            // have installed.
+            CommandGroup(replacing: .appSettings) { OpenSettingsButton() }
+        }
+    }
+}
+
+/// The app menu's Settings item. A view rather than a plain `Button` because
+/// `openWindow` is only reachable from the environment, and command groups get
+/// one.
+private struct OpenSettingsButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Settings\u{2026}") {
+            openWindow(id: LocalMusicApp.settingsWindowID)
+        }
+        .keyboardShortcut(",", modifiers: .command)
     }
 }
 

@@ -19,6 +19,10 @@ struct BenchNavGlyph: View {
 
     enum Kind {
         case generate, styleTransfer, actions, workbench, editor, library, models
+        // Settings' own rail. Drawn here rather than in the Settings feature
+        // so both rails keep one glyph vocabulary — that shared set is most of
+        // what makes the Settings window read as the same app.
+        case info, bell, ring, engine
     }
 
     var body: some View {
@@ -32,6 +36,10 @@ struct BenchNavGlyph: View {
             case .library: rules(heights: [2, 2, 2, 2], widths: [1, 1, 1, 0.62],
                                  spacing: 2.5)
             case .models: chip
+            case .info: info
+            case .bell: bell
+            case .ring: ring
+            case .engine: centredChip
             }
         }
         .frame(width: size, height: size)
@@ -162,6 +170,67 @@ struct BenchNavGlyph: View {
         .frame(width: size, height: size, alignment: .center)
     }
 
+    /// General: the ⓘ, built from a ring and two stacked marks rather than
+    /// set in a font, so it keeps the 1.5 pt stroke every other glyph uses.
+    private var info: some View {
+        Circle()
+            .strokeBorder(color, lineWidth: 1.5)
+            .overlay(alignment: .top) {
+                VStack(spacing: size * 1.5 / 13) {
+                    RoundedRectangle(cornerRadius: 0.75)
+                        .fill(color)
+                        .frame(width: 1.5, height: size * 1.5 / 13)
+                    RoundedRectangle(cornerRadius: 0.75)
+                        .fill(color)
+                        .frame(width: 1.5, height: size * 4 / 13)
+                }
+                .padding(.top, size * 2 / 13)
+            }
+    }
+
+    /// Notifications: a bell as a dome over a clapper — two shapes, no outline
+    /// tracing, so it survives being 13 pt beside a word.
+    private var bell: some View {
+        ZStack(alignment: .bottom) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: size * 5 / 13,
+                bottomLeadingRadius: size * 1.5 / 13,
+                bottomTrailingRadius: size * 1.5 / 13,
+                topTrailingRadius: size * 5 / 13, style: .continuous)
+                .strokeBorder(color, lineWidth: 1.5)
+                .frame(width: size * 10 / 13, height: size * 9 / 13)
+                .frame(maxHeight: .infinity, alignment: .top)
+            UnevenRoundedRectangle(
+                bottomLeadingRadius: size / 13,
+                bottomTrailingRadius: size / 13, style: .continuous)
+                .fill(color)
+                .frame(width: size * 4 / 13, height: size * 2.5 / 13)
+        }
+        .frame(width: size, height: size)
+    }
+
+    /// Audio & Output: a plain ring — the output stage, and the only glyph in
+    /// the set that is a single unbroken shape.
+    private var ring: some View {
+        Circle()
+            .strokeBorder(color, lineWidth: 1.5)
+            .frame(width: size * 9 / 13, height: size * 9 / 13)
+            .frame(width: size, height: size)
+    }
+
+    /// Engine: the models chip with its die centred. Deliberately a near-twin
+    /// of `chip` — one is the weights, the other is the thing that runs them,
+    /// and the pair reads as related at a glance.
+    private var centredChip: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .strokeBorder(color, lineWidth: 1.5)
+            .overlay {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color)
+                    .frame(width: size * 5 / 13, height: size * 5 / 13)
+            }
+    }
+
     private var chip: some View {
         RoundedRectangle(cornerRadius: 3)
             .strokeBorder(color, lineWidth: 1.5)
@@ -200,6 +269,18 @@ struct BenchSidebarRow<Destination: Hashable>: View {
                     .font(isSelected ? Bench.Typo.bodyEmphasis : Bench.Typo.body)
                     .foregroundStyle(isSelected ? Bench.Palette.accent
                                                 : Bench.Palette.textSecondary)
+                    // A destination is one line by definition. Without this
+                    // the longest of them ("Models & Downloads", in Settings'
+                    // rail) wraps as soon as it has a count beside it, and a
+                    // two-line row in a column of one-line rows reads as a
+                    // different kind of thing.
+                    .lineLimit(1)
+                    // The longest destination ("Models & Downloads", with a
+                    // count beside it) overruns 230 pt by a hair. A hair of
+                    // shrink keeps the words; truncating them to
+                    // "Models & Downlo…" does not.
+                    .minimumScaleFactor(0.88)
+                    .layoutPriority(1)
                 Spacer(minLength: 4)
                 if isBusy {
                     BenchSpinner(size: 14)
@@ -208,6 +289,11 @@ struct BenchSidebarRow<Destination: Hashable>: View {
                         .font(Bench.Typo.counter)
                         .foregroundStyle(isSelected ? Bench.Palette.accent
                                                     : Bench.Palette.textFaintest)
+                        // `0/7` is three glyphs and a slash, and the slash is
+                        // a break opportunity: given a narrow column it wraps
+                        // to three stacked lines rather than shrinking the
+                        // title beside it.
+                        .fixedSize()
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)

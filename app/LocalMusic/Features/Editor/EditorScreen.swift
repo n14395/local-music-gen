@@ -131,46 +131,70 @@ struct EditorScreen: View {
                         .font(Bench.Typo.mono(11))
                         .foregroundStyle(Bench.Palette.textFaintest)
                         .lineLimit(1)
-                    closeButton
                 }
             })
         } trailing: {
             HStack(spacing: 9) {
-                Button {
-                    undoManager?.undo()
-                } label: {
-                    HStack(spacing: 7) {
-                        Text("⌘Z").font(Bench.Typo.mono(11))
-                        Text("Undo")
+                // Everything except Close freezes while a render is in
+                // flight; Close is the one action that stays legal then, so
+                // the freeze wraps this group rather than the row.
+                Group {
+                    Button {
+                        undoManager?.undo()
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("⌘Z").font(Bench.Typo.mono(11))
+                            Text("Undo")
+                        }
                     }
-                }
-                .buttonStyle(.benchSecondary)
-                .disabled(undoManager?.canUndo != true)
-                Button("Redo") { undoManager?.redo() }
+                    .buttonStyle(.benchSecondary)
+                    .disabled(undoManager?.canUndo != true)
+                    Button {
+                        undoManager?.redo()
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.uturn.forward")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("Redo")
+                        }
+                    }
                     .buttonStyle(.benchSecondary)
                     .disabled(undoManager?.canRedo != true)
-                Rectangle().fill(Color.white.opacity(0.1))
-                    .frame(width: 1, height: 20)
-                Button("Revert to original") { confirmRevert = true }
+                    Rectangle().fill(Color.white.opacity(0.1))
+                        .frame(width: 1, height: 20)
+                    Button {
+                        confirmRevert = true
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("Revert to original")
+                        }
+                    }
                     .buttonStyle(.benchSecondary)
                     .disabled((!store.hasBackup && store.document.isEmpty)
                               || isBlockedByAnotherRender)
                     .help(isBlockedByAnotherRender ? blockedNote : "")
+                }
+                .disabled(isFrozen)
+                .opacity(isFrozen ? 0.4 : 1)
+                if store.material != nil { closeButton }
                 applyButton
+                    .disabled(isFrozen)
+                    .opacity(isFrozen ? 0.4 : 1)
             }
-            .disabled(isFrozen)
-            .opacity(isFrozen ? 0.4 : 1)
         }
     }
 
     /// Puts the track away and returns to the welcome screen.
     ///
-    /// Beside the name it closes rather than over with Undo/Revert/Apply, and
-    /// for a reason beyond grouping: that trailing row is disabled and dimmed
-    /// while a render is in flight, and closing is the one thing that stays
-    /// legal then. `close()` leaves an in-flight apply running and owning its
-    /// own material, so the take still lands in the Library — the screen is
-    /// what you are putting away, not the work.
+    /// It sits with the actions but outside their freeze: the rest of the row
+    /// is disabled and dimmed while a render is in flight, and closing is the
+    /// one thing that stays legal then. `close()` leaves an in-flight apply
+    /// running and owning its own material, so the take still lands in the
+    /// Library — the screen is what you are putting away, not the work.
     ///
     /// No confirmation and no warning about unapplied edits: `close()` flushes
     /// the edit list to the row on the way out, so reopening the track brings
@@ -179,16 +203,15 @@ struct EditorScreen: View {
         Button {
             store.close()
         } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Bench.Palette.textFaint)
-                // Padding inside the content shape: transparent padding takes
-                // no hits, so without this the target is the 10 pt glyph.
-                .padding(.horizontal, 7).padding(.vertical, 6)
-                .contentShape(Rectangle())
+            HStack(spacing: 7) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                Text("Close")
+            }
         }
-        .buttonStyle(.plain)
-        .help("Close this track")
+        .buttonStyle(.benchSecondary)
+        .help("Close this track — pending edits are kept and come back "
+              + "when you reopen it")
         .accessibilityLabel("Close track")
     }
 

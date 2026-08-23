@@ -1,154 +1,224 @@
 import AppKit
 import SwiftUI
 
-/// The `Settings` scene.
+/// The `Settings` scene, wearing the app's own window.
 ///
-/// A separate window, so it keeps its own chrome and its own colour scheme —
-/// but it is painted from the same tokens as the main window, because a
-/// settings sheet that arrives in system grey reads as a different app bolted
-/// onto this one. `Form(.grouped)` is not used for exactly that reason: it
-/// draws its own materials, which the Bench palette has no light variant of.
+/// It used to be a system preferences window with the Bench palette painted
+/// on: a title bar reading "Settings", a second band underneath reading
+/// "Settings" again, eight equal-weight rows in a 172 pt rail, and a blue
+/// macOS focus ring on whichever of them the keyboard was on. Each of those is
+/// individually small and collectively they read as a different application.
 ///
-/// Panes down the left rather than a segmented strip along the top: the strip
-/// topped out at two panes, and every label added to it squeezes the rest.
+/// So the shell is the main window's, component for component — `SettingsRail`
+/// is built from the same `BenchSidebarRow`/`BenchSidebarHeading`/
+/// `BenchSidebarCard` the main sidebar is, at the same 230 pt, with the
+/// traffic lights over its reserved 52 pt header. What is left of the old
+/// window is its content, restyled by two rules: group labels sit above their
+/// card rather than inside it, and controls sit in one right-hand column
+/// (`SettingsRows.swift` explains why both matter).
 struct SettingsView: View {
     let env: AppEnvironment
 
-    @State private var pane: Pane = .general
+    @State private var pane: SettingsPane = .general
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
     @State private var hfToken = ""
     @State private var tokenSaved = false
     @State private var confirmingReset = false
+    @State private var confirmingSectionReset = false
+    /// How many songs the library holds, for the rail's trailing count. Read
+    /// from the repository rather than from `library.results`, which is
+    /// whatever the Library screen was last filtered to — a number that would
+    /// mean something different depending on where you had been.
+    @State private var songCount = 0
 
-    enum Pane: String, CaseIterable {
-        case general, notifications, generation, audio, library, queue, models,
-             engine
-
-        var title: String {
-            switch self {
-            case .general: "General"
-            case .notifications: "Notifications"
-            case .generation: "Generation"
-            case .audio: "Audio & Output"
-            case .library: "Library & Files"
-            case .queue: "Queue"
-            case .models: "Models & Downloads"
-            case .engine: "Engine"
-            }
-        }
+    private var isSearching: Bool {
+        query.trimmingCharacters(in: .whitespaces).count >= 2
     }
 
     var body: some View {
         @Bindable var settings = env.settings
-        VStack(spacing: 0) {
-            BenchTopBar(title: "Settings") { EmptyView() }
-            HStack(spacing: 0) {
-                paneRail
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        switch pane {
-                        case .general:
-                            askFirstCard($settings)
-                            motionCard($settings)
-                            resetCard
-                        case .notifications:
-                            permissionCard
-                            deliveryCard($settings)
-                            eventsCard($settings)
-                        case .generation:
-                            openingModelCard
-                            newRendersCard($settings)
-                            generationCard($settings)
-                            presetsCard
-                        case .audio:
-                            loudnessCard($settings)
-                            mixDefaultsCard($settings)
-                            mediaKeysCard($settings)
-                        case .library:
-                            filesCard($settings)
-                            librarySortCard($settings)
-                            backupsCard($settings)
-                            storageCard
-                        case .queue:
-                            queueCard($settings)
-                        case .models:
-                            if libraryNeedsRestart { libraryRestartBanner }
-                            ModelLibraryCard(env: env)
-                            huggingFaceCard
-                            licencesCard
-                        case .engine:
-                            if needsEngineRestart { restartBanner }
-                            smallModelsCard
-                            memoryGuardCard
-                            downloadsAndCacheCard
-                            engineSummaryCard
-                            BackendDebugView(status: env.backendStatus,
-                                             manager: env.backendManager,
-                                             telemetry: env.telemetry)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
-                }
-            }
+        HStack(spacing: 0) {
+            SettingsRail(env: env, pane: $pane, query: $query,
+                         searchFocus: $searchFocused, songCount: songCount)
+            content($settings)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Bench.Palette.windowBackground)
         }
-        .frame(width: 720, height: 560)
         .background(Bench.Palette.windowBackground)
+        // Ordered exactly as `MainWindow` orders it, and the order is the
+        // whole trick: `.hiddenTitleBar` gives a full-size content view but
+        // SwiftUI still reserves a 32 pt safe area where the titlebar would
+        // be. Ignoring it *after* the columns are laid out lifts both of them
+        // into that band together — the rail's reserved header takes the
+        // traffic lights and the content's 52 pt header lines up beside it. A
+        // `.frame` applied before this modifier resolves against the inset
+        // area instead, which lifted the content header alone and left it
+        // half above the window's top edge.
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 900, minHeight: 620)
         .preferredColorScheme(.dark)
+        .background(SettingsWindowConfigurator())
         .onAppear {
             if let token = Keychain.get(account: "hf-token") {
                 hfToken = token
                 tokenSaved = true
             }
+            refreshSongCount()
+        }
+        .onChange(of: env.library.recent.count) { refreshSongCount() }
+        // ⌘F, as the rail's field advertises. In the background rather than as
+        // a modifier on the field: the shortcut has to work from anywhere in
+        // the window, including with the focus inside a text field elsewhere.
+        .background {
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
         }
     }
 
-    // MARK: - Chrome
+    private func refreshSongCount() {
+        let counts = (try? env.library.repository.countsByOrigin()) ?? [:]
+        songCount = counts.values.reduce(0, +)
+    }
 
-    private var paneRail: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Pane.allCases, id: \.self) { candidate in
-                let isOn = candidate == pane
-                Button {
-                    pane = candidate
-                } label: {
-                    Text(candidate.title)
-                        .font(isOn ? Bench.Typo.secondaryEmphasis
-                                   : Bench.Typo.secondary)
-                        .foregroundStyle(isOn ? Bench.Palette.textPrimary
-                                              : Bench.Palette.textTertiary)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(
-                            cornerRadius: Bench.Metrics.Radius.row,
-                            style: .continuous)
-                            .fill(isOn ? Bench.Palette.rowSelected : .clear))
-                        .contentShape(RoundedRectangle(
-                            cornerRadius: Bench.Metrics.Radius.row,
-                            style: .continuous))
+    // MARK: - Content column
+
+    @ViewBuilder
+    private func content(_ settings: Bindable<AppSettings>) -> some View {
+        VStack(spacing: 0) {
+            if isSearching {
+                SettingsSearchResults(query: query) { entry in
+                    pane = entry.pane
+                    query = ""
+                    searchFocused = false
                 }
-                .buttonStyle(.plain)
+            } else {
+                header
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        panel(settings)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24).padding(.bottom, 28)
+                }
+                statusStrip
             }
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(width: 172)
-        .frame(maxHeight: .infinity)
-        .background(Bench.Palette.sidebar)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Bench.Palette.hairline).frame(width: 1)
         }
     }
 
-    private func card<Content: View>(_ title: String,
-                                     @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            Text(title).eyebrow()
-            content()
+    private var header: some View {
+        SettingsSectionHeader(
+            title: pane.title,
+            onReset: { confirmingSectionReset = true },
+            resetDisabled: changedInPane == 0) {
+            if pane == .notifications { notificationChip }
         }
-        .padding(15)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .benchCard()
+        .confirmationDialog(
+            "Reset \u{201C}\(pane.title)\u{201D} to its defaults?",
+            isPresented: $confirmingSectionReset) {
+            Button("Reset \(settingsInPane) setting"
+                   + (settingsInPane == 1 ? "" : "s"), role: .destructive) {
+                SettingsCatalog.reset(pane: pane, env.settings)
+            }
+        } message: {
+            Text(changedInPane == 1
+                 ? "One setting in this section differs from its default. "
+                   + "Nothing outside this section changes."
+                 : "\(changedInPane) settings in this section differ from "
+                   + "their defaults. Nothing outside this section changes.")
+        }
     }
+
+    /// The section's permission state, as a chip rather than as a card whose
+    /// only content was one line of it.
+    @ViewBuilder
+    private var notificationChip: some View {
+        if env.notifications.isAllowed {
+            SettingsChip(text: "ALLOWED BY MACOS")
+        } else if env.notifications.isDenied {
+            SettingsChip(text: "TURNED OFF IN SYSTEM SETTINGS",
+                         tone: Bench.Palette.warn)
+        } else {
+            SettingsChip(text: "NOT ASKED YET", tone: Bench.Palette.textFaint)
+        }
+    }
+
+    private var settingsInPane: Int { SettingsCatalog.entries(in: pane).count }
+    private var changedInPane: Int {
+        SettingsCatalog.changedCount(in: pane, env.settings)
+    }
+
+    private var statusStrip: some View {
+        SettingsStatusStrip(
+            total: settingsInPane, changed: changedInPane,
+            link: pane.externalLink.map { link in
+                (label: link.label, action: { follow(link.kind) })
+            })
+    }
+
+    private func follow(_ link: SettingsPane.ExternalLink) {
+        switch link {
+        case .notificationSettings:
+            env.notifications.openSystemSettings()
+        case .dataFolder:
+            NSWorkspace.shared.activateFileViewerSelecting([StoragePaths.root])
+        case .modelLibrary:
+            if let url = env.modelLibrary.info?.url {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        case .engineLogs:
+            NSWorkspace.shared
+                .activateFileViewerSelecting([StoragePaths.engineLogs])
+        }
+    }
+
+    @ViewBuilder
+    private func panel(_ settings: Bindable<AppSettings>) -> some View {
+        switch pane {
+        case .general:
+            askFirstGroup(settings)
+            motionGroup(settings)
+            resetGroup
+        case .notifications:
+            permissionBanner
+            deliveryGroup(settings)
+            eventsGroup(settings)
+        case .generation:
+            openingModelGroup
+            newRendersGroup(settings)
+            analysisGroup(settings)
+            presetsGroup
+        case .audio:
+            loudnessGroup(settings)
+            mixDefaultsGroup(settings)
+            mediaKeysGroup(settings)
+        case .library:
+            filesGroup(settings)
+            librarySortGroup(settings)
+            backupsGroup
+            storageGroup
+        case .queue:
+            queueGroup
+        case .models:
+            if libraryNeedsRestart { libraryRestartBanner }
+            ModelLibraryCard(env: env)
+            huggingFaceGroup
+            licencesGroup
+        case .engine:
+            if needsEngineRestart { restartBanner }
+            smallModelsGroup
+            memoryGuardGroup
+            downloadsGroup
+            engineSummaryGroup
+            BackendDebugView(status: env.backendStatus,
+                             manager: env.backendManager,
+                             telemetry: env.telemetry)
+        }
+    }
+
+    // MARK: - Bits
 
     private func caption(_ text: String) -> some View {
         Text(text)
@@ -157,52 +227,55 @@ struct SettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func toggleRow(_ label: String, isOn: Binding<Bool>,
-                           note: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: isOn) {
-                Text(label)
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
-            }
-            .toggleStyle(.bench)
-            caption(note)
-                .padding(.leading, 46)   // under the label, clear of the pill
-        }
+    /// A note under a card, outside it — the counterpart of lifting the label
+    /// out of the top. An explanation that belonged to the whole card used to
+    /// be its last row, which made the card's bottom edge arbitrary.
+    private func footnote(_ text: String) -> some View {
+        caption(text).padding(.horizontal, 2)
     }
 
     // MARK: - General
 
-    private func askFirstCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("ASK FIRST") {
-            toggleRow("Before deleting songs and parts",
-                      isOn: settings.confirmDeletes,
-                      note: "Off, the Delete actions act immediately. "
-                          + "\u{201C}Move deleted files to the Trash\u{201D} "
-                          + "(Library & Files) still applies either way. "
-                          + "Deleting a model always asks.")
-            toggleRow("Before reverting a track to its original",
-                      isOn: settings.confirmRevert,
-                      note: "Reverting discards applied edits for good — the "
-                          + "one action here the Trash cannot undo.")
-            toggleRow("Before quitting while a render is running",
-                      isOn: settings.confirmQuitWhileRendering,
-                      note: "Quitting cancels the render either way; this is "
-                          + "only about being asked.")
+    private func askFirstGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("ASK FIRST") {
+            SettingsToggleRow(
+                title: "Before deleting songs and parts",
+                detail: "Off, the Delete actions act immediately. "
+                    + "\u{201C}Move deleted files to the Trash\u{201D} "
+                    + "(Library & Files) still applies either way. Deleting a "
+                    + "model always asks.",
+                isOn: settings.confirmDeletes)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Before reverting a track to its original",
+                detail: "Reverting discards applied edits for good — the one "
+                    + "action here the Trash cannot undo.",
+                isOn: settings.confirmRevert)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Before quitting while a render is running",
+                detail: "Quitting cancels the render either way; this is only "
+                    + "about being asked.",
+                isOn: settings.confirmQuitWhileRendering)
         }
     }
 
-    private func motionCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("MOTION") {
-            toggleRow("Reduce motion", isOn: settings.reduceMotion,
-                      note: "Panels and the sidebar snap into place instead "
-                          + "of sliding.")
+    private func motionGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("MOTION") {
+            SettingsToggleRow(
+                title: "Reduce motion",
+                detail: "Panels and the sidebar snap into place instead of "
+                    + "sliding.",
+                isOn: settings.reduceMotion)
         }
     }
 
-    private var resetCard: some View {
-        card("START OVER") {
-            HStack(spacing: 8) {
+    private var resetGroup: some View {
+        SettingsGroup("START OVER") {
+            SettingsActionRow(
+                detail: "The welcome tour appears the next time the main "
+                    + "window opens. Recent actions is the \u{201C}Recently "
+                    + "used\u{201D} row in the Actions gallery.") {
                 Button("Show welcome tour again") {
                     env.settings.showWelcomeAgain()
                 }
@@ -216,109 +289,137 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.benchSecondary)
             }
-            caption("The welcome tour appears the next time the main window "
-                    + "opens. Recent actions is the \u{201C}Recently used\u{201D} "
-                    + "row in the Actions gallery.")
-            Divider().overlay(Bench.Palette.hairline)
-            Button("Reset all preferences…") { confirmingReset = true }
-                .buttonStyle(.bench(.destructive))
-                .confirmationDialog(
-                    "Reset every preference to its default?",
-                    isPresented: $confirmingReset) {
-                    Button("Reset preferences", role: .destructive) {
-                        env.settings.resetAllPreferences()
-                        env.catalog.reloadPersisted()
-                    }
-                } message: {
-                    Text("Music, parts, downloaded models and the Hugging "
-                         + "Face token are not touched.")
-                }
-            caption("Everything on these panes, plus per-screen choices like "
-                    + "filters and view modes. Your library and models stay "
-                    + "as they are.")
+            SettingsDivider()
+            SettingsActionRow(
+                detail: "Every section of this window, plus per-screen choices "
+                    + "like filters and view modes. Your library and models "
+                    + "stay as they are.") {
+                Button("Reset all preferences…") { confirmingReset = true }
+                    .buttonStyle(.bench(.destructive))
+            }
+        }
+        .confirmationDialog("Reset every preference to its default?",
+                            isPresented: $confirmingReset) {
+            Button("Reset preferences", role: .destructive) {
+                env.settings.resetAllPreferences()
+                env.catalog.reloadPersisted()
+            }
+        } message: {
+            Text("Music, parts, downloaded models and the Hugging Face token "
+                 + "are not touched.")
         }
     }
 
     // MARK: - Notifications
 
-    private var permissionCard: some View {
-        card("PERMISSION") {
-            HStack(spacing: 8) {
-                if env.notifications.isAllowed {
-                    StatusDot(color: Bench.Palette.ok, size: 6)
-                    Text("ALLOWED")
-                        .font(Bench.Typo.badge)
-                        .foregroundStyle(Bench.Palette.ok)
-                } else if env.notifications.isDenied {
-                    StatusDot(color: Bench.Palette.warn, size: 6)
-                    Text("TURNED OFF IN SYSTEM SETTINGS")
-                        .font(Bench.Typo.badge)
-                        .foregroundStyle(Bench.Palette.warn)
-                } else {
-                    StatusDot(color: Bench.Palette.textFaint, size: 6)
-                    Text("NOT ASKED YET")
-                        .font(Bench.Typo.badge)
-                        .foregroundStyle(Bench.Palette.textFaint)
-                }
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 8) {
-                if !env.notifications.isAllowed, !env.notifications.isDenied {
-                    Button("Allow notifications…") {
-                        Task { await env.notifications.request() }
+    /// Only drawn when there is something to do about it. The state itself is
+    /// the header's chip; this is the button that chip cannot be.
+    @ViewBuilder
+    private var permissionBanner: some View {
+        Group {
+            if !env.notifications.isAllowed {
+                HStack(alignment: .top, spacing: 10) {
+                    StatusDot(color: env.notifications.isDenied
+                              ? Bench.Palette.warn : Bench.Palette.textFaint,
+                              size: 6)
+                        .padding(.top, 5)
+                    Text(env.notifications.isDenied
+                         ? "macOS is holding these back. Everything below "
+                           + "stays set, and starts working again the moment "
+                           + "notifications are switched back on for LocalMusic."
+                         : "macOS has not been asked yet, so nothing below can "
+                           + "be delivered.")
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if env.notifications.isDenied {
+                        Button("Open System Settings") {
+                            env.notifications.openSystemSettings()
+                        }
+                        .buttonStyle(.benchSecondary)
+                    } else {
+                        Button("Allow notifications…") {
+                            Task { await env.notifications.request() }
+                        }
+                        .buttonStyle(.benchSecondary)
                     }
-                    .buttonStyle(.benchSecondary)
                 }
-                if env.notifications.isDenied {
-                    Button("Open System Settings") {
-                        env.notifications.openSystemSettings()
-                    }
-                    .buttonStyle(.benchSecondary)
-                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .benchCard(fill: Bench.Palette.warn.opacity(0.07),
+                           stroke: Bench.Palette.warn.opacity(0.22))
             }
         }
         .task { await env.notifications.refresh() }
     }
 
-    private func deliveryCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("DELIVERY") {
-            toggleRow("Notify me", isOn: settings.notificationsEnabled,
-                      note: "The master switch for every notice the app sends "
-                          + "on its own. A render you armed with \u{201C}Notify "
-                          + "me when it lands\u{201D} is delivered regardless — "
-                          + "that button is its own consent.")
-            Divider().overlay(Bench.Palette.hairline)
-            toggleRow("Also while I\u{2019}m using the app",
-                      isOn: settings.notifyAlways,
-                      note: "Off, notices arrive only once you have switched "
-                          + "away to something else.")
-            toggleRow("Play a sound", isOn: settings.notificationSound,
-                      note: "The system notification sound, on each notice.")
-            toggleRow("Bounce the Dock icon", isOn: settings.dockBounce,
-                      note: "A nudge in the Dock alongside each notice.")
-            Divider().overlay(Bench.Palette.hairline)
-            toggleRow("Always tell me when a render lands",
-                      isOn: settings.autoArmRenders,
-                      note: "Every Generate render behaves as if \u{201C}Notify "
-                          + "me when it lands\u{201D} were pressed on it — "
-                          + "you hear about it even with the app in front.")
+    private func deliveryGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("DELIVERY") {
+            SettingsToggleRow(
+                title: "Notify me",
+                detail: "The master switch for every notice the app sends on "
+                    + "its own. A render you armed with \u{201C}Notify me when "
+                    + "it lands\u{201D} is delivered regardless — that button "
+                    + "is its own consent.",
+                isOn: settings.notificationsEnabled)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Also while I\u{2019}m using the app",
+                detail: "Off, notices arrive only once you have switched away "
+                    + "to something else.",
+                isOn: settings.notifyAlways)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Play a sound",
+                detail: "The system notification sound, on each notice.",
+                isOn: settings.notificationSound)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Bounce the Dock icon",
+                detail: "A nudge in the Dock alongside each notice.",
+                isOn: settings.dockBounce)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Always tell me when a render lands",
+                detail: "Every Generate render behaves as if \u{201C}Notify me "
+                    + "when it lands\u{201D} were pressed on it — you hear "
+                    + "about it even with the app in front.",
+                isOn: settings.autoArmRenders)
         }
     }
 
-    private func eventsCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("TELL ME ABOUT") {
-            toggleRow("Finished tracks", isOn: settings.notifyTrackReady,
-                      note: "A generation completed while you were away.")
-            toggleRow("Failed renders", isOn: settings.notifyJobFailed,
-                      note: "A generation stopped with an error.")
-            toggleRow("Installed models", isOn: settings.notifyDownloadCompleted,
-                      note: "A model download or runtime install finished.")
-            toggleRow("Failed downloads", isOn: settings.notifyDownloadFailed,
-                      note: "A download died before it finished.")
-            toggleRow("Engine warnings", isOn: settings.notifyEngineWarning,
-                      note: "Memory pressure and other engine trouble.")
-            toggleRow("Applied edits", isOn: settings.notifyEditsApplied,
-                      note: "An Editor render replaced a track\u{2019}s file.")
+    private func eventsGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("TELL ME ABOUT") {
+            SettingsToggleRow(
+                title: "Finished tracks",
+                detail: "A generation completed while you were away.",
+                isOn: settings.notifyTrackReady)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Failed renders",
+                detail: "A generation stopped with an error.",
+                isOn: settings.notifyJobFailed)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Installed models",
+                detail: "A model download or runtime install finished.",
+                isOn: settings.notifyDownloadCompleted)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Failed downloads",
+                detail: "A download died before it finished.",
+                isOn: settings.notifyDownloadFailed)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Engine warnings",
+                detail: "Memory pressure and other engine trouble.",
+                isOn: settings.notifyEngineWarning)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Applied edits",
+                detail: "An Editor render replaced a track\u{2019}s file.",
+                isOn: settings.notifyEditsApplied)
         }
     }
 
@@ -353,79 +454,87 @@ struct SettingsView: View {
         }
     }
 
-    private var openingModelCard: some View {
-        card("OPENING MODEL") {
-            HStack(spacing: 12) {
-                Text("Generate opens on")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
-                BenchMenu(label: env.settings.studioModelPolicy.label) {
-                    ForEach(AppSettings.StudioModelPolicy.allCases,
-                            id: \.self) { policy in
-                        Button(policy.label) {
-                            env.settings.studioModelPolicy = policy
+    private var openingModelGroup: some View {
+        SettingsGroup("OPENING MODEL") {
+            SettingsRow(
+                title: "Generate opens on",
+                detail: "Whichever policy, a model that is missing falls back "
+                    + "to the first installed generator.",
+                alignment: .center) {
+                HStack(spacing: 9) {
+                    BenchMenu(label: env.settings.studioModelPolicy.label) {
+                        ForEach(AppSettings.StudioModelPolicy.allCases,
+                                id: \.self) { policy in
+                            Button(policy.label) {
+                                env.settings.studioModelPolicy = policy
+                            }
+                        }
+                    }
+                    if env.settings.studioModelPolicy == .fixed {
+                        modelPicker(selection: env.settings.studioFixedModelId,
+                                    task: "generate",
+                                    automaticLabel: "Choose a model…") {
+                            env.settings.studioFixedModelId = $0
                         }
                     }
                 }
-                if env.settings.studioModelPolicy == .fixed {
-                    modelPicker(selection: env.settings.studioFixedModelId,
-                                task: "generate",
-                                automaticLabel: "Choose a model…") {
-                        env.settings.studioFixedModelId = $0
+            }
+        }
+    }
+
+    private func newRendersGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("NEW RENDERS") {
+            SettingsWideRow(
+                title: "Start length and takes",
+                detail: "Where the composer\u{2019}s length and take count "
+                    + "start — each model still clamps them to what it can "
+                    + "do.") {
+                VStack(spacing: 11) {
+                    BenchSliderRow(label: "Length",
+                                   value: settings.defaultDurationS,
+                                   range: 1...120, step: 1, labelWidth: 64,
+                                   format: { String(format: "%.0f s", $0) })
+                    HStack(spacing: 12) {
+                        Text("Takes")
+                            .font(Bench.Typo.secondary)
+                            .foregroundStyle(Bench.Palette.textSecondary)
+                            .frame(width: 64, alignment: .leading)
+                        BenchStepper(value: settings.defaultTakes, range: 1...8)
+                        Spacer(minLength: 0)
                     }
                 }
             }
-            caption("Whichever policy, a model that is missing falls back to "
-                    + "the first installed generator.")
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Hold the seed",
+                detail: "A seed field left on \u{201C}random\u{201D} borrows "
+                    + "the previous take\u{2019}s seed, so prompt tweaks "
+                    + "re-roll the words, not the dice. A seed you typed is "
+                    + "always yours.",
+                isOn: settings.holdSeed)
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Live preview while rendering",
+                detail: "Asks the engine for partial audio mid-render, so the "
+                    + "render card can draw the take as it forms. Only some "
+                    + "models can produce one — the card stays quiet for the "
+                    + "rest.",
+                isOn: settings.livePreview)
         }
     }
 
-    private func newRendersCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("NEW RENDERS") {
-            BenchSliderRow(label: "Start length",
-                           value: settings.defaultDurationS,
-                           range: 1...120, step: 1, labelWidth: 92,
-                           format: { String(format: "%.0f s", $0) })
-            HStack(spacing: 12) {
-                Text("Start takes")
-                    .font(Bench.Typo.secondary)
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                    .frame(width: 92, alignment: .leading)
-                BenchStepper(value: settings.defaultTakes, range: 1...8)
-                Spacer(minLength: 0)
-            }
-            caption("Where the composer's length and take count start — each "
-                    + "model still clamps them to what it can do.")
-            Divider().overlay(Bench.Palette.hairline)
-            toggleRow("Hold the seed",
-                      isOn: settings.holdSeed,
-                      note: "A seed field left on \u{201C}random\u{201D} "
-                          + "borrows the previous take\u{2019}s seed, so "
-                          + "prompt tweaks re-roll the words, not the dice. "
-                          + "A seed you typed is always yours.")
-            toggleRow("Live preview while rendering",
-                      isOn: settings.livePreview,
-                      note: "Asks the engine for partial audio mid-render, so "
-                          + "the render card can draw the take as it forms. "
-                          + "Only some models can produce one — the card "
-                          + "stays quiet for the rest.")
-        }
-    }
-
-    private func generationCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("AUTOMATIC ANALYSIS & SPLITTING") {
-            toggleRow("Analyze new audio automatically",
-                      isOn: settings.autoAnalyze,
-                      note: "Runs a quick tempo/key/beats pass on every track "
-                          + "that lands in the library, when an analysis "
-                          + "model is installed. Powers part badges, "
-                          + "mash-ability scores and timeline alignment.")
+    private func analysisGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("AUTOMATIC ANALYSIS & SPLITTING") {
+            SettingsToggleRow(
+                title: "Analyze new audio automatically",
+                detail: "Runs a quick tempo/key/beats pass on every track that "
+                    + "lands in the library, when an analysis model is "
+                    + "installed. Powers part badges, mash-ability scores and "
+                    + "timeline alignment.",
+                isOn: settings.autoAnalyze)
             if env.settings.autoAnalyze {
-                HStack(spacing: 12) {
-                    Text("Analyzer")
-                        .font(Bench.Typo.secondary)
-                        .foregroundStyle(Bench.Palette.textSecondary)
-                        .frame(width: 92, alignment: .leading)
+                SettingsDivider()
+                SettingsRow(title: "Analyzer", alignment: .center) {
                     modelPicker(selection: env.settings.analyzerModelId,
                                 task: "analyze",
                                 automaticLabel: "Automatic") {
@@ -433,40 +542,35 @@ struct SettingsView: View {
                     }
                 }
             }
-            Divider().overlay(Bench.Palette.hairline)
-            HStack(spacing: 12) {
-                Text("Split with")
-                    .font(Bench.Typo.secondary)
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                    .frame(width: 92, alignment: .leading)
+            SettingsDivider()
+            SettingsRow(
+                title: "Split with",
+                detail: "The separator a Split action opens on. The picker on "
+                    + "the action itself still lists everything installed.",
+                alignment: .center) {
                 modelPicker(selection: env.settings.defaultSeparatorId,
                             task: "separate",
                             automaticLabel: "Recipe\u{2019}s choice") {
                     env.settings.defaultSeparatorId = $0
                 }
             }
-            caption("The separator a Split action opens on. The picker on the "
-                    + "action itself still lists everything installed.")
         }
     }
 
-    private var presetsCard: some View {
-        card("SAVED PRESETS") {
+    private var presetsGroup: some View {
+        SettingsGroup("SAVED PRESETS") {
             let presets = storedPresets
             if presets.isEmpty {
-                caption("Parameter presets you save in the Studio\u{2019}s "
+                SettingsRow(
+                    title: "None saved yet",
+                    detail: "Parameter presets you save in the Studio\u{2019}s "
                         + "Full-control panel appear here.")
             } else {
-                ForEach(presets) { preset in
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(preset.name)
-                                .font(Bench.Typo.secondaryEmphasis)
-                                .foregroundStyle(Bench.Palette.textPrimary)
-                            Text(modelName(preset.modelId) ?? preset.modelId)
-                                .metaLine()
-                        }
-                        Spacer(minLength: 8)
+                ForEach(Array(presets.enumerated()), id: \.element) { index, preset in
+                    if index > 0 { SettingsDivider() }
+                    SettingsRow(title: preset.name,
+                                detail: modelName(preset.modelId) ?? preset.modelId,
+                                alignment: .center) {
                         Button("Delete") { deletePreset(preset) }
                             .buttonStyle(.bench(.quiet))
                     }
@@ -475,9 +579,9 @@ struct SettingsView: View {
         }
     }
 
-    /// The same `studio.presets` blob the parameter panel writes; managed
-    /// here so a pile of stale presets does not need a per-chip hunt through
-    /// the Studio to clean up.
+    /// The same `studio.presets` blob the parameter panel writes; managed here
+    /// so a pile of stale presets does not need a per-chip hunt through the
+    /// Studio to clean up.
     @AppStorage("studio.presets") private var storedPresetsJSON = "[]"
 
     private var storedPresets: [StudioPreset] {
@@ -495,40 +599,52 @@ struct SettingsView: View {
 
     // MARK: - Audio & Output
 
-    private func loudnessCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("LOUDNESS") {
-            BenchSliderRow(label: "House target",
-                           value: settings.targetLufs,
-                           range: -30...(-6), step: 0.5, labelWidth: 92,
-                           valueWidth: 74,
-                           format: { String(format: "%.1f LUFS", $0) })
-            caption("Where the Workbench footer and the Editor\u{2019}s "
+    private func loudnessGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("LOUDNESS") {
+            SettingsWideRow(
+                title: "House target",
+                detail: "Where the Workbench footer and the Editor\u{2019}s "
                     + "normalise slider start; each mix can still move it. "
-                    + "Everything ends in the same limiter at \u{2212}1 dBTP.")
+                    + "Everything ends in the same limiter at \u{2212}1 dBTP.") {
+                BenchSliderRow(label: "Target", value: settings.targetLufs,
+                               range: -30...(-6), step: 0.5, labelWidth: 64,
+                               valueWidth: 84,
+                               format: { String(format: "%.1f LUFS", $0) })
+            }
         }
     }
 
-    private func mixDefaultsCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("A FRESH WORKBENCH STARTS WITH") {
-            toggleRow("Match tempo", isOn: settings.autoMatchTempo,
-                      note: "Stretch clips onto the mix\u{2019}s grid.")
-            toggleRow("Match key", isOn: settings.autoMatchKey,
-                      note: "Shift clips into the mix\u{2019}s key.")
-            toggleRow("Keep the separate tracks", isOn: settings.keepStems,
-                      note: "Save each mixed track as a part alongside the "
-                          + "mixdown.")
-            caption("Applied at launch; the bench\u{2019}s own chips override "
-                    + "them for the session.")
+    private func mixDefaultsGroup(_ settings: Bindable<AppSettings>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsGroup("A FRESH WORKBENCH STARTS WITH") {
+                SettingsToggleRow(
+                    title: "Match tempo",
+                    detail: "Stretch clips onto the mix\u{2019}s grid.",
+                    isOn: settings.autoMatchTempo)
+                SettingsDivider()
+                SettingsToggleRow(
+                    title: "Match key",
+                    detail: "Shift clips into the mix\u{2019}s key.",
+                    isOn: settings.autoMatchKey)
+                SettingsDivider()
+                SettingsToggleRow(
+                    title: "Keep the separate tracks",
+                    detail: "Save each mixed track as a part alongside the "
+                        + "mixdown.",
+                    isOn: settings.keepStems)
+            }
+            footnote("Applied at launch; the bench\u{2019}s own chips override "
+                     + "them for the session.")
         }
     }
 
-    private func mediaKeysCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("SYSTEM PLAYBACK") {
-            toggleRow("Media keys & Now Playing",
-                      isOn: settings.nowPlayingEnabled,
-                      note: "Play/pause keys, Control Centre and the Now "
-                          + "Playing widget follow whichever player is "
-                          + "sounding.")
+    private func mediaKeysGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("SYSTEM PLAYBACK") {
+            SettingsToggleRow(
+                title: "Media keys & Now Playing",
+                detail: "Play/pause keys, Control Centre and the Now Playing "
+                    + "widget follow whichever player is sounding.",
+                isOn: settings.nowPlayingEnabled)
             .onChange(of: env.settings.nowPlayingEnabled) { _, enabled in
                 env.setNowPlaying(enabled: enabled)
             }
@@ -537,36 +653,37 @@ struct SettingsView: View {
 
     // MARK: - Library & Files
 
-    private func filesCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("FILES") {
-            toggleRow("Move deleted files to the Trash",
-                      isOn: settings.deleteToTrash,
-                      note: "Deleted songs, parts and edit backups go to the "
-                          + "Trash instead of being removed outright. "
-                          + "Waveform caches are always removed — they "
-                          + "regenerate.")
-            Divider().overlay(Bench.Palette.hairline)
-            HStack(spacing: 12) {
-                Text("Export as")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
-                BenchMenu(label: env.settings.exportFormat.uppercased()) {
-                    ForEach(["wav", "aiff", "flac", "mp3"], id: \.self) { format in
-                        Button(format.uppercased()) {
-                            env.settings.exportFormat = format
+    private func filesGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("FILES") {
+            SettingsToggleRow(
+                title: "Move deleted files to the Trash",
+                detail: "Deleted songs, parts and edit backups go to the Trash "
+                    + "instead of being removed outright. Waveform caches are "
+                    + "always removed — they regenerate.",
+                isOn: settings.deleteToTrash)
+            SettingsDivider()
+            SettingsRow(
+                title: "Export as",
+                detail: "What the Editor\u{2019}s export sheet opens set to; "
+                    + "each export can still change both.",
+                alignment: .center) {
+                HStack(spacing: 9) {
+                    BenchMenu(label: env.settings.exportFormat.uppercased()) {
+                        ForEach(["wav", "aiff", "flac", "mp3"], id: \.self) { format in
+                            Button(format.uppercased()) {
+                                env.settings.exportFormat = format
+                            }
                         }
                     }
-                }
-                BenchMenu(label: Self.depthLabel(env.settings.exportDepth)) {
-                    ForEach(["pcm16", "pcm24", "float32"], id: \.self) { depth in
-                        Button(Self.depthLabel(depth)) {
-                            env.settings.exportDepth = depth
+                    BenchMenu(label: Self.depthLabel(env.settings.exportDepth)) {
+                        ForEach(["pcm16", "pcm24", "float32"], id: \.self) { depth in
+                            Button(Self.depthLabel(depth)) {
+                                env.settings.exportDepth = depth
+                            }
                         }
                     }
                 }
             }
-            caption("What the Editor\u{2019}s export sheet opens set to; "
-                    + "each export can still change both.")
         }
     }
 
@@ -579,12 +696,9 @@ struct SettingsView: View {
         }
     }
 
-    private func librarySortCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("LIBRARY") {
-            HStack(spacing: 12) {
-                Text("Sort the library by")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+    private func librarySortGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("LIBRARY") {
+            SettingsRow(title: "Sort the library by", alignment: .center) {
                 BenchMenu(label: LibraryScreen.label(
                     for: env.settings.libraryDefaultSort)) {
                     ForEach(LibraryRepository.Sort.allCases, id: \.self) { sort in
@@ -594,36 +708,34 @@ struct SettingsView: View {
                     }
                 }
             }
-            toggleRow("Remember my last sort",
-                      isOn: settings.libraryRemembersSort,
-                      note: "Picking a sort in the Library also makes it the "
-                          + "default above.")
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Remember my last sort",
+                detail: "Picking a sort in the Library also makes it the "
+                    + "default above.",
+                isOn: settings.libraryRemembersSort)
         }
     }
 
-    private func backupsCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("EDIT BACKUPS") {
-            HStack(spacing: 12) {
-                Text("Keep at most")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+    private var backupsGroup: some View {
+        SettingsGroup("EDIT BACKUPS") {
+            SettingsRow(
+                title: "Keep at most",
+                detail: "The originals stashed when the Editor applies edits "
+                    + "in place. Past the cap the oldest are pruned — and a "
+                    + "pruned backup is that track\u{2019}s Revert gone, which "
+                    + "is why \u{201C}Everything\u{201D} is the default.",
+                alignment: .center) {
                 BenchMenu(label: env.settings.backupsCapGB == 0
                           ? "Everything"
-                          : String(format: "%.0f GB",
-                                   env.settings.backupsCapGB)) {
+                          : String(format: "%.0f GB", env.settings.backupsCapGB)) {
                     Button("Everything") { setBackupsCap(0) }
                     Divider()
                     ForEach([2.0, 5.0, 10.0], id: \.self) { gb in
-                        Button(String(format: "%.0f GB", gb)) {
-                            setBackupsCap(gb)
-                        }
+                        Button(String(format: "%.0f GB", gb)) { setBackupsCap(gb) }
                     }
                 }
             }
-            caption("The originals stashed when the Editor applies edits in "
-                    + "place. Past the cap the oldest are pruned — and a "
-                    + "pruned backup is that track\u{2019}s Revert gone, "
-                    + "which is why \u{201C}Everything\u{201D} is the default.")
         }
     }
 
@@ -634,34 +746,29 @@ struct SettingsView: View {
 
     @State private var diskFigures: [(label: String, url: URL, bytes: Int64)] = []
 
-    private var storageCard: some View {
-        card("STORAGE") {
-            BenchInfoRow(label: "Data folder", labelWidth: 92) {
-                Text(StoragePaths.root.path)
-                    .font(Bench.Typo.mono(11))
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var storageGroup: some View {
+        SettingsGroup("STORAGE") {
+            SettingsRow(title: "Data folder", detail: StoragePaths.root.path,
+                        alignment: .center) {
+                Button("Reveal") {
+                    NSWorkspace.shared
+                        .activateFileViewerSelecting([StoragePaths.root])
+                }
+                .buttonStyle(.bench(.quiet))
             }
             ForEach(diskFigures, id: \.label) { figure in
-                BenchInfoRow(label: figure.label, labelWidth: 92) {
-                    HStack(spacing: 10) {
-                        Text(ByteCountFormatter.string(
-                            fromByteCount: figure.bytes, countStyle: .file))
-                            .font(Bench.Typo.mono(12))
-                            .foregroundStyle(Bench.Palette.textPrimary)
-                        Button("Reveal") {
-                            NSWorkspace.shared
-                                .activateFileViewerSelecting([figure.url])
-                        }
-                        .buttonStyle(.bench(.quiet))
+                SettingsDivider()
+                SettingsRow(title: figure.label,
+                            detail: ByteCountFormatter.string(
+                                fromByteCount: figure.bytes, countStyle: .file),
+                            alignment: .center) {
+                    Button("Reveal") {
+                        NSWorkspace.shared
+                            .activateFileViewerSelecting([figure.url])
                     }
+                    .buttonStyle(.bench(.quiet))
                 }
             }
-            Button("Reveal data folder in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([StoragePaths.root])
-            }
-            .buttonStyle(.benchSecondary)
         }
         .task { await refreshDiskFigures() }
     }
@@ -688,15 +795,16 @@ struct SettingsView: View {
 
     // MARK: - Queue
 
-    private func queueCard(_ settings: Bindable<AppSettings>) -> some View {
-        card("FINISHED RENDERS") {
-            HStack(spacing: 12) {
-                Text("Clear finished rows")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+    private var queueGroup: some View {
+        SettingsGroup("FINISHED RENDERS") {
+            SettingsRow(
+                title: "Clear finished rows",
+                detail: "Failed and cancelled rows clear on the same schedule. "
+                    + "\u{201C}Clear done\u{201D} in the queue panel always "
+                    + "works immediately.",
+                alignment: .center) {
                 BenchMenu(label: env.settings.queueAutoClear.label) {
-                    ForEach(AppSettings.QueueAutoClear.allCases,
-                            id: \.self) { policy in
+                    ForEach(AppSettings.QueueAutoClear.allCases, id: \.self) { policy in
                         Button(policy.label) {
                             env.settings.queueAutoClear = policy
                             // Rows already finished start their clock now.
@@ -705,45 +813,45 @@ struct SettingsView: View {
                     }
                 }
             }
-            caption("Failed and cancelled rows clear on the same schedule. "
-                    + "\u{201C}Clear done\u{201D} in the queue panel always "
-                    + "works immediately.")
         }
     }
 
-    // MARK: - Hugging Face
+    // MARK: - Models & Downloads
 
-    private var huggingFaceCard: some View {
-        card("HUGGING FACE") {
-            SecureField("Access token (hf_…)", text: $hfToken)
-                .textFieldStyle(.plain)
-                .tint(Bench.Palette.accent)
-                .font(Bench.Typo.mono(12))
-                .foregroundStyle(Bench.Palette.textPrimary)
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.control,
-                                             style: .continuous)
-                    .fill(Bench.Palette.windowBackground))
-                .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.control,
-                                          style: .continuous)
-                    .strokeBorder(Bench.Palette.cardStroke, lineWidth: 1))
-            HStack(spacing: 8) {
-                Button("Save token", action: saveToken)
-                    .buttonStyle(.benchSecondary)
-                Button("Remove", action: removeToken)
-                    .buttonStyle(.bench(.quiet))
-                if tokenSaved {
-                    HStack(spacing: 6) {
-                        StatusDot(color: Bench.Palette.ok, size: 6)
-                        Text("SAVED TO KEYCHAIN")
-                            .font(Bench.Typo.badge)
-                            .foregroundStyle(Bench.Palette.ok)
+    private var huggingFaceGroup: some View {
+        SettingsGroup("HUGGING FACE") {
+            SettingsWideRow(
+                title: "Access token",
+                detail: "Needed for gated models like Stable Audio Open. "
+                    + "Stored only in your Keychain and handed to the local "
+                    + "engine at launch.") {
+                VStack(alignment: .leading, spacing: 9) {
+                    SecureField("hf_…", text: $hfToken)
+                        .textFieldStyle(.plain)
+                        .tint(Bench.Palette.accent)
+                        .font(Bench.Typo.mono(12))
+                        .foregroundStyle(Bench.Palette.textPrimary)
+                        .padding(.horizontal, 11).padding(.vertical, 8)
+                        .background(RoundedRectangle(
+                            cornerRadius: Bench.Metrics.Radius.control,
+                            style: .continuous)
+                            .fill(Bench.Palette.windowBackground))
+                        .overlay(RoundedRectangle(
+                            cornerRadius: Bench.Metrics.Radius.control,
+                            style: .continuous)
+                            .strokeBorder(Bench.Palette.cardStroke, lineWidth: 1))
+                    HStack(spacing: 8) {
+                        Button("Save token", action: saveToken)
+                            .buttonStyle(.benchSecondary)
+                        Button("Remove", action: removeToken)
+                            .buttonStyle(.bench(.quiet))
+                        if tokenSaved {
+                            SettingsChip(text: "SAVED TO KEYCHAIN")
+                        }
+                        Spacer(minLength: 0)
                     }
                 }
-                Spacer(minLength: 0)
             }
-            caption("Needed for gated models like Stable Audio Open. Stored only "
-                    + "in your Keychain and handed to the local engine at launch.")
         }
     }
 
@@ -770,6 +878,33 @@ struct SettingsView: View {
         env.catalog.refreshHFToken()
     }
 
+    private var licencesGroup: some View {
+        SettingsGroup("ACCEPTED LICENSES") {
+            let accepted = env.catalog.acceptedLicenses.sorted()
+            if accepted.isEmpty {
+                SettingsRow(
+                    title: "None yet",
+                    detail: "Licenses you accept before downloading a model "
+                        + "are remembered here.")
+            } else {
+                ForEach(Array(accepted.enumerated()), id: \.element) { index, id in
+                    if index > 0 { SettingsDivider() }
+                    SettingsRow(
+                        title: modelName(id) ?? id,
+                        detail: index == accepted.count - 1
+                            ? "Forgetting one shows that model\u{2019}s license "
+                              + "sheet again before its next download. Nothing "
+                              + "is deleted."
+                            : nil,
+                        alignment: .center) {
+                        Button("Forget") { env.catalog.revokeLicense(modelId: id) }
+                            .buttonStyle(.bench(.quiet))
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Engine
 
     /// The running engine was spawned with a different config than Settings
@@ -783,9 +918,9 @@ struct SettingsView: View {
     }
 
     /// The library folder has changed on disk and the engine has not been told.
-    /// Distinct from the generic engine-settings banner because the
-    /// consequence is specific and alarming if left unexplained: until the
-    /// restart, every model reads as not downloaded.
+    /// Distinct from the generic engine-settings banner because the consequence
+    /// is specific and alarming if left unexplained: until the restart, every
+    /// model reads as not downloaded.
     private var libraryNeedsRestart: Bool {
         env.modelLibrary.pendingRestartPath != nil
     }
@@ -838,101 +973,101 @@ struct SettingsView: View {
                    stroke: Bench.Palette.warn.opacity(0.25))
     }
 
-    private var smallModelsCard: some View {
-        card("SMALL HELPER MODELS") {
-            HStack(spacing: 12) {
-                Text("Warm workers are")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
-                BenchMenu(label: env.settings.smallResidency.label) {
-                    ForEach(AppSettings.SmallResidency.allCases,
-                            id: \.self) { choice in
-                        Button(choice.label) {
-                            env.settings.smallResidency = choice
+    private var smallModelsGroup: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsGroup("SMALL HELPER MODELS") {
+                SettingsRow(title: "Warm workers are", alignment: .center) {
+                    HStack(spacing: 12) {
+                        BenchMenu(label: env.settings.smallResidency.label) {
+                            ForEach(AppSettings.SmallResidency.allCases,
+                                    id: \.self) { choice in
+                                Button(choice.label) {
+                                    env.settings.smallResidency = choice
+                                }
+                            }
                         }
+                        BenchStepper(value: Binding(
+                            get: { env.settings.smallWarmSlots },
+                            set: { env.settings.smallWarmSlots = $0 }),
+                                     range: 1...4)
                     }
                 }
-                Spacer(minLength: 12)
-                Text("Slots")
-                    .font(Bench.Typo.secondary)
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                BenchStepper(value: Binding(
-                    get: { env.settings.smallWarmSlots },
-                    set: { env.settings.smallWarmSlots = $0 }), range: 1...4)
+                SettingsDivider()
+                SettingsWideRow(title: "Counts as small") {
+                    BenchSliderRow(
+                        label: "At most",
+                        value: Binding(
+                            get: { Double(env.settings.smallModelBytes)
+                                / 1_000_000_000 },
+                            set: { env.settings.smallModelBytes
+                                = Int($0 * 1_000_000_000) }),
+                        range: 0.5...4, step: 0.25, labelWidth: 64,
+                        valueWidth: 74,
+                        format: { String(format: "%.2f GB", $0) })
+                }
             }
-            BenchSliderRow(
-                label: "Counts as small",
-                value: Binding(
-                    get: { Double(env.settings.smallModelBytes)
-                        / 1_000_000_000 },
-                    set: { env.settings.smallModelBytes
-                        = Int($0 * 1_000_000_000) }),
-                range: 0.5...4, step: 0.25, labelWidth: 112, valueWidth: 64,
-                format: { String(format: "%.2f GB", $0) })
-            caption("Analyzers, separators and other helpers under the size "
-                    + "limit run beside the big resident model instead of "
-                    + "evicting it, and stay loaded between jobs for as long "
-                    + "as chosen above.")
+            footnote("Analyzers, separators and other helpers under the size "
+                     + "limit run beside the big resident model instead of "
+                     + "evicting it, and stay loaded between jobs for as long "
+                     + "as chosen above.")
         }
     }
 
-    private var memoryGuardCard: some View {
-        card("MEMORY GUARD") {
-            toggleRow("Warn about memory pressure",
-                      isOn: Binding(
-                          get: { env.settings.memGuardPercent > 0 },
-                          set: { env.settings.memGuardPercent = $0 ? 90 : 0 }),
-                      note: "A warning when a render\u{2019}s accelerator "
-                          + "memory crosses the level — it never stops the "
-                          + "job. Legitimate generations can spike briefly "
-                          + "past it.")
+    private var memoryGuardGroup: some View {
+        SettingsGroup("MEMORY GUARD") {
+            SettingsToggleRow(
+                title: "Warn about memory pressure",
+                detail: "A warning when a render\u{2019}s accelerator memory "
+                    + "crosses the level — it never stops the job. Legitimate "
+                    + "generations can spike briefly past it.",
+                isOn: Binding(
+                    get: { env.settings.memGuardPercent > 0 },
+                    set: { env.settings.memGuardPercent = $0 ? 90 : 0 }))
             if env.settings.memGuardPercent > 0 {
-                BenchSliderRow(
-                    label: "Warn at",
-                    value: Binding(
-                        get: { Double(env.settings.memGuardPercent) },
-                        set: { env.settings.memGuardPercent = Int($0) }),
-                    range: 50...100, step: 5, labelWidth: 112, valueWidth: 84,
-                    format: { String(format: "%.0f%% of RAM", $0) })
+                SettingsDivider()
+                SettingsWideRow(title: "Warn at") {
+                    BenchSliderRow(
+                        label: "Level",
+                        value: Binding(
+                            get: { Double(env.settings.memGuardPercent) },
+                            set: { env.settings.memGuardPercent = Int($0) }),
+                        range: 50...100, step: 5, labelWidth: 64,
+                        valueWidth: 94,
+                        format: { String(format: "%.0f%% of RAM", $0) })
+                }
             }
         }
     }
 
-    private var downloadsAndCacheCard: some View {
-        card("DOWNLOADS & MODEL CACHE") {
-            HStack(spacing: 12) {
-                Text("Parallel downloads")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+    private var downloadsGroup: some View {
+        SettingsGroup("DOWNLOADS & FILES") {
+            SettingsRow(title: "Parallel downloads", alignment: .center) {
                 BenchStepper(value: Binding(
                     get: { env.settings.maxActiveDownloads },
                     set: { env.settings.maxActiveDownloads = $0 }), range: 1...4)
-                Spacer(minLength: 0)
             }
-            Divider().overlay(Bench.Palette.hairline)
-            BenchInfoRow(label: "Model cache", labelWidth: 92) {
-                Text(env.settings.hfHomePath
-                     ?? "~/.cache/huggingface (shared default)")
-                    .font(Bench.Typo.mono(11))
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            SettingsDivider()
+            SettingsRow(
+                title: "Model cache",
+                detail: env.settings.hfHomePath
+                    ?? "~/.cache/huggingface (shared default)",
+                alignment: .center) {
+                // Read-only here on purpose. This used to offer its own
+                // "Choose folder…", which changed a path and moved nothing —
+                // so the models stayed in the old folder and the catalog
+                // appeared to have un-downloaded itself. Changing the folder
+                // is a decision about tens of gigabytes, and it now lives with
+                // the rest of that decision on Models & Downloads.
+                Button("Manage…") { pane = .models }
+                    .buttonStyle(.bench(.quiet))
             }
-            // Read-only here on purpose. This used to offer its own "Choose
-            // folder…", which changed a path and moved nothing — so the models
-            // stayed in the old folder and the catalog appeared to have
-            // un-downloaded itself. Changing the folder is a decision about
-            // what happens to tens of gigabytes, and it now lives with the
-            // rest of that decision on Models & Downloads.
-            Button("Manage in Models & Downloads") { pane = .models }
-                .buttonStyle(.bench(.quiet))
-            caption("Where model weights live — the shared Hugging Face cache "
-                    + "by default, so other tools reuse them.")
-            Divider().overlay(Bench.Palette.hairline)
-            HStack(spacing: 12) {
-                Text("Keep render files for")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+            SettingsDivider()
+            SettingsRow(
+                title: "Keep render files for",
+                detail: "Sweeps the engine\u{2019}s Outputs folder — failed "
+                    + "takes, uncollected stems; finished music is already in "
+                    + "your library — and the daily engine logs.",
+                alignment: .center) {
                 BenchMenu(label: Self.retentionLabel(
                     env.settings.engineFileRetentionDays)) {
                     ForEach([7, 14, 30, 0], id: \.self) { days in
@@ -943,14 +1078,8 @@ struct SettingsView: View {
                     }
                 }
             }
-            caption("Sweeps the engine\u{2019}s Outputs folder — failed "
-                    + "takes, uncollected stems; finished music is already "
-                    + "in your library — and the daily engine logs.")
-            Divider().overlay(Bench.Palette.hairline)
-            HStack(spacing: 12) {
-                Text("Engine log level")
-                    .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textPrimary)
+            SettingsDivider()
+            SettingsRow(title: "Engine log level", alignment: .center) {
                 BenchMenu(label: env.settings.engineLogLevel) {
                     ForEach(["info", "debug", "warning"], id: \.self) { level in
                         Button(level) { env.settings.engineLogLevel = level }
@@ -964,39 +1093,33 @@ struct SettingsView: View {
         days == 0 ? "Forever" : "\(days) days"
     }
 
-    private var licencesCard: some View {
-        card("ACCEPTED LICENSES") {
-            let accepted = env.catalog.acceptedLicenses.sorted()
-            if accepted.isEmpty {
-                caption("Licenses you accept before downloading a model are "
-                        + "remembered here.")
-            } else {
-                ForEach(accepted, id: \.self) { id in
-                    HStack(spacing: 10) {
-                        Text(modelName(id) ?? id)
-                            .font(Bench.Typo.secondary)
-                            .foregroundStyle(Bench.Palette.textPrimary)
-                        Spacer(minLength: 8)
-                        Button("Forget") {
-                            env.catalog.revokeLicense(modelId: id)
-                        }
-                        .buttonStyle(.bench(.quiet))
-                    }
-                }
-                caption("Forgetting one shows that model\u{2019}s license "
-                        + "sheet again before its next download. Nothing is "
-                        + "deleted.")
-            }
+    private var engineSummaryGroup: some View {
+        SettingsGroup("ENGINE") {
+            SettingsRow(title: "Status", detail: env.backendStatus.phase.label)
+            SettingsDivider()
+            SettingsRow(title: "Version",
+                        detail: env.backendStatus.engineVersion ?? "—")
         }
     }
+}
 
-    // MARK: - Engine summary
+// MARK: - Window
 
-    private var engineSummaryCard: some View {
-        card("ENGINE") {
-            BenchInfoRow("Status", env.backendStatus.phase.label, labelWidth: 92)
-            BenchInfoRow("Version", env.backendStatus.engineVersion ?? "—",
-                         mono: true, labelWidth: 92)
+/// The one thing the scene modifiers cannot say: the window's own background.
+/// Left at the system's, a resize past the content's edge flashes grey before
+/// SwiftUI catches up.
+private struct SettingsWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        // Deferred: the view has no window until it is in the hierarchy, and
+        // this runs while it is being put there.
+        DispatchQueue.main.async { [weak view] in
+            view?.window?.backgroundColor = NSColor(Bench.Palette.windowBackground)
         }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        view.window?.backgroundColor = NSColor(Bench.Palette.windowBackground)
     }
 }
