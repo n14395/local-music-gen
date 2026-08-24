@@ -131,8 +131,28 @@ struct StudioRenderingPane: View {
     private func header(_ job: JobsStore.ActiveJob,
                         model: ModelInfo?) -> some View {
         let title = jobs.displayTitle(for: job.info)
+        let landing = landingTitle(job)
         return HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
+                // What this will be called when it lands, over what was
+                // asked for. A prompt identifies a render *while* it runs,
+                // but it is not what you go looking for afterwards — and the
+                // name the take was about to take appeared nowhere on the
+                // screen watching it being made.
+                //
+                // Drawn on every render that has a name, including the ones
+                // whose title below says the same thing (a recombine is
+                // identified by the name it lands under). The line is in the
+                // same place on every screen for the same reason the sidebar's
+                // engine card is: something you read at a glance has to be
+                // where you last found it, and a label that comes and goes is
+                // one you stop looking for.
+                if let landing {
+                    Text(landing.uppercased())
+                        .eyebrow()
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 // "Take 2 of 4 · <prompt>" — the percentage beside it is the
                 // average over every take, so without this the card never says
                 // which one you are actually listening to. One line: a prompt
@@ -165,6 +185,29 @@ struct StudioRenderingPane: View {
             }
             .fixedSize()
         }
+    }
+
+    /// The title the take on screen will land under.
+    ///
+    /// Known outright wherever the submission carried a name; predicted from
+    /// the library's own next `trackNNN` for a Studio take that left the Name
+    /// field alone — the same string that field was showing as its
+    /// placeholder when the user pressed Generate. A prediction can be
+    /// overtaken (three jobs queued ahead of this one land first, or the name
+    /// is taken while this renders, and ingest makes it unique), which is why
+    /// it is drawn as a label over the render and not as a promise.
+    private func landingTitle(_ job: JobsStore.ActiveJob) -> String? {
+        let base = jobs.landingBaseTitle(for: job.id)
+            ?? (job.info.isGenerate ? library.nextTrackName : nil)
+        guard let base, !base.isEmpty else { return nil }
+        guard job.info.count > 1 else { return base }
+        // A batch shares one base and separates on the letter, so the card
+        // has to name *this* take: track042b, not the base it came from.
+        let names = SongRecord.takeNames(base: base, count: job.info.count)
+        if let take = job.progress?.take, names.indices.contains(take) {
+            return names[take]
+        }
+        return names.first
     }
 
     /// Copy the log · arm a notification · cancel.

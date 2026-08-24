@@ -268,13 +268,53 @@ struct PartPickerSheet: View {
     /// Fired after a "Split now" was enqueued for a song, so the caller can
     /// auto-fill the slot once matching parts arrive.
     var onSplitStarted: ((String) -> Void)?
+    /// Which tab the strip opens on.
+    ///
+    /// `.all` wherever the slot is honestly "any of my stuff". A caller passes
+    /// something else when its *button* already named a kind — the Workbench's
+    /// "Add part" is a click aimed at parts, and answering it with a list led
+    /// by songs makes the user narrow a filter they had already set by
+    /// clicking. It is a starting tab and not a restriction: everything else
+    /// is one click away, where it always was.
+    var opensOn: PickerTab = .all
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var splittingSongIds: Set<String> = []
-    /// What the strip is showing. Opens on `.all` so that nothing which used
-    /// to be pickable disappears behind a filter the user never asked for.
-    @State private var tab: PickerTab = .all
+    /// What the strip is showing, once the user has said. Nil until then, so
+    /// that `opensOn` can be honoured without an `onAppear` that would fight
+    /// the user's own choice every time the sheet re-renders.
+    @State private var chosenTab: PickerTab?
+
+    /// The tab on screen: the user's, or the caller's opening one while it
+    /// still has something on it.
+    private var tab: PickerTab { chosenTab ?? opening }
+
+    private var tabBinding: Binding<PickerTab> {
+        Binding(get: { tab }, set: { chosenTab = $0 })
+    }
+
+    /// `opensOn`, demoted to `.all` when it would open on nothing.
+    ///
+    /// A Parts default in a library with no splits yet would hide every song
+    /// the slot *would* have taken behind a tab the user never asked for —
+    /// which is the thing opening on `.all` was protecting against in the
+    /// first place. The strip itself is absent when the slot shows no songs,
+    /// and then the tab means nothing either way.
+    private var opening: PickerTab {
+        guard showsSongs else { return .all }
+        guard case .parts = opensOn else { return opensOn }
+        guard partsAccepted, hasPartsForThisSlot else { return .all }
+        return .parts
+    }
+
+    /// Whether the parts table holds anything this slot would actually take —
+    /// asked of the whole table rather than of `matchingParts`, because what
+    /// the strip opens on must not move under the user as they type.
+    private var hasPartsForThisSlot: Bool {
+        ((try? parts.repository.parts(.init())) ?? [])
+            .contains { part in accepts.contains { $0.matches(part.kind) } }
+    }
 
     private var songAccepted: Bool {
         accepts.contains { $0.matches("song.mix") }
@@ -356,7 +396,8 @@ struct PartPickerSheet: View {
             // reaching for, and it sits beside the search box that feeds its
             // counts.
             if !tabs.isEmpty {
-                BenchSegmented(selection: $tab, options: tabs, fills: true)
+                BenchSegmented(selection: tabBinding, options: tabs,
+                               fills: true)
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .overlay(alignment: .bottom) {
                         Rectangle().fill(Bench.Palette.hairline).frame(height: 1)

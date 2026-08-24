@@ -224,7 +224,10 @@ struct WorkbenchScreen: View {
                                        note: "Split into instruments first"),
                 catalog: catalog, library: library, parts: parts, jobs: jobs,
                 playback: playback, onOpenModels: onOpenModels,
-                onPick: { model.add(material: $0, parts: parts) })
+                onPick: { model.add(material: $0, parts: parts) },
+                // "Add part" is the button; parts are what it opens on. Songs
+                // stay one tab away — the slot still takes them.
+                opensOn: .parts)
         }
         .onDisappear { preview.stop() }
         .onChange(of: model.clips) { syncPreviewGains() }

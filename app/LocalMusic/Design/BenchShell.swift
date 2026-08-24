@@ -5,7 +5,8 @@ import SwiftUI
 // worth understanding — it is not decoration. Each destination puts the thing
 // you need *while you are there* in the same physical spot: the engine while
 // you generate, the legend while you browse actions, the parts drawer while
-// you build a mix, storage while you manage models.
+// you build a mix, storage while you manage models — with the engine's own
+// readout stacked underneath, on every screen.
 
 // MARK: - Nav glyphs
 
@@ -402,6 +403,11 @@ struct BenchSidebarHeading: View {
 /// same rectangle with whatever is useful there.
 struct BenchSidebarCard<Content: View>: View {
     var stroke: Color = Bench.Palette.hairline
+    /// The gap the card holds around itself. Zero when the card is one of a
+    /// stack, so the container owns the spacing between them and the inset
+    /// from the sidebar's edges — otherwise two stacked cards each contribute
+    /// a margin and the gap between them comes out twice the outer inset.
+    var margin: CGFloat = 12
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -414,7 +420,7 @@ struct BenchSidebarCard<Content: View>: View {
             .fill(Bench.Palette.statusCard))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(stroke, lineWidth: 1))
-        .padding(12)
+        .padding(margin)
     }
 }
 

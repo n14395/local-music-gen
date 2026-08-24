@@ -799,6 +799,28 @@ final class JobsStore {
         }
     }
 
+    /// What the finished take will be *called* — as distinct from
+    /// `displayTitle`, which says what was asked for.
+    ///
+    /// The two differ wherever a render is identified by its prompt: a Studio
+    /// take says "a heavy drop with techno drums" in the queue and lands as
+    /// `track042`. Nil when the context fixes no name — a Studio submit that
+    /// left the field on its default carries none on purpose (the number is a
+    /// high-water mark resolved at ingest, so pinning it here would hand the
+    /// same one to every job queued behind this), and callers that want to
+    /// *predict* it supply the library's own next name.
+    func landingBaseTitle(for jobId: String) -> String? {
+        switch pendingContext[jobId] {
+        case .generate(let name): return name
+        case .recombine(_, let title, _): return title
+        case .generativePart(_, _, _, let name): return name
+        case .editor(let purpose): return purpose.title
+        // Neither produces a library song: a split makes parts, an analysis
+        // makes a row of numbers.
+        case .split, .analyze, .none: return nil
+        }
+    }
+
     /// Whether this job was submitted by the Editor. The Actions sidebar row
     /// spins for "any task job", which an edit render otherwise satisfies —
     /// and the queue's generic completion banner would double up with the

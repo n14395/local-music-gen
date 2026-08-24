@@ -279,7 +279,29 @@ struct MainWindow: View {
             // top-left of the window content.
             Color.clear.frame(height: Bench.Metrics.topBarHeight)
 
-            VStack(spacing: 2) {
+            // Scrolls only when it has to. The footer below is two cards
+            // tall on most screens, and at the window's 700 pt floor the nav
+            // and the footer together no longer fit — without this the stack
+            // squeezes whatever it can reach and the cards clip.
+            // Indicators stay on their macOS default — when the nav *does*
+            // overflow, the overlay bar is the only thing saying there is
+            // more of it below.
+            ScrollView(.vertical) { navList }
+                .scrollBounceBehavior(.basedOnSize)
+
+            SidebarFooterCard(env: env, destination: destination,
+                              libraryScope: libraryScope)
+        }
+        .frame(width: Bench.Metrics.sidebarWidth)
+        .frame(maxHeight: .infinity)
+        .background(Bench.Palette.sidebar)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Bench.Palette.hairline).frame(width: 1)
+        }
+    }
+
+    private var navList: some View {
+        VStack(spacing: 2) {
                 ForEach(Destination.Section.allCases, id: \.self) { section in
                     BenchSidebarHeading(text: section.rawValue,
                                         topPadding: section == .make ? 14 : 18)
@@ -316,18 +338,7 @@ struct MainWindow: View {
                     }
                 }
             }
-            .padding(.horizontal, 10).padding(.top, 4)
-
-            Spacer(minLength: 0)
-            SidebarFooterCard(env: env, destination: destination,
-                              libraryScope: libraryScope)
-        }
-        .frame(width: Bench.Metrics.sidebarWidth)
-        .frame(maxHeight: .infinity)
-        .background(Bench.Palette.sidebar)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Bench.Palette.hairline).frame(width: 1)
-        }
+        .padding(.horizontal, 10).padding(.top, 4)
     }
 
     /// The one scope whose size is what it is for: how many tracks carry
@@ -996,13 +1007,27 @@ private struct SidebarFooterCard: View {
         nonmutating set { env.catalog.onlyInstalledFilter = newValue }
     }
 
+    /// Two slots, not one: what you need *here*, and — under it, on every
+    /// screen — what the engine is doing. The engine readout is the one thing
+    /// that is worth knowing from anywhere, because a render started on any
+    /// screen runs in the same queue and costs the same memory; screens that
+    /// used to hide it behind their own card were the screens where you were
+    /// most likely to be waiting on one.
     var body: some View {
+        VStack(spacing: 10) {
+            contextCard
+            engineCard
+        }
+        .padding(12)
+    }
+
+    /// The local card, or nothing on the screens whose local information *is*
+    /// the engine's.
+    @ViewBuilder private var contextCard: some View {
         switch destination {
         case .library where libraryScope == .edited:
             backupsCard
-        case .generate, .editor, .library where libraryScope != .parts:
-            engineCard
-        case .library:
+        case .library where libraryScope == .parts:
             stemColoursCard
         case .actions, .styleTransfer:
             legendCard
@@ -1010,6 +1035,8 @@ private struct SidebarFooterCard: View {
             partsDrawerCard
         case .models:
             storageCard
+        case .generate, .editor, .library:
+            EmptyView()
         }
     }
 
@@ -1027,7 +1054,8 @@ private struct SidebarFooterCard: View {
 
     private var engineCardBody: some View {
         BenchSidebarCard(stroke: isRendering ? Bench.Palette.accent.opacity(0.2)
-                                             : Bench.Palette.hairline) {
+                                             : Bench.Palette.hairline,
+                         margin: 0) {
             HStack(spacing: 8) {
                 StatusDot(color: statusColor)
                 Text(isRendering ? "Rendering" : env.backendStatus.phase.label)
@@ -1086,7 +1114,7 @@ private struct SidebarFooterCard: View {
     /// offerable, so removing one ends that track's revert forever.
     private var backupsCard: some View {
         let usage = LibraryRepository.backupUsage()
-        return BenchSidebarCard {
+        return BenchSidebarCard(margin: 0) {
             Text("BACKUPS").eyebrow()
             Text(TelemetryStore.gigabytes(usage.bytes) + " GB")
                 .font(Bench.Typo.valueLarge)
@@ -1111,7 +1139,7 @@ private struct SidebarFooterCard: View {
     // MARK: legend
 
     private var legendCard: some View {
-        BenchSidebarCard {
+        BenchSidebarCard(margin: 0) {
             Text("LEGEND").eyebrow()
             legendRow(Bench.Palette.accent, "Exact — your audio, DSP only")
             legendRow(Bench.Palette.violet, "Reimagine — a model rewrites it")
@@ -1132,7 +1160,7 @@ private struct SidebarFooterCard: View {
     // MARK: stem colours
 
     private var stemColoursCard: some View {
-        BenchSidebarCard {
+        BenchSidebarCard(margin: 0) {
             Text("STEM COLOURS").eyebrow()
             BenchFlow(spacing: 5) {
                 ForEach(["vocals", "drums", "bass", "other"], id: \.self) { kind in
@@ -1150,7 +1178,7 @@ private struct SidebarFooterCard: View {
     // MARK: parts drawer
 
     private var partsDrawerCard: some View {
-        BenchSidebarCard {
+        BenchSidebarCard(margin: 0) {
             HStack(spacing: 8) {
                 Text("PARTS DRAWER").eyebrow()
                 Spacer()
@@ -1199,7 +1227,7 @@ private struct SidebarFooterCard: View {
     // MARK: storage
 
     private var storageCard: some View {
-        BenchSidebarCard {
+        BenchSidebarCard(margin: 0) {
             Text("STORAGE").eyebrow()
             Text(TelemetryStore.gigabytes(modelBytes + audioBytes) + " GB")
                 .font(Bench.Typo.valueLarge)
