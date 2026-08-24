@@ -52,7 +52,13 @@ CANCEL_POLL_S = 0.5
 # "generate" is the classic prompt→audio pipeline; the rest are promptless
 # task jobs returning typed artifacts. A model opts in via capabilities.tasks
 # (absent ⇒ ["generate"]).
-TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix")
+# "assist" and "plan" are the two that produce no audio at all: "assist" is the
+# writing assistant drafting text, "plan" is a generative model running only the
+# language-model half of its pipeline so the user can choose a plan before
+# paying for the render. Both still return artifacts, so nothing else in the
+# task machinery changes.
+TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
+         "assist", "plan")
 
 # Models at or below this run in the transient slot: never evicting the
 # resident model, never kept resident themselves. The catalog leaves a clean
@@ -815,6 +821,7 @@ class JobQueue:
                 return
 
             outputs = []
+            meta: dict = {}
             for i in range(job.count):
                 if job.cancel_requested:
                     self._canceled(job)
@@ -865,10 +872,21 @@ class JobQueue:
                 if msg["t"] == "error":
                     self._handle_worker_error(job, msg)
                     return
-                outputs.append({"path": msg["wav_path"], "format": "wav",
-                                "sample_rate": msg["sample_rate"],
-                                "duration_s": msg["duration_s"],
-                                "seed_used": msg.get("seed_used")})
+                # `extra` is whatever the adapter chose to say about the take
+                # beyond the audio itself — for ACE-Step, the plan its language
+                # model wrote before the DiT rendered it. Per-take, because two
+                # takes of one job have two different plans, and the app's
+                # "keep this plan, change the sound" path needs the one that
+                # belongs to the take the user picked.
+                take_meta = msg.get("extra") or {}
+                output = {"path": msg["wav_path"], "format": "wav",
+                          "sample_rate": msg["sample_rate"],
+                          "duration_s": msg["duration_s"],
+                          "seed_used": msg.get("seed_used")}
+                if take_meta:
+                    output["meta"] = take_meta
+                    meta.update(take_meta)
+                outputs.append(output)
 
             self._set_status(job, "encoding")
             # Still the last take: every one is rendered by now, and dropping
@@ -879,6 +897,11 @@ class JobQueue:
             self._sweep_previews(out_dir)
             job.result = {"outputs": outputs,
                           "timings": {"total_s": round(time.monotonic() - started, 2)}}
+            # Mirrors the task path's `result.meta`. Only present when an
+            # adapter had something to say — a generate result that carries no
+            # meta looks exactly as it always has.
+            if meta:
+                job.result["meta"] = meta
             self._set_status(job, "succeeded")
             self.bus.emit_threadsafe("job.completed", {"job_id": job.id})
         except WorkerDied as e:

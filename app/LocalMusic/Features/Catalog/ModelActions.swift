@@ -63,6 +63,10 @@ enum ModelActions {
                 && capabilities.params.contains { $0.key == "mix_spec" }
         case .batchSplit:
             return tasks.contains("separate")
+        case .assistant:
+            return tasks.contains("assist")
+        case .songPlan:
+            return tasks.contains("plan")
         case .workbench, .match, .editor:
             return false
         }

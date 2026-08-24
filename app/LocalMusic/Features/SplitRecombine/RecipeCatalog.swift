@@ -74,6 +74,34 @@ enum RecipeEngine: Equatable {
     case editor
     /// Separate a whole selection in one go.
     case batchSplit
+    /// The writing assistant, doing one of the jobs it knows how to do.
+    ///
+    /// The kind carries everything that differs between these cards, so twelve
+    /// of them share one page: what changes is which question gets asked and
+    /// how the answer is laid out, and both of those are properties of the
+    /// kind. `needsSource` is separate because it is a fact about the *card*,
+    /// not the kind — "Describe this song back to me" and "Name and file it"
+    /// both read a song, and both use kinds that would work without one.
+    case assistant(kind: AssistKind, needsSource: Bool = false)
+    /// The planning half of a generative model, made visible.
+    case songPlan(mode: PlanCardMode)
+}
+
+/// What a plan card does with the plan once it has one.
+///
+/// All four run against a model that declares the `plan` task, and all four
+/// show the same readable facts; they differ in what happens next, which is
+/// enough of a difference to be worth four cards rather than one page with a
+/// mode switch on it.
+enum PlanCardMode: Equatable, Sendable {
+    /// Roll several plans, show them, render only the chosen one.
+    case choose
+    /// Show the plan behind a take that has already been rendered.
+    case inspect
+    /// Re-render a take's existing plan with different sound.
+    case reroll
+    /// Pin tempo, key and time signature so the planner stops guessing them.
+    case pin
 }
 
 /// What the action *is*, which the gallery turns into a badge. Not the same
@@ -85,7 +113,11 @@ enum RecipeEngine: Equatable {
 /// where the audio comes from, which is why the badge is worth drawing —
 /// "REIMAGINE" over a card that has never been shown a file is a promise
 /// about material the user does not have.
-enum RecipeMode { case exact, reimagine, analyse, invent }
+/// `.write` is the odd one out, and says so: it is the only mode that produces
+/// no audio at all. What comes back is words — a description, lyrics, a title,
+/// a plan — which you then read, edit, and choose to use or not. Badging that
+/// as `GENERATE` would promise a render that never arrives.
+enum RecipeMode { case exact, reimagine, analyse, invent, write }
 
 /// The three labelled shelves of the gallery. Derived from neither `mode` nor
 /// `engine` on its own: karaoke is a preset separation (`.split`) yet belongs
@@ -95,6 +127,11 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     /// First, because it is the only shelf that needs nothing to start from.
     /// Everything below it asks you to bring audio.
     case generate
+    /// Second, because it is where you go when you cannot fill in the first.
+    /// Everything on this shelf produces words rather than audio: a
+    /// description, lyrics, a title, a plan. Nothing here renders anything,
+    /// and nothing here commits until you have read it and said yes.
+    case assist
     case separate, recombine, reimagine
 
     var id: String { rawValue }
@@ -103,6 +140,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .generate: "Generate"
+        case .assist: "Help me write"
         case .separate: "Separate & analyse"
         case .recombine: "Recombine"
         case .reimagine: "Reimagine"
@@ -113,6 +151,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     var sectionTitle: String {
         switch self {
         case .generate: "GENERATE — FROM NOTHING BUT A DESCRIPTION"
+        case .assist: "HELP ME WRITE — WORDS FIRST, MUSIC AFTER"
         case .separate: "SEPARATE & ANALYSE"
         case .recombine: "RECOMBINE — YOUR AUDIO, EXACTLY"
         case .reimagine: "REIMAGINE — A MODEL REWRITES IT"
@@ -165,6 +204,30 @@ enum RecipeCatalog {
 
     private static func generate(_ id: String) -> RecipeEngine {
         .generate(preset: GeneratePreset.preset(id: id)!)
+    }
+
+    /// What the assistant cards read from. Anything with audio in it: these
+    /// cards describe, rename or react to a piece of music, and a stem is as
+    /// describable as a whole song. `layer.*` rides along with `stem.*` by the
+    /// convention at the top of this file.
+    private static func assistSourceSlot() -> Slot {
+        Slot(id: "source", label: "Song or part",
+             accepts: [KindPattern(pattern: "song.mix"),
+                       KindPattern(pattern: "stem.*"),
+                       KindPattern(pattern: "layer.*")],
+             arity: 1...1, autoDerive: nil)
+    }
+
+    /// What the plan cards read from — a song only.
+    ///
+    /// Narrower than the assistant slot on purpose: a plan belongs to a whole
+    /// generated take. A stem cut out of one afterwards has no plan of its
+    /// own, and offering it here would promise something the engine cannot
+    /// answer.
+    private static func planSlot() -> Slot {
+        Slot(id: "source", label: "Generated song",
+             accepts: [KindPattern(pattern: "song.mix")],
+             arity: 1...1, autoDerive: nil)
     }
 
     static let all: [Recipe] = [
@@ -257,6 +320,108 @@ enum RecipeCatalog {
                mode: .invent, category: .generate,
                icon: "square.grid.3x1.below.line.grid.1x2",
                slots: [], engine: .compareModels, phase: 1),
+
+        // MARK: The model's own plan
+        //
+        // Four cards over one capability: a model that declares the `plan`
+        // task can run its planning half alone, cheaply, and say what it
+        // intends before the expensive half starts. They sit on the Generate
+        // shelf because that is what they lead to.
+        Recipe(id: "plan-choose",
+               name: "Pick the plan before the sound",
+               tagline: "Three quick plans — choose one before the slow part",
+               mode: .invent, category: .generate, icon: "list.bullet.rectangle",
+               slots: [], engine: .songPlan(mode: .choose), phase: 1),
+        Recipe(id: "plan-inspect",
+               name: "What was it thinking?",
+               tagline: "The tempo, key and shape the model chose for you",
+               mode: .analyse, category: .generate, icon: "eye",
+               slots: [planSlot()], engine: .songPlan(mode: .inspect), phase: 1),
+        Recipe(id: "plan-reroll",
+               name: "Same song, new sound",
+               tagline: "Keep what it wrote; record it again differently",
+               mode: .invent, category: .generate, icon: "arrow.triangle.2.circlepath",
+               slots: [planSlot()], engine: .songPlan(mode: .reroll), phase: 1),
+        Recipe(id: "plan-pin",
+               name: "Lock in the tempo and key",
+               tagline: "You set the facts; the model fills in the rest",
+               mode: .invent, category: .generate, icon: "pin",
+               slots: [], engine: .songPlan(mode: .pin), phase: 1),
+
+        // MARK: Help me write
+        //
+        // Every card here runs the writing assistant — a small language model
+        // that lives on this machine. None of them render audio, and none of
+        // them commit anything: each ends in an editable draft the user
+        // accepts, changes, or throws away.
+        Recipe(id: "assist-interview",
+               name: "Help me describe it",
+               tagline: "Answer a few questions; it writes the description",
+               mode: .write, category: .assist, icon: "bubble.left.and.bubble.right",
+               slots: [], engine: .assistant(kind: .interview), phase: 1),
+        Recipe(id: "assist-flesh-out",
+               name: "Flesh out my idea",
+               tagline: "A rough phrase in, a vivid description back",
+               mode: .write, category: .assist, icon: "wand.and.stars",
+               slots: [], engine: .assistant(kind: .fleshOut), phase: 1),
+        Recipe(id: "assist-lyrics",
+               name: "Write the lyrics with me",
+               tagline: "Verses and choruses, tagged the way the model likes",
+               mode: .write, category: .assist, icon: "text.quote",
+               slots: [], engine: .assistant(kind: .lyrics), phase: 1),
+        Recipe(id: "assist-pick-model",
+               name: "Which model should I use?",
+               tagline: "Say what you're after; it points at the right one",
+               mode: .write, category: .assist, icon: "signpost.right",
+               slots: [], engine: .assistant(kind: .pickModel), phase: 1),
+        Recipe(id: "assist-plan-song",
+               name: "Plan the song first",
+               tagline: "Sketch the shape before any audio is made",
+               mode: .write, category: .assist, icon: "square.stack.3d.down.right",
+               slots: [], engine: .assistant(kind: .planSong), phase: 1),
+        Recipe(id: "assist-route",
+               name: "Say the job in your own words",
+               tagline: "Describe what you want; it opens the right card",
+               mode: .write, category: .assist, icon: "text.magnifyingglass",
+               slots: [], engine: .assistant(kind: .routeIntent), phase: 1),
+        Recipe(id: "assist-brief",
+               name: "Surprise me with a brief",
+               tagline: "A fresh idea when you're out of them",
+               mode: .write, category: .assist, icon: "dice",
+               slots: [], engine: .assistant(kind: .brief), phase: 1),
+        Recipe(id: "assist-translate",
+               name: "Sing it in another language",
+               tagline: "The same song, in French — or fifty others",
+               mode: .write, category: .assist, icon: "globe",
+               slots: [], engine: .assistant(kind: .translateLyrics), phase: 1),
+        Recipe(id: "assist-describe",
+               name: "Describe this song back to me",
+               tagline: "Hear what the app hears, in a sentence",
+               mode: .write, category: .assist, icon: "quote.bubble",
+               slots: [assistSourceSlot()],
+               engine: .assistant(kind: .describeSong, needsSource: true),
+               phase: 1),
+        Recipe(id: "assist-more-like",
+               name: "More like this one",
+               tagline: "Point at a song you love; get more of that family",
+               mode: .write, category: .assist, icon: "square.on.square",
+               slots: [assistSourceSlot()],
+               engine: .assistant(kind: .moreLikeThis, needsSource: true),
+               phase: 1),
+        Recipe(id: "assist-critique",
+               name: "Fix what bothers me",
+               tagline: "Say what's wrong; it rewrites the description",
+               mode: .write, category: .assist, icon: "bandage",
+               slots: [assistSourceSlot()],
+               engine: .assistant(kind: .critiqueFix, needsSource: true),
+               phase: 1),
+        Recipe(id: "assist-name",
+               name: "Name and file it",
+               tagline: "Titles and tags, so the library stays findable",
+               mode: .write, category: .assist, icon: "tag",
+               slots: [assistSourceSlot()],
+               engine: .assistant(kind: .nameAndTag, needsSource: true),
+               phase: 1),
 
         // MARK: Separate & analyse
         Recipe(id: "melody-notes",

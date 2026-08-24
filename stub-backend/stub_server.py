@@ -38,7 +38,15 @@ CONTRACT = 1
 STARTED_AT = time.monotonic()
 
 # Mirrors the engine's closed task set (jobqueue.TASKS)
-TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix")
+TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
+         "assist", "plan")
+
+# Mirrors the assistant family's closed helper set — the `kind` enum on its
+# assist task, one value per thing the app can ask the little LLM for.
+ASSIST_KINDS = ("interview", "interview_finish", "flesh_out", "lyrics",
+                "pick_model", "plan_song", "route_intent", "brief",
+                "translate_lyrics", "describe_song", "more_like_this",
+                "critique_fix", "name_and_tag")
 
 # ---------------------------------------------------------------- catalog
 
@@ -168,6 +176,9 @@ def _catalog() -> dict[str, dict[str, Any]]:
                                 "[outro]"],
                 "lyrics_hint": "Section tags on their own lines structure the song.",
                 "est_seconds_per_audio_second": 0.6,
+                # `plan` runs only the 5 Hz LM half and returns the plans it
+                # wrote, so the user can pick one before paying for the DiT
+                "tasks": ["generate", "plan"],
                 "pipeline": [
                     {"id": "lm_reasoning", "label": "LM reasoning",
                      "optional": True},
@@ -216,6 +227,34 @@ def _catalog() -> dict[str, dict[str, Any]]:
                          group="task",
                          applies_when={"param": "task_type",
                                        "values": ["repaint"]}),
+                    spec("keyscale", "string", "Key / scale", None,
+                         nullable=True, placeholder="A minor",
+                         group="musical"),
+                    spec("timesignature", "string", "Time signature", None,
+                         nullable=True, placeholder="4/4", group="musical"),
+                    spec("use_cot_metas", "bool", "LM plans musical metas",
+                         True, group="sampling"),
+                    spec("use_cot_caption", "bool", "LM refines the caption",
+                         True, group="sampling"),
+                    spec("use_cot_language", "bool", "LM picks the language",
+                         True, group="sampling"),
+                    spec("lm_temperature", "float", "LM temperature", 0.85,
+                         min=0.0, max=2.0, step=0.05, group="sampling"),
+                    spec("lm_cfg_scale", "float", "LM guidance", 2.0,
+                         min=1.0, max=8.0, step=0.5, group="sampling"),
+                    spec("lm_top_p", "float", "LM top-p", 0.9,
+                         min=0.1, max=1.0, step=0.05, group="sampling"),
+                    spec("audio_codes", "string", "Audio codes", None,
+                         nullable=True, internal=True),
+                    # plan-task inputs: the plan UI fills these, never the form
+                    spec("plan_caption", "string", "Plan caption", None,
+                         nullable=True, internal=True),
+                    spec("plan_lyrics", "string", "Plan lyrics", None,
+                         nullable=True, internal=True),
+                    spec("plan_count", "int", "Plan count", 3, min=1, max=6,
+                         internal=True),
+                    spec("plan_duration_s", "float", "Plan duration (s)", None,
+                         nullable=True, internal=True),
                     *common,
                 ],
             },
@@ -391,6 +430,47 @@ def _catalog() -> dict[str, dict[str, Any]]:
                         "requires_hf_token": False, "url": None},
             "notes": "Task model: render.",
         },
+        {
+            # Assist fixture: the small local instruct LLM behind the app's
+            # writing helpers (interview, lyrics, plan_song, ...)
+            "id": "assistant-stub",
+            "family": "assistant",
+            "display_name": "Assistant (stub)",
+            "description": "Writing help for prompts, lyrics and plans",
+            "hf_repos": [{"repo_id": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+                          "gated": False}],
+            "size_bytes": 880_000_000,
+            "capabilities": {
+                "supports_lyrics": False,
+                "instrumental_only": True,
+                "duration": {"min_s": 1, "max_s": 1, "default_s": 1},
+                "sample_rate": 44100,
+                "outputs_per_job_max": 1,
+                "est_seconds_per_audio_second": 0,
+                "tasks": ["assist"],
+                "params": [
+                    spec("kind", "enum", "Assist kind", "interview",
+                         internal=True,
+                         choices=[{"value": k, "label": k.replace("_", " ")}
+                                  for k in ASSIST_KINDS]),
+                    spec("assist_input", "json", "Assist input", None,
+                         nullable=False, internal=True),
+                    spec("target_family", "string", "Target family", None,
+                         nullable=True, internal=True),
+                    spec("temperature", "float", "Temperature", 0.7,
+                         min=0.0, max=1.5, step=0.1),
+                    spec("max_tokens", "int", "Max tokens", None,
+                         nullable=True, internal=True),
+                ],
+            },
+            "requirements": {"min_ram_bytes": 4 << 30,
+                             "disk_bytes": 880_000_000, "speed_tier": "fast"},
+            "license": {"name": "Apache-2.0", "commercial_use": True,
+                        "requires_hf_token": False,
+                        "url": "https://huggingface.co/mlx-community/"
+                               "Qwen2.5-1.5B-Instruct-4bit"},
+            "notes": "Task model: writing help.",
+        },
     ]
     for m in models:
         m["tags"] = _derive_tags(m)
@@ -469,6 +549,10 @@ def _derive_tags(entry: dict) -> list[str]:
         tags.append("Musical analysis")
     if "mix" in tasks:
         tags.append("Mixing & recombining")
+    if "assist" in tasks:
+        tags.append("Writing help")
+    # "plan" adds no tag, deliberately: planning is a step of a generate on a
+    # model installed for generating, never a reason to install one.
     return tags
 
 
@@ -1001,7 +1085,11 @@ async def run_one_job(job: Job, model: dict) -> None:
                                      "model_id": job.model_id,
                                      "family": model["family"]})
     job.status = "generating"
-    plan = STUB_PHASES.get(job.model_id)
+    # Generate only: a task pass is opaque even on a model that stages its
+    # generate flow (contract 5.4). acestep-base is in STUB_PHASES and now
+    # also takes `plan` jobs, which must not report diffusion phases the
+    # task will never run.
+    plan = STUB_PHASES.get(job.model_id) if job.task == "generate" else None
     # One pass per take, as the engine does: `count` takes render one after
     # another and `fraction` is the average over all of them. The stub used to
     # run a single pass however many takes were asked for, so nothing here or
@@ -1037,19 +1125,50 @@ async def run_one_job(job: Job, model: dict) -> None:
         job.result = {"artifacts": artifacts, "meta": meta,
                       "timings": {"total_s": round(time.monotonic() - started, 2)}}
     else:
+        # ACE-Step's generate runs its 5 Hz LM half before the DiT, and what
+        # the LM decided rides the result as `meta` — job-level and per-output,
+        # the same keys a `plan` job returns. Omitted for src-audio tasks,
+        # which skip the LM, and for every other family, whose adapters supply
+        # no meta at all — absence is the normal case (contract 5.2).
+        gen_meta = None
+        if (model["family"] == "acestep"
+                and str(job.params.get("task_type") or "text2music")
+                == "text2music"):
+            gen_meta = {
+                "lm_metadata": {
+                    "bpm": 104,
+                    "caption": job.prompt,
+                    "duration": int(job.duration_s or 60),
+                    "genres": "synthwave, electronic",
+                    "keyscale": str(job.params.get("keyscale") or "A minor"),
+                    "language": "english",
+                    "timesignature": str(job.params.get("timesignature")
+                                         or "4/4"),
+                },
+                # a reused plan's codes come back as submitted, so a client
+                # can see its chosen plan flow through
+                "audio_codes": str(job.params.get("audio_codes")
+                                   or canned_audio_codes()),
+                "planner": "acestep-5hz-lm",
+            }
         outputs = []
         for i in range(job.count):
             path = os.path.join(out_dir, f"take-{i}.wav")
             await asyncio.to_thread(write_wav, path, job.duration_s, sr,
                                     base_freq * (1 + 0.25 * i))
             seed = job.params.get("seed")
-            outputs.append({"path": path, "format": "wav", "sample_rate": sr,
-                            "duration_s": float(job.duration_s),
-                            "seed_used": seed if seed is not None
-                            else secrets.randbelow(2**31)})
+            output = {"path": path, "format": "wav", "sample_rate": sr,
+                      "duration_s": float(job.duration_s),
+                      "seed_used": seed if seed is not None
+                      else secrets.randbelow(2**31)}
+            if gen_meta is not None:
+                output["meta"] = gen_meta
+            outputs.append(output)
         job.result = {"outputs": outputs,
                       "timings": {"total_s": round(time.monotonic() - started, 2),
                                   "load_s": 2.0, "generate_s": gen_s}}
+        if gen_meta is not None:
+            job.result["meta"] = gen_meta
         # a succeeded take makes its previews dead weight; only a cancel the
         # user asked to keep ever wants them (contract 5.6)
         for name in os.listdir(out_dir):
@@ -1072,6 +1191,85 @@ CANNED_ANALYSIS = {
     "sections": [{"start_s": 0.0, "end_s": 2.0, "group": "A"},
                  {"start_s": 2.0, "end_s": 4.0, "group": "B"}],
 }
+
+
+# One plausible `value` per assist kind, in exactly the shapes the app reads —
+# the shapes are the engine's contract, the words are canned.
+CANNED_ASSIST: dict[str, dict[str, Any]] = {
+    "interview": {
+        "questions": [
+            {"question": "What mood are you after?",
+             "examples": ["dreamy", "driving", "melancholy"]},
+            {"question": "Any instrument that has to be there?",
+             "examples": ["saxophone", "analog synths", "brushed drums"]},
+        ],
+        "ready": False,
+    },
+    "interview_finish": {
+        "prompt": "dreamy synthwave with breathy saxophone, 100 BPM"},
+    "flesh_out": {
+        "prompt": "dreamy synthwave with breathy saxophone, tape saturation,"
+                  " slow chorus pads, 100 BPM",
+        "added": ["tape saturation", "slow chorus pads"]},
+    "lyrics": {
+        "lyrics": "[verse]\nNeon rain on the boulevard\nEvery light a falling"
+                  " star\n[chorus]\nDrive on, drive on through the glow",
+        "title": "Neon Rain"},
+    "pick_model": {
+        "best": {"id": "acestep-base",
+                 "why": "vocals and full-song structure", "installed": True},
+        "alternatives": [{"id": "musicgen-small",
+                          "why": "fast instrumental sketches",
+                          "installed": False}]},
+    "plan_song": {
+        "sections": [
+            {"tag": "[intro]", "seconds": 8, "what": "pads fade in"},
+            {"tag": "[verse]", "seconds": 24, "what": "main theme, light"
+                                                      " drums"},
+            {"tag": "[chorus]", "seconds": 16, "what": "full band, hook"},
+            {"tag": "[outro]", "seconds": 12, "what": "pads fade out"},
+        ],
+        "summary": "60 s arc from pads to a full-band hook and back"},
+    "route_intent": {
+        "action": "generate", "prompt": "dreamy synthwave with saxophone",
+        "subject": None, "confidence": 0.92,
+        "reason": "the request names a new song to make"},
+    "brief": {
+        "prompt": "dreamy synthwave with breathy saxophone, 100 BPM",
+        "idea": "a night drive that slowly turns hopeful",
+        "title": "Night Drive"},
+    "translate_lyrics": {
+        "lyrics": "[verse]\nLluvia de neón en el bulevar\nCada luz una"
+                  " estrella fugaz",
+        "title": "Lluvia de Neón"},
+    "describe_song": {
+        "description": "A mid-tempo synthwave piece led by a breathy"
+                       " saxophone over analog pads.",
+        "prompt": "mid-tempo synthwave, lead saxophone, analog pads"},
+    "more_like_this": {
+        "variations": [
+            {"prompt": "dreamy synthwave with muted trumpet",
+             "differs": "trumpet takes the saxophone's place"},
+            {"prompt": "driving synthwave with saxophone, 120 BPM",
+             "differs": "faster and more insistent"},
+            {"prompt": "dreamy synthwave with saxophone and rain foley",
+             "differs": "adds a rain texture under the pads"},
+        ]},
+    "critique_fix": {
+        "prompt": "dreamy synthwave with breathy saxophone, tighter low end,"
+                  " wider stereo pads",
+        "changes": [{"from": "muddy low end", "to": "tighter low end"},
+                    {"from": "narrow pads", "to": "wider stereo pads"}]},
+    "name_and_tag": {
+        "title": "Neon Rain",
+        "tags": ["synthwave", "saxophone", "dreamy", "retro"]},
+}
+
+
+def canned_audio_codes(offset: int = 0) -> str:
+    """A plausible 5 Hz token string; `offset` keeps sibling plans distinct."""
+    start = 1 + offset * 8
+    return "".join(f"<|audio_code_{n}|>" for n in range(start, start + 8))
 
 
 async def make_task_artifacts(job: Job, out_dir: str,
@@ -1151,6 +1349,68 @@ async def make_task_artifacts(job: Job, out_dir: str,
         await asyncio.to_thread(write_wav, path, dur, sr, 349.0)
         return [{"kind": "audio", "label": "render", "path": path,
                  "format": "wav", "sample_rate": sr, "duration_s": dur}], {}
+    if job.task == "assist":
+        kind = str(job.params.get("kind") or "interview")
+        canned = CANNED_ASSIST.get(kind)
+        if canned is None:
+            raise RuntimeError(f"stub has no canned assist for kind '{kind}'")
+        value = json.loads(json.dumps(canned))  # per-job copy, never shared
+        # `assist_input` is a json param: a JSON-encoded string on the wire.
+        # A malformed one fails the job here, as the real worker's parse would.
+        assist_input = json.loads(job.params["assist_input"])
+        asked = (str(assist_input.get("prompt") or "").strip()
+                 if isinstance(assist_input, dict) else "")
+        if asked and isinstance(value.get("prompt"), str):
+            # the canned answer stays canned, but opens with what it was asked
+            # about, so app work against the stub sees its input flow through
+            value["prompt"] = f"{asked}, {value['prompt']}"
+        target_family = job.params.get("target_family")
+        payload = {"kind": kind, "ok": True, "raw": json.dumps(value),
+                   "value": value, "repaired": False,
+                   "target_family": target_family,
+                   "dialect": str(target_family) if target_family
+                   else "generic"}
+        path = os.path.join(out_dir, "assist.json")
+        tmp = path + ".part"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+        artifacts = [{"kind": "assist", "label": kind, "path": path,
+                      "format": "json", "sample_rate": None,
+                      "duration_s": None}]
+        elapsed = time.monotonic() - (job.started_monotonic
+                                      or time.monotonic())
+        return artifacts, {"assist": payload, "elapsed_s": round(elapsed, 2)}
+    if job.task == "plan":
+        count = max(1, min(6, int(job.params.get("plan_count") or 3)))
+        caption = str(job.params.get("plan_caption") or job.prompt
+                      or "dreamy synthwave with saxophone")
+        plan_dur = job.params.get("plan_duration_s")
+        duration = int(float(plan_dur)) if plan_dur is not None else 60
+        plans = []
+        for i in range(count):
+            # every metadata key present, varied per plan — the real LM's
+            # chain-of-thought may omit any subset of them
+            metadata = {"bpm": 96 + 8 * i,
+                        "caption": caption,
+                        "duration": duration,
+                        "genres": "synthwave, electronic",
+                        "keyscale": str(job.params.get("keyscale")
+                                        or "A minor"),
+                        "language": "english",
+                        "timesignature": str(job.params.get("timesignature")
+                                             or "4/4")}
+            plans.append({"index": i, "metadata": metadata,
+                          "audio_codes": canned_audio_codes(i)})
+        path = os.path.join(out_dir, "plans.json")
+        tmp = path + ".part"
+        with open(tmp, "w") as f:
+            json.dump({"plans": plans}, f)
+        os.replace(tmp, path)
+        artifacts = [{"kind": "plan", "label": "plans", "path": path,
+                      "format": "json", "sample_rate": None,
+                      "duration_s": None}]
+        return artifacts, {"plans": plans}
     raise RuntimeError(f"stub has no simulation for task '{job.task}'")
 
 

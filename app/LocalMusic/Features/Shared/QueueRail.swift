@@ -27,7 +27,7 @@ struct QueueRail: View {
     var onShowInLibrary: ((String) -> Void)?
 
     private var load: QueueLoad {
-        QueueLoad.of(jobs: jobs.displayJobs, downloads: downloads.downloads.count)
+        QueueLoad.of(jobs: jobs.displayJobs, downloads: downloads)
     }
 
     var body: some View {
@@ -148,9 +148,14 @@ struct QueueRail: View {
     @ViewBuilder
     private var clearFinishedButton: some View {
         if load.finished > 0 {
-            Button("Clear done", action: jobs.dismissFinished)
-                .buttonStyle(.bench(.quiet))
-                .help("Dismiss every row that has finished")
+            Button("Clear done") {
+                // Both halves: the button counts the transfers that have
+                // stopped as rows to clear, so it had better clear them.
+                jobs.dismissFinished()
+                downloads.dismissAllFinished()
+            }
+            .buttonStyle(.bench(.quiet))
+            .help("Dismiss every row that has finished")
         }
     }
 

@@ -16,6 +16,8 @@ struct ActionsScreen: View {
     let jobs: JobsStore
     let playback: PlaybackController
     let workbench: WorkbenchModel
+    let assistant: AssistantStore
+    let plans: PlanStore
     @Binding var route: Route?
     let onOpenModels: (ModelRequirement?) -> Void
     /// Switches the shell to the Workbench destination, carrying the one-off
@@ -34,6 +36,10 @@ struct ActionsScreen: View {
     /// Switches the shell to the Editor on this song or part — the same
     /// escape hatch as the two above.
     let onOpenEditor: (String) -> Void
+    /// Open Generate on text the assistant drafted and the user accepted.
+    /// Distinct from `onOpenGenerate`, which carries a card's preset: there is
+    /// no preset here, only words that already exist.
+    let onUseText: (PrefillBox.Prefill) -> Void
 
     /// `sourceId` is a song or part id to preselect; the page resolves it.
     enum Route: Equatable {
@@ -134,6 +140,12 @@ struct ActionsScreen: View {
         /// The hint names the smallest model that would, because "install
         /// something" is not an instruction anyone can follow.
         case needsGenerateModel(need: GenerateNeed, hint: String)
+        /// A "Help me write" card with no writing assistant installed.
+        case needsAssistant(hint: String)
+        /// A plan card with nothing installed that can plan before it renders.
+        /// Only some generative models have a planning stage at all, so this
+        /// is a narrower requirement than "a model that generates".
+        case needsPlanModel(hint: String)
         /// The engine has not said what is installed, so this card cannot
         /// honestly claim anything. Every other gated state is a statement
         /// about the user's disk; this one is a statement about the app.
@@ -148,6 +160,8 @@ struct ActionsScreen: View {
             case .needsRenderModel: "Get the SoundFont renderer — free"
             case .needsSpliceModel: "Get Token Splice — 76 MB"
             case .needsGenerateModel(_, let hint): hint
+            case .needsAssistant(let hint): hint
+            case .needsPlanModel(let hint): hint
             case .unknown(let readiness): readiness.shortLine
             case .needsTaskModel(let task):
                 switch task {
@@ -279,6 +293,19 @@ struct ActionsScreen: View {
                 hint: generativeInstalled.isEmpty
                     ? "Get a model that generates audio"
                     : "Needs a second model to compare against")
+        case .assistant where AssistantModels.installed(catalog.models).isEmpty:
+            return .needsAssistant(
+                hint: AssistantModels.candidates(catalog.models).first
+                    .map { "Get \($0.displayName) — "
+                         + $0.sizeBytes.formatted(.byteCount(style: .file)) }
+                    ?? "No writing assistant is available")
+        case .songPlan where PlanModels.installed(catalog.models).isEmpty:
+            // Narrower than "a model that generates": only some generative
+            // models have a planning stage to show at all.
+            return .needsPlanModel(
+                hint: PlanModels.candidates(catalog.models).first
+                    .map { "Get \($0.displayName)" }
+                    ?? "No model here plans before it renders")
         default:
             return .active
         }
@@ -300,6 +327,10 @@ struct ActionsScreen: View {
         case .editor: nil
         case .generate(let preset): .generate(preset.need)
         case .compareModels: .generate(GenerateNeed())
+        // Both are ordinary task requirements: the model either declares the
+        // verb or it does not, which is exactly what `.task` tests.
+        case .assistant: .task("assist")
+        case .songPlan: .task("plan")
         // Neither runs a model: the bench is a surface, and matching is
         // ranking maths over analysis the library already holds.
         case .workbench, .match: nil
@@ -463,6 +494,23 @@ struct ActionsScreen: View {
                         onOpenGenerate(preset, sourceId)
                     }
                 }
+        case .assistant(let kind, let needsSource):
+            AssistantActionView(recipe: recipe, kind: kind,
+                                needsSource: needsSource, sourceId: sourceId,
+                                catalog: catalog, library: library,
+                                parts: parts, jobs: jobs,
+                                assistant: assistant, playback: playback,
+                                onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                                onUseText: onUseText,
+                                onOpenAction: { route = .action(recipeId: $0,
+                                                                sourceId: $1) },
+                                onBack: back)
+        case .songPlan(let mode):
+            PlanActionView(recipe: recipe, mode: mode, sourceId: sourceId,
+                           catalog: catalog, library: library, parts: parts,
+                           jobs: jobs, plans: plans, playback: playback,
+                           onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                           onOpenGenerate: onOpenGenerate, onBack: back)
         case .workbench:
             // `open(_:)` never routes here; the shell switches destination.
             gallery

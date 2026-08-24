@@ -98,6 +98,7 @@ TAG_SEPARATION = "Stem separation"
 TAG_NOTES = "Notes & MIDI"
 TAG_ANALYSIS = "Musical analysis"
 TAG_MIXING = "Mixing & recombining"
+TAG_WRITING = "Writing help"
 
 # params that mean "this model can take existing audio and rework it".
 # `melody_audio` and `style_audio` belong here for the same reason the rest do:
@@ -130,6 +131,12 @@ def derive_tags(entry: dict) -> list[str]:
         tags.append(TAG_ANALYSIS)
     if "mix" in tasks:
         tags.append(TAG_MIXING)
+    if "assist" in tasks:
+        tags.append(TAG_WRITING)
+    # Deliberately no tag for `plan`: it is never a reason to install a model,
+    # only something a generative model you already have happens to offer. A
+    # filter button that returned "the ACE-Step variants" under a name like
+    # "Planning" would describe the roster, not a use.
     return tags
 
 
@@ -259,7 +266,29 @@ PARAM_GROUPS = {
     # ACE-Step's LM plans the arrangement before the DiT draws it: a switch on
     # how generation runs, not a property of the music
     "thinking": SAMPLING,
+    # The knobs on that LM. They sit in SAMPLING beside the DiT's own sampler
+    # controls because that is what they are — how the planner draws, not what
+    # it is planning.
+    "lm_temperature": SAMPLING,
+    "lm_cfg_scale": SAMPLING,
+    "lm_top_p": SAMPLING,
+    # Which fields the LM is allowed to invent. A gate on its reasoning, so it
+    # belongs with `thinking` rather than with the values themselves.
+    "use_cot_metas": SAMPLING,
+    "use_cot_caption": SAMPLING,
+    "use_cot_language": SAMPLING,
+    # A plan the app captured from an earlier take and is handing back. Never
+    # rendered; populated in code.
+    "audio_codes": SAMPLING,
+    "plan_caption": SAMPLING,
+    "plan_lyrics": SAMPLING,
+    "plan_count": SAMPLING,
+    "plan_duration_s": SAMPLING,
     "bpm": MUSICAL,
+    # The other two facts the LM otherwise guesses at. Pinning one takes it out
+    # of the model's hands, which is the whole point of the control.
+    "keyscale": MUSICAL,
+    "timesignature": MUSICAL,
     "vocal_language": MUSICAL,
     "task_type": TASK,
     "src_audio": TASK,
@@ -298,6 +327,29 @@ PARAM_GROUPS = {
 # be false half the time. Everything here is phrased in relative terms for that
 # reason.
 PARAM_HELP = {
+    # ---- the planning language model, where a model has one ---------------
+    "lm_temperature": "How adventurous the planner is when it decides the "
+                      "tempo, key and shape of the song. Lower gives you the "
+                      "obvious reading of your description; higher takes more "
+                      "interesting and less predictable decisions.",
+    "lm_cfg_scale": "How closely the planner sticks to your description when "
+                    "it writes the plan. Higher follows your words more "
+                    "literally; lower lets it fill in more of its own.",
+    "lm_top_p": "How much of the planner's vocabulary stays in play at each "
+                "step. Below 1.0 it ignores its least likely choices, which "
+                "makes the plan safer and more conventional.",
+    "use_cot_metas": "Let the planner choose the tempo, key and time "
+                     "signature. Turn it off and it uses only what you have "
+                     "set, leaving anything blank to the renderer.",
+    "use_cot_caption": "Let the planner rewrite your description into its own "
+                       "words before rendering. Often an improvement; turn it "
+                       "off when you have worded the prompt carefully.",
+    "use_cot_language": "Let the planner work out which language the lyrics "
+                        "are in, rather than taking the language you set.",
+    "keyscale": "The key to write in, such as 'F minor' or 'C major'. Left "
+                "blank the model chooses one to suit the description.",
+    "timesignature": "The time signature, such as '4' for four-four or '3' "
+                     "for waltz time. Left blank the model chooses.",
     # ---- how the model draws ---------------------------------------------
     "steps": "How many passes the model makes refining the audio. More steps "
              "means more detail and a proportionally longer render, with "
@@ -438,6 +490,19 @@ def normalise_help(entry: dict) -> None:
 # adapter really does ignore the value".
 ACE_TASK_SCOPE = {
     "thinking": ("text2music",),
+    # Everything that configures the planner shares `thinking`'s scope: the
+    # five src-audio tasks skip the LM entirely (the pipeline decides this, not
+    # us — see adapter_acestep), so these controls would be dead against any
+    # other task.
+    "lm_temperature": ("text2music",),
+    "lm_cfg_scale": ("text2music",),
+    "lm_top_p": ("text2music",),
+    "use_cot_metas": ("text2music",),
+    "use_cot_caption": ("text2music",),
+    "use_cot_language": ("text2music",),
+    "keyscale": ("text2music",),
+    "timesignature": ("text2music",),
+    "audio_codes": ("text2music",),
     "src_audio": ("cover", "repaint", "extract", "lego", "complete"),
     "repainting_start": ("repaint", "lego"),
     "repainting_end": ("repaint", "lego"),
@@ -650,6 +715,146 @@ ACE_TRACK_NAMES = ["woodwinds", "brass", "fx", "synth", "strings",
                    "backing_vocals", "vocals"]
 
 
+ASSIST_KINDS = [
+    "interview", "interview_finish", "flesh_out", "lyrics", "pick_model",
+    "plan_song", "route_intent", "brief", "translate_lyrics", "describe_song",
+    "more_like_this", "critique_fix", "name_and_tag",
+]
+
+
+def assistant_params():
+    """Every assist job is (kind, input) — and neither is user-typed.
+
+    The app picks the kind from the card the user opened and builds the input
+    from what is on screen, so both are internal. `temperature` is the one
+    knob worth exposing: the difference between a safe title and an
+    interesting one.
+    """
+    return [
+        {"key": "kind", "type": "enum", "label": "What to write",
+         "default": "flesh_out", "nullable": False, "internal": True,
+         "choices": [{"value": k, "label": k.replace("_", " ").title()}
+                     for k in ASSIST_KINDS]},
+        {"key": "assist_input", "type": "json", "label": "Input",
+         "default": None, "nullable": False, "internal": True},
+        {"key": "target_family", "type": "string", "label": "Writing for",
+         "default": None, "nullable": True, "internal": True},
+        {"key": "temperature", "type": "float", "label": "Variety",
+         "default": 0.7, "nullable": False, "min": 0.0, "max": 1.5,
+         "step": 0.05},
+        {"key": "max_tokens", "type": "int", "label": "Length limit",
+         "default": None, "nullable": True, "min": 64, "max": 2048,
+         "internal": True},
+    ]
+
+
+def assistant_entries():
+    base = task_entry(
+        "assistant-qwen", "assistant",
+        ["mlx-community/Qwen2.5-1.5B-Instruct-4bit"],
+        "Writing assistant",
+        "A small language model that runs on your Mac and helps you write: "
+        "it interviews you about the music you want, fleshes out a rough "
+        "idea into a full description in the form your chosen model "
+        "understands, drafts lyrics with the right section tags, and names "
+        "and tags finished songs for your library.",
+        task_caps(["assist"], assistant_params(), est_realtime_factor=0.05),
+        4, "fast", APACHE, featured=True,
+        size_hint_bytes=880_000_000,
+        notes="Runs on MLX. Small enough to stay loaded alongside a music "
+              "model rather than displacing it.")
+    light = task_entry(
+        "assistant-llama-1b", "assistant",
+        ["mlx-community/Llama-3.2-1B-Instruct-4bit"],
+        "Writing assistant (lighter)",
+        "A smaller, faster writing assistant for machines where memory is "
+        "tight. Quicker to answer and less reliable at long lyrics.",
+        task_caps(["assist"], assistant_params(), est_realtime_factor=0.03),
+        4, "fast",
+        {"name": "Llama 3.2 Community License", "commercial_use": True,
+         "requires_hf_token": False,
+         "url": "https://github.com/meta-llama/llama-models/blob/main/models/"
+                "llama3_2/LICENSE"},
+        size_hint_bytes=710_000_000,
+        variant_of="assistant-qwen", format_="1B")
+    return [base, light]
+
+
+def ace_plan_params():
+    """The planning half of ACE-Step, made visible and steerable.
+
+    ACE-Step renders in two stages: a 5 Hz language model writes a plan — a
+    `<think>` block naming tempo, key, time signature, language and a rewritten
+    caption, then a stream of coarse audio codes sketching the whole song — and
+    the DiT renders that plan into audio. Until now the plan was invisible and
+    unsteerable: the app sent a prompt and got back a wav.
+
+    These params open it. `keyscale`/`timesignature` join the existing `bpm` as
+    facts you can pin instead of leaving to the model. The `use_cot_*` switches
+    say which of the remaining blanks it may fill. The `lm_*` knobs are its
+    sampler. And `audio_codes` accepts a plan captured from an earlier take,
+    which is what makes "keep this song, change how it sounds" possible at all.
+
+    All of them are scoped to text2music by ACE_TASK_SCOPE, because the five
+    src-audio tasks skip the LM.
+    """
+    return [
+        {"key": "keyscale", "type": "string", "label": "Key",
+         "default": None, "nullable": True,
+         "placeholder": "e.g. F minor"},
+        {"key": "timesignature", "type": "string", "label": "Time signature",
+         "default": None, "nullable": True, "placeholder": "e.g. 4"},
+        {"key": "use_cot_metas", "type": "bool", "label": "Model picks tempo & key",
+         "default": True, "nullable": False},
+        {"key": "use_cot_caption", "type": "bool",
+         "label": "Model rewrites the description", "default": True,
+         "nullable": False},
+        {"key": "use_cot_language", "type": "bool",
+         "label": "Model detects the language", "default": True,
+         "nullable": False},
+        {"key": "lm_temperature", "type": "float", "label": "Planner variety",
+         "default": 0.85, "nullable": False, "min": 0.0, "max": 2.0,
+         "step": 0.05},
+        {"key": "lm_cfg_scale", "type": "float", "label": "Planner guidance",
+         "default": 2.0, "nullable": False, "min": 1.0, "max": 8.0,
+         "step": 0.5},
+        {"key": "lm_top_p", "type": "float", "label": "Planner nucleus",
+         "default": 0.9, "nullable": False, "min": 0.1, "max": 1.0,
+         "step": 0.05},
+        # Internal: a code string is thousands of opaque tokens, and the only
+        # honest way to obtain one is to have kept it from a plan the app
+        # already ran.
+        {"key": "audio_codes", "type": "string", "label": "Captured plan",
+         "default": None, "nullable": True, "internal": True},
+    ]
+
+
+def ace_plan_task_params():
+    """Inputs for the promptless `plan` task.
+
+    A `plan` job carries no top-level prompt (the contract reserves that for
+    generate), so the caption and lyrics ride params of their own. Internal
+    throughout: the app populates them from whatever the user typed on the
+    Generate form, and there is no version of this form a person fills in by
+    hand.
+    """
+    return [
+        {"key": "plan_caption", "type": "string", "label": "Description",
+         "default": None, "nullable": True, "internal": True},
+        {"key": "plan_lyrics", "type": "string", "label": "Lyrics",
+         "default": None, "nullable": True, "internal": True},
+        {"key": "plan_count", "type": "int", "label": "How many plans",
+         "default": 3, "nullable": False, "min": 1, "max": 6,
+         "internal": True},
+        # `duration_s` is a top-level job field the contract reserves for
+        # generate jobs, so a promptless plan job cannot use it and needs its
+        # own. It bounds how many codes the planner emits (5 per second).
+        {"key": "plan_duration_s", "type": "float", "label": "Length",
+         "default": None, "nullable": True, "min": 10.0, "max": 300.0,
+         "internal": True},
+    ]
+
+
 def ace_task_params(full):
     """SR3 task-mode params. full=True (base/sft DiTs) adds extract/lego/
     complete + the track class; turbo DiTs support text2music/cover/repaint
@@ -749,9 +954,30 @@ def ace_variant(id_, dit_repo, dit_config, name, fmt, steps, shift, est,
              "default": True, "nullable": False},
             {"key": "bpm", "type": "int", "label": "BPM", "default": None,
              "nullable": True, "min": 40, "max": 220},
+            # The adapter has always read this and always defaulted it to "en";
+            # only the hand-written base entry declared it, so on every variant
+            # the control was missing and every song was sung in English
+            # whatever the prompt asked for.
+            {"key": "vocal_language", "type": "enum",
+             "label": "Vocal language", "default": "en", "nullable": False,
+             "choices": [{"value": "en", "label": "English"},
+                         {"value": "de", "label": "German"},
+                         {"value": "es", "label": "Spanish"},
+                         {"value": "fr", "label": "French"},
+                         {"value": "ja", "label": "Japanese"},
+                         {"value": "ko", "label": "Korean"},
+                         {"value": "zh", "label": "Chinese"}],
+             "help": "Which language the model should sing in. Write the "
+                     "lyrics in that language too: this tells the model how "
+                     "to pronounce them, it does not translate."},
             seed_param(),
+            *ace_plan_params(),
+            *ace_plan_task_params(),
             *ace_task_params(full=full_tasks),
         ],
+        # `plan` runs only the LM half — cheap, and the result is a plan the
+        # user can read and choose between before committing to a render.
+        "tasks": ["generate", "plan"],
     }
     return entry(id_, "acestep", [ACE_CORE, dit_repo], name, desc, caps,
                  min_ram_gib, tier, ACE_MIT, variant_of="acestep-base",
@@ -1302,6 +1528,15 @@ NEW_ENTRIES = [
         4, "fast", MIT, format_="mono 24 kHz", featured=True,
         settings={"engine": "tokensplice"},
         notes="Experimental by design; output is mono 24 kHz."),
+    # ---- The writing assistant -------------------------------------------
+    #
+    # Both entries are small on purpose rather than by accident. The job queue
+    # treats a task-only model under 1.5 GB as a *small* model: it loads into
+    # the warm pool beside whatever music model is resident instead of evicting
+    # it. An assistant that unloaded a 10 GB ACE-Step every time you asked it
+    # for a title would be used exactly once, so anything larger than the
+    # threshold would be a worse product even if it wrote better prompts.
+    *assistant_entries(),
     # ---- Split & Recombine: literal mixdown ------------------------------
     task_entry(
         "dsp-mixdown", "dsp", [],
@@ -1320,6 +1555,36 @@ NEW_ENTRIES = [
             {"key": "keep_tracks", "type": "bool", "label": "Keep tracks",
              "default": False, "nullable": False,
              "help": "Also save each aligned track as a part of the result"},
+            # These four were live in models.json and read by adapter_dsp, but
+            # had never been written back here — so regenerating the catalog
+            # would have silently deleted them, and the mixdown would have
+            # fallen back to its internal defaults with no way to say
+            # otherwise. Copied from the shipped catalog verbatim: the export
+            # formats in particular are load-bearing, and a paraphrase of this
+            # block dropped AIFF and MP3 without anything failing.
+            {"key": "normalize", "type": "bool", "label": "Normalize loudness",
+             "default": True, "nullable": False,
+             "help": "Off renders at the summed level of the tracks "
+                     "themselves — an edit that only cuts must not change how "
+                     "loud the audio is."},
+            {"key": "limiter", "type": "bool", "label": "True-peak limiter",
+             "default": True, "nullable": False,
+             "help": "−1 dBTP limiter after normalization."},
+            {"key": "output_format", "type": "enum", "label": "Output format",
+             "default": "wav", "nullable": False,
+             "choices": [{"value": "wav", "label": "WAV"},
+                         {"value": "aiff", "label": "AIFF"},
+                         {"value": "flac", "label": "FLAC"},
+                         {"value": "mp3", "label": "MP3"}],
+             "help": "Container of the rendered mixdown. Stems stay 16-bit "
+                     "WAV."},
+            {"key": "bit_depth", "type": "enum", "label": "Bit depth",
+             "default": "pcm16", "nullable": False,
+             "choices": [{"value": "pcm16", "label": "16-bit"},
+                         {"value": "pcm24", "label": "24-bit"},
+                         {"value": "float32", "label": "32-bit float"}],
+             "help": "Sample format of the mixdown. 32-bit float is not valid "
+                     "for FLAC; ignored for MP3."},
         ], est_realtime_factor=0.3),
         2, "fast",
         {"name": "GPL-3.0", "commercial_use": True,
@@ -1433,6 +1698,15 @@ def main() -> None:
             m["format"] = "mono"
         if m["id"] == "acestep-base":
             m["format"] = "turbo · 8 steps"
+            # acestep-base is hand-written rather than generated, so the plan
+            # surface every other ACE-Step variant gets from `ace_variant` has
+            # to be grafted on here. Keyed by param key so re-running is a
+            # no-op rather than a duplication.
+            have = {p["key"] for p in m["capabilities"]["params"]}
+            m["capabilities"]["params"] += [
+                p for p in ace_plan_params() + ace_plan_task_params()
+                if p["key"] not in have]
+            m["capabilities"]["tasks"] = ["generate", "plan"]
 
     # Order is load-bearing: several features resolve "the first installed
     # model that can do X" against /v1/models order, which is this order.
@@ -1448,6 +1722,20 @@ def main() -> None:
         apply_help(m)
         normalise_help(m)
         apply_groups(m)
+    # What the shipped catalog already knows, so a failed lookup falls back to
+    # the last good answer rather than to the generator's placeholder.
+    #
+    # `if total > 0` below looks like it protects this, and it does not: a
+    # generated entry's preset size is 0, so one timed-out HF request rewrote a
+    # real 184 MB as 0 with nothing failing. Sizes drive the download UI and the
+    # small-model threshold, and "unknown" is not a size worth writing down.
+    previous = {m["id"]: m.get("size_bytes") or 0
+                for m in catalog["models"]}
+    for m in models:
+        if not m.get("size_bytes") and previous.get(m["id"]):
+            m["size_bytes"] = previous[m["id"]]
+            m["requirements"]["disk_bytes"] = previous[m["id"]]
+
     cache: dict[tuple, int] = {}
     for m in models:
         total = 0

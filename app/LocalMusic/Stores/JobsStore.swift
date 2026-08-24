@@ -1205,8 +1205,21 @@ final class JobsStore {
                 lastError = "Could not move finished audio: \(error.localizedDescription)"
                 continue
             }
+            // The take's own `meta` is stored alongside the params it was made
+            // with. For a model that plans before it renders, that is the plan
+            // — tempo, key, and the sketch the renderer worked from — and it
+            // is the only record of it: the engine keeps no history, so a plan
+            // not written down here is gone the moment the job ages out.
+            //
+            // It rides *inside* paramsJSON under "meta" rather than in a
+            // column of its own because that field is already the bag of
+            // everything-about-this-render, and only these cards read it.
+            var stored = job.params
+            if let meta = output.meta ?? job.result?.meta, !meta.isEmpty {
+                stored["meta"] = .object(meta)
+            }
             let paramsJSON = (try? String(
-                decoding: BackendClient.encoder.encode(job.params),
+                decoding: BackendClient.encoder.encode(stored),
                 as: UTF8.self)) ?? "{}"
             // Generated tracks are named trackNNN; the prompt identifies them
             // in the UI, shown after the name rather than baked into it. The

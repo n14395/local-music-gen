@@ -19,6 +19,7 @@ extension RecipeMode {
         case .reimagine: "REIMAGINE"
         case .analyse: "ANALYSE"
         case .invent: "GENERATE"
+        case .write: "WRITE"
         }
     }
 
@@ -28,6 +29,9 @@ extension RecipeMode {
         case .reimagine: .violet
         case .analyse: .cyan
         case .invent: .accent
+        // Cyan, shared with ANALYSE, because the two make the same promise:
+        // this card tells you something and changes nothing until you say so.
+        case .write: .cyan
         }
     }
 
@@ -37,6 +41,7 @@ extension RecipeMode {
         case .reimagine: Bench.Palette.violet
         case .analyse: Bench.Palette.cyan
         case .invent: Bench.Palette.accent
+        case .write: Bench.Palette.cyan
         }
     }
 }

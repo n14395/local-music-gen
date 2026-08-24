@@ -191,6 +191,24 @@ final class AppSettings {
         didSet { setOrRemove(analyzerModelId, "settings.generation.analyzerModelId") }
     }
 
+    /// Which writing assistant the "Help me write" cards use; nil = the first
+    /// installed one, which the catalog orders best-first.
+    var assistantModelId: String? {
+        didSet { setOrRemove(assistantModelId, "settings.generation.assistantModelId") }
+    }
+
+    /// How adventurous the writing assistant is.
+    ///
+    /// Higher than a coding assistant would want: these are creative-writing
+    /// jobs, and at zero it produces the same four adjectives every time. The
+    /// engine clamps this to 0…1.5 regardless of what is stored here.
+    var assistantTemperature: Double {
+        didSet {
+            defaults.set(assistantTemperature,
+                         forKey: "settings.generation.assistantTemperature")
+        }
+    }
+
     /// The separator a Split action opens on; nil = the recipe's own
     /// preference, then catalog order.
     var defaultSeparatorId: String? {
@@ -436,6 +454,11 @@ final class AppSettings {
                                 default: true)
         analyzerModelId = defaults
             .string(forKey: "settings.generation.analyzerModelId")
+        assistantModelId = defaults
+            .string(forKey: "settings.generation.assistantModelId")
+        assistantTemperature = defaults
+            .object(forKey: "settings.generation.assistantTemperature")
+            as? Double ?? 0.7
         defaultSeparatorId = defaults
             .string(forKey: "settings.generation.defaultSeparator")
         targetLufs = defaults.object(forKey: "settings.audio.targetLufs")
@@ -553,6 +576,8 @@ final class AppSettings {
         livePreview = false
         autoAnalyze = true
         analyzerModelId = nil
+        assistantModelId = nil
+        assistantTemperature = 0.7
         defaultSeparatorId = nil
         targetLufs = -14
         autoMatchTempo = true

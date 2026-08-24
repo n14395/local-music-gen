@@ -24,24 +24,41 @@ struct JobQueueSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            ForEach(jobs.displayJobs) { job in
-                row(job)
-            }
+            // Transfers head the list, renders follow. A download is the
+            // slowest thing this queue holds and the only one started from
+            // another screen entirely, so a new one arriving underneath a
+            // day's worth of finished renders was a row nobody saw start.
             if let downloads {
                 ForEach(Self.ordered(downloads.downloads.values)) { info in
-                    let name = modelName?(info.modelId) ?? info.modelId
                     DownloadQueueRow(
                         info: info,
-                        // A runtime install fetches no model, so the row says
-                        // what it is doing rather than naming a download the
-                        // user never started.
-                        title: info.isRuntimeOnly ? "\(name) runtime" : name,
+                        title: title(info.modelId,
+                                     runtimeOnly: info.isRuntimeOnly),
                         onPause: { Task { await downloads.pause(info.id) } },
                         onResume: { Task { await downloads.resume(info.id) } },
                         onCancel: { Task { await downloads.cancel(info.id) } })
                 }
+                // …and below them the ones that have stopped, newest first, in
+                // the order the store keeps them.
+                ForEach(downloads.finished) { done in
+                    FinishedDownloadRow(
+                        download: done,
+                        title: title(done.modelId,
+                                     runtimeOnly: done.isRuntimeOnly),
+                        onDismiss: { downloads.dismissFinished(done.id) })
+                }
+            }
+            ForEach(jobs.displayJobs) { job in
+                row(job)
             }
         }
+    }
+
+    /// A runtime install fetches no model, so the row says what it is doing
+    /// rather than naming a download the user never started.
+    private func title(_ modelId: String, runtimeOnly: Bool) -> String {
+        let name = modelName?(modelId) ?? modelId
+        return runtimeOnly ? "\(name) runtime" : name
     }
 
     @ViewBuilder
@@ -413,14 +430,61 @@ struct DownloadQueueRow: View {
             return (info.message?.uppercased()).map { "PREPARING ENVIRONMENT · \($0)" }
                 ?? "PREPARING ENVIRONMENT"
         }
-        let progress = DownloadFormat.progress(done: info.bytesDone,
-                                               total: info.bytesTotal)
-        if info.state == .paused { return progress + " · PAUSED" }
-        // A queued download has real bytes — whatever is already cached — and
-        // no rate, because nothing is transferring. `line` would print the tail
-        // of the smoother's last window as this row's speed.
-        if info.state == .queued { return progress + " · WAITING" }
-        return DownloadFormat.line(done: info.bytesDone, total: info.bytesTotal,
-                                   rate: rate)
+        return DownloadFormat.transferLine(info, rate: rate)
+    }
+}
+
+/// A transfer that has stopped, kept on the list until it is waved away.
+///
+/// Deliberately a row of its own rather than a fourth state on
+/// `DownloadQueueRow`: nothing here moves. There is no bar, no rate, no ETA
+/// and nothing to pause — what is left is a name, an outcome and the same
+/// dismiss button a finished render carries.
+struct FinishedDownloadRow: View {
+    let download: DownloadsStore.FinishedDownload
+    let title: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 9) {
+                if download.isFailure {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Bench.Palette.danger)
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Bench.Palette.ok)
+                }
+                Text(title)
+                    .font(Bench.Typo.secondaryEmphasis)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Bench.Palette.textMuted)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+            }
+            Text(metaLine)
+                .metaLine()
+                .lineLimit(2)
+        }
+        .padding(13)
+        // The ordinary card, like a finished render's: the selected treatment
+        // means "this is what the machine is working on", and this is not.
+        .benchCard(fill: Bench.Palette.card,
+                   stroke: Bench.Palette.cardStrokeSoft, radius: 11)
+    }
+
+    private var metaLine: String {
+        DownloadFormat.finishedLine(bytes: download.bytes,
+                                    runtimeOnly: download.isRuntimeOnly,
+                                    failure: download.failureMessage)
     }
 }

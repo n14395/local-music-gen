@@ -24,15 +24,22 @@ final class RecipeSlotAcceptsTests: XCTestCase {
         slot.accepts == [KindPattern(pattern: "song.mix")]
     }
 
-    /// Splitting a stem into stems, and pulling the vocal out of something
-    /// that is already one part, are the two that stay closed: both need the
+    /// Splitting a stem into stems, and pulling the vocal out of something that
+    /// is already one part, are two of the four that stay closed: both need the
     /// whole mix by definition, and a dimmed row saying so beats a render that
     /// returns mush.
-    func testOnlyTwoSlotsRefuseParts() {
+    ///
+    /// The two plan cards are closed for a different reason. A plan belongs to
+    /// a whole generated take — it is the tempo, key and sketch the model wrote
+    /// before rendering it — and it is stored against the song. A stem cut out
+    /// of that song afterwards carries no plan of its own, so offering one here
+    /// would promise an answer the engine cannot give.
+    func testOnlyFourSlotsRefuseParts() {
         let closed = allSlots.filter { songOnly($0.slot) }
             .map { "\($0.recipe.id).\($0.slot.id)" }
         XCTAssertEqual(closed.sorted(),
-                       ["karaoke.song", "split-instruments.source"])
+                       ["karaoke.song", "plan-inspect.source",
+                        "plan-reroll.source", "split-instruments.source"])
     }
 
     /// The four that route into Style Transfer take what the Style Transfer

@@ -394,16 +394,7 @@ private struct DownloadProgressLine: View {
     }
 
     private var line: String {
-        let progress = DownloadFormat.progress(done: download.bytesDone,
-                                               total: download.bytesTotal)
-        if download.state == .paused { return "\(progress) · PAUSED" }
-        // A queued download has a real byte count — whatever is already cached —
-        // but no rate and no ETA, because nothing is transferring. Running it
-        // through `line` would print the tail of the smoother's last window and
-        // claim a speed for a download that has not started.
-        if download.state == .queued { return "\(progress) · WAITING" }
-        return DownloadFormat.line(done: download.bytesDone,
-                                   total: download.bytesTotal, rate: rate)
+        DownloadFormat.transferLine(download, rate: rate)
     }
 }
 

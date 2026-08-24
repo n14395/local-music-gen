@@ -50,6 +50,8 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
         case .task("transcribe"): "Transcribe to notes"
         case .task("analyze"): "Musical analysis"
         case .task("render"): "Render notes to audio"
+        case .task("assist"): "Help me write"
+        case .task("plan"): "Plan before rendering"
         case .task(let task): task.capitalized
         case .mixdown: "Create a mix"
         case .splicer: "Token splice"

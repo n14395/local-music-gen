@@ -148,7 +148,10 @@ ModelInfo = {
                                       // Models screen shows before "Show all" — one
                                       // entry per thing the app can do, so every task
                                       // below (generate / analyze / separate /
-                                      // transcribe / mix / render) has at least one.
+                                      // transcribe / mix / render / assist) has at
+                                      // least one. `plan` needs none of its own — it
+                                      // rides the featured generate models that
+                                      // declare it.
                                       // A task with no featured model is a feature the
                                       // user cannot discover: the auxiliary models are
                                       // ~200 MB in total and most of Split & Recombine
@@ -171,7 +174,11 @@ ModelInfo = {
                                       // "Instrumental & loops", "Melody-guided",
                                       // "Remix & restyle", "Stem separation",
                                       // "Notes & MIDI", "Musical analysis",
-                                      // "Mixing & recombining". Distinct from
+                                      // "Mixing & recombining", "Writing help".
+                                      // `plan` deliberately adds no tag: planning
+                                      // is a step of a generate on a model
+                                      // installed for generating, never a reason
+                                      // to install one. Distinct from
                                       // size/speed_tier/family/format, which describe
                                       // what a model *is* rather than what it's for.
   "display_name": "MusicGen Small",
@@ -281,9 +288,10 @@ ParamSpec = {
   "placeholder": "synthwave, 120bpm",
   // enum only:
   "choices": [{"value": "turbo", "label": "Turbo"}],
-  // json only (both optional):
+  // any type, optional:
   "internal": true,                   // the generic form does not render this param;
                                        // clients populate it programmatically
+  // json only, optional:
   "resolve_uploads": true,            // engine walks the parsed JSON and replaces
                                        // every "up_…" string value with the resolved
                                        // absolute path (unknown id → 422 VALIDATION)
@@ -663,6 +671,24 @@ JobInfo = {
 }
 ```
 
+A generate `result` may additionally carry `meta`, and each entry of `outputs`
+may carry a `meta` of its own — the job-level object is the takes' merged.
+This mirrors the task result's optional `meta` (5.4), and the same rule
+applies: both are additive and **absent entirely unless the adapter supplied
+something**, so most families never send them and a client must not require
+them. Today only ACE-Step does:
+
+```json
+"meta": {"lm_metadata": {"bpm": 104, "caption": "…", "duration": 60,
+                         "genres": "…", "keyscale": "A minor",
+                         "language": "english", "timesignature": "4/4"},
+         "audio_codes": "<|audio_code_1|>…", "planner": "acestep-5hz-lm"}
+```
+
+— the plan its 5 Hz LM wrote before the render, with the same `metadata` keys
+(any subset) a `plan` job returns (5.4). Omitted for src-audio tasks, which
+skip the LM.
+
 Output files are written complete (`.part` + rename) under `--output-dir/<job_id>/`
 **before** `job.completed` fires. The app moves them into its library (same volume →
 atomic rename). The engine garbage-collects `Outputs/<job_id>/` directories left
@@ -684,7 +710,7 @@ a preview is a file the client was already handed and told the duration of, so
 "keep the partial" is a client-side decision about a file it already has, never
 something inferred from a cancel. See 5.6.
 
-### 5.4 Task jobs (separate / transcribe / analyze / render / mix)
+### 5.4 Task jobs (separate / transcribe / analyze / render / mix / assist / plan)
 
 `task` selects the pipeline. `"generate"` (the default) is the classic
 prompt→audio flow above and is also how audio-conditioned generation works
@@ -699,17 +725,25 @@ other tasks are promptless transformations whose model must list them in
 | `analyze`    | analysis      | `source_audio` | `analysis` (json) |
 | `render`     | notesynth     | `midi_file` (midi param) | `audio` |
 | `mix`        | dsp           | `mix_spec` (json param) | `audio` (+ optional `stem` per track) |
+| `assist`     | assistant     | `assist_input` (json param; `kind` selects the helper) | `assist` (json) |
+| `plan`       | acestep       | `plan_caption` / `plan_lyrics` (string params) | `plan` (json) |
 
 Validation for non-generate tasks: `prompt` optional (ignored unless the model
 declares a param for it); `lyrics` present → `422 VALIDATION`; `duration_s`
 ignored and echoed as submitted (or null); `count` must be 1; every
 non-nullable `audio`/`midi`/`json` param must be present; `task` outside
-`capabilities.tasks` → `422 VALIDATION`.
+`capabilities.tasks` → `422 VALIDATION`. `assist` and `plan` are ordinary
+non-generate tasks and every rule above applies to them unchanged — `plan` in
+particular runs on a *generate* model (ACE-Step), but a `plan` job still
+submits no `lyrics`, keeps `count` at 1, and may omit `prompt` (its inputs are
+the `plan_*` params).
 
 Task jobs reuse the generate status flow (`queued → loading → generating →
 encoding → terminal`); stage detail rides `progress.message` ("separating:
-drums"). No task model declares a `capabilities.pipeline` — each runs one opaque
-pass — so task jobs never carry `progress.phase` (5.5). `eta_s` is
+drums"). Task jobs never carry `progress.phase` (5.5): each runs one opaque
+pass, and that holds even on a model whose *generate* flow declares a
+`capabilities.pipeline` — ACE-Step's `plan` runs only the LM half and reports
+it as an unstaged band, never as phases. `eta_s` is
 **elapsed-based** (`elapsed × (1−fraction)/fraction`, null until fraction ≥ 0.05)
 because runtime scales with input length.
 
@@ -728,11 +762,64 @@ Result shape (replaces `outputs` for task jobs):
 }
 ```
 
-`kind` is an open set (`stem | midi | analysis | audio` today) — clients ignore
-unknown kinds. `label` carries the human/slot identity (stem name, instrument;
-`preview:<label>` marks an audio audition render paired with the same-label
-midi artifact). Artifact files obey the 5.2 delivery invariants (complete
-before `job.completed`, under `Outputs/<job_id>/`, retention GC per 5.2).
+`kind` is an open set (`stem | midi | analysis | audio | assist | plan` today) —
+clients ignore unknown kinds. `label` carries the human/slot identity (stem
+name, instrument; `preview:<label>` marks an audio audition render paired with
+the same-label midi artifact; an `assist` artifact's label is the `kind` param
+of the job that made it). Artifact files obey the 5.2 delivery invariants
+(complete before `job.completed`, under `Outputs/<job_id>/`, retention GC per
+5.2).
+
+**`assist`** is one round with the assistant family's small local instruct
+model: the `kind` enum param selects the helper, `assist_input` (json param)
+carries its input, and the answer comes back twice — as the single `assist`
+artifact (`assist.json`) and as `result.meta`, so a client that keeps job
+results never needs to read the file:
+
+```json
+"meta": {"assist": {"kind": "flesh_out", "ok": true, "raw": "…",
+                    "value": {"prompt": "…", "added": ["…"]},
+                    "repaired": false, "target_family": "acestep",
+                    "dialect": "acestep"},
+         "elapsed_s": 3.1}
+```
+
+`raw` is the model's unparsed text; `repaired` says the JSON needed fixing up
+before it parsed; `target_family` / `dialect` say which model family the
+writing was tuned toward (null / `"generic"` when none was named). `value` is
+the object the app renders, and its shape follows `kind`:
+
+| kind | value |
+|------|-------|
+| `interview` | `{"questions": [{"question": str, "examples": [str]}], "ready": bool}` |
+| `interview_finish`, `brief`, `flesh_out`, `critique_fix` | `{"prompt": str, …}` — `brief` adds `"idea"` + `"title"`, `flesh_out` adds `"added": [str]`, `critique_fix` adds `"changes": [{"from": str, "to": str}]` |
+| `lyrics`, `translate_lyrics` | `{"lyrics": str, "title": str}` |
+| `pick_model` | `{"best": {"id": str, "why": str, "installed": bool}, "alternatives": [same]}` |
+| `plan_song` | `{"sections": [{"tag": str, "seconds": int, "what": str}], "summary": str}` |
+| `route_intent` | `{"action": str\|null, "prompt": str\|null, "subject": str\|null, "confidence": float, "reason": str}` |
+| `describe_song` | `{"description": str, "prompt": str}` |
+| `more_like_this` | `{"variations": [{"prompt": str, "differs": str}]}` |
+| `name_and_tag` | `{"title": str, "tags": [str]}` |
+
+**`plan`** runs only ACE-Step's 5 Hz language-model half and returns the plans
+it wrote, so the user can choose one before paying for the DiT render.
+`plan_caption` / `plan_lyrics` (string params) carry the inputs, `plan_count`
+(default 3) how many plans to write, `plan_duration_s` the target length. The
+single `plan` artifact (`plans.json`) and `result.meta` both carry:
+
+```json
+"meta": {"plans": [{"index": 0,
+                    "metadata": {"bpm": 104, "caption": "…", "duration": 60,
+                                 "genres": "…", "keyscale": "A minor",
+                                 "language": "english",
+                                 "timesignature": "4/4"},
+                    "audio_codes": "<|audio_code_1|>…"}]}
+```
+
+`metadata` is the plan's chain-of-thought YAML parsed into those keys — **any
+subset may be present**, so read every key as optional. `audio_codes` is the
+token string the chosen plan renders from; the `audio_codes` param on the same
+entries exists to hand it back to a follow-up generate.
 
 The `mix` task's `mix_spec` json param (built by the app from stored analysis;
 all beat math is precomputed — the dsp worker performs no analysis):

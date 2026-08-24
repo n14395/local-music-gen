@@ -189,6 +189,7 @@ struct SettingsView: View {
             openingModelGroup
             newRendersGroup(settings)
             analysisGroup(settings)
+            assistantGroup(settings)
             presetsGroup
         case .audio:
             loudnessGroup(settings)
@@ -557,6 +558,40 @@ struct SettingsView: View {
         }
     }
 
+    private func assistantGroup(_ settings: Bindable<AppSettings>) -> some View {
+        SettingsGroup("WRITING ASSISTANT") {
+            SettingsRow(
+                title: "Assistant",
+                detail: "The small language model behind the \u{201C}Help me "
+                    + "write\u{201D} cards. It runs on this Mac and sends "
+                    + "nothing anywhere.",
+                alignment: .center) {
+                modelPicker(selection: env.settings.assistantModelId,
+                            task: "assist",
+                            automaticLabel: "Automatic") {
+                    env.settings.assistantModelId = $0
+                }
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Variety",
+                detail: "How adventurous its suggestions are. Lower repeats "
+                    + "itself; higher surprises you and occasionally wanders.",
+                alignment: .center) {
+                HStack(spacing: 10) {
+                    Slider(value: settings.assistantTemperature,
+                           in: 0...1.5, step: 0.05)
+                        .frame(width: 180)
+                    Text(env.settings.assistantTemperature
+                            .formatted(.number.precision(.fractionLength(2))))
+                        .font(Bench.Typo.metaLine)
+                        .foregroundStyle(Bench.Palette.textTertiary)
+                        .monospacedDigit()
+                }
+            }
+        }
+    }
+
     private var presetsGroup: some View {
         SettingsGroup("SAVED PRESETS") {
             let presets = storedPresets
@@ -796,12 +831,12 @@ struct SettingsView: View {
     // MARK: - Queue
 
     private var queueGroup: some View {
-        SettingsGroup("FINISHED RENDERS") {
+        SettingsGroup("FINISHED ROWS") {
             SettingsRow(
                 title: "Clear finished rows",
-                detail: "Failed and cancelled rows clear on the same schedule. "
-                    + "\u{201C}Clear done\u{201D} in the queue panel always "
-                    + "works immediately.",
+                detail: "Renders and downloads alike, whether they succeeded, "
+                    + "failed or were cancelled. \u{201C}Clear done\u{201D} in "
+                    + "the queue panel always works immediately.",
                 alignment: .center) {
                 BenchMenu(label: env.settings.queueAutoClear.label) {
                     ForEach(AppSettings.QueueAutoClear.allCases, id: \.self) { policy in
@@ -809,6 +844,7 @@ struct SettingsView: View {
                             env.settings.queueAutoClear = policy
                             // Rows already finished start their clock now.
                             env.jobsStore.ensureAutoClearRunning()
+                            env.downloadsStore.ensureAutoClearRunning()
                         }
                     }
                 }

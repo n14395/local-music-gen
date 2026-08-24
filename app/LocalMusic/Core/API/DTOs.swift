@@ -53,6 +53,41 @@ enum JSONValue: Codable, Equatable, Sendable {
         default: nil
         }
     }
+
+    // The rest of the readers, for the free-form `result.meta` dictionaries
+    // the engine returns from assist and plan jobs. Deliberately lenient in
+    // one direction only — a double that happens to be whole reads as an int,
+    // because a language model writing JSON emits `8` and `8.0`
+    // interchangeably — and strict everywhere else, so a wrong-typed field
+    // reads as absent rather than as a coerced value nobody intended.
+
+    var intValue: Int? {
+        switch self {
+        case .int(let v): v
+        case .double(let v): v.rounded() == v ? Int(v) : nil
+        default: nil
+        }
+    }
+
+    var stringValue: String? {
+        if case .string(let v) = self { return v }
+        return nil
+    }
+
+    var boolValue: Bool? {
+        if case .bool(let v) = self { return v }
+        return nil
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case .array(let v) = self { return v }
+        return nil
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case .object(let v) = self { return v }
+        return nil
+    }
 }
 
 // MARK: - Health & system
@@ -385,7 +420,7 @@ struct ModelsResponse: Codable, Sendable {
 
 // MARK: - Downloads
 
-struct DownloadInfo: Codable, Identifiable, Sendable {
+struct DownloadInfo: Codable, Identifiable, Sendable, Equatable {
     var id: String { downloadId }
     let downloadId: String
     let modelId: String
@@ -578,6 +613,15 @@ struct JobOutput: Codable, Sendable {
     let sampleRate: Int
     let durationS: Double
     let seedUsed: Int64?
+    /// Whatever the adapter had to say about THIS take beyond the audio — for
+    /// ACE-Step, the plan its language model wrote before the renderer drew it
+    /// (`lm_metadata` + `audio_codes`). Per-take rather than per-job because
+    /// four takes of one prompt are four different plans, and "render this one
+    /// again differently" needs the plan belonging to the take that was picked.
+    ///
+    /// `var` so the memberwise initialiser defaults it, the way `preview` and
+    /// `priority` on JobInfo do: every hand-built fixture predates this field.
+    var meta: [String: JSONValue]?
 }
 
 struct JobsResponse: Codable, Sendable {

@@ -98,6 +98,12 @@ final class AppEnvironment {
     /// track in the Library and coming back to an empty form is precisely the
     /// failure the destination exists to remove.
     let styleTransfer = StyleTransferModel()
+    /// The writing assistant, and the reader for a model's own plan. Both run
+    /// short task jobs whose answers are a dictionary the asking page reads
+    /// once — nothing they return ever becomes a library row, which is why
+    /// neither goes through JobsStore. See `MetaJobRunner`.
+    let assistant = AssistantStore()
+    let plans = PlanStore()
     /// The Editor is a workspace too: leaving mid-edit and coming back keeps
     /// the file, the selection and the pending program.
     private(set) var editor: EditorStore!
@@ -163,6 +169,11 @@ final class AppEnvironment {
         jobsStore.autoClearAfterS = { [settings = self.settings] in
             settings.queueAutoClear.seconds
         }
+        // The setting is about the queue, and a finished transfer is a row in
+        // it — so both halves clear on the same schedule.
+        downloadsStore.autoClearAfterS = { [settings = self.settings] in
+            settings.queueAutoClear.seconds
+        }
         jobsStore.autoArm = { [settings = self.settings] in
             settings.autoArmRenders
         }
@@ -186,6 +197,18 @@ final class AppEnvironment {
         // survive a restart. Recorded on change, replayed on `.connected`.
         catalog.onPinChanged = { [settings = self.settings] id in
             settings.pinnedModelId = id
+        }
+
+        // Closures rather than copies, like every other store's settings: the
+        // assistant must see a model switched in Settings without the app
+        // being restarted, and it reads the catalog live because the catalog
+        // refreshes underneath it.
+        assistant.models = { [weak self] in self?.catalog.models ?? [] }
+        assistant.preferredModelId = { [settings = self.settings] in
+            settings.assistantModelId
+        }
+        assistant.temperature = { [settings = self.settings] in
+            settings.assistantTemperature
         }
 
         jobsStore.modelName = { [weak self] id in
@@ -322,6 +345,8 @@ final class AppEnvironment {
                 downloadsStore.client = client
                 jobsStore.client = client
                 modelLibrary.client = client
+                assistant.client = client
+                plans.client = client
                 if let client, let token = Keychain.get(account: "hf-token") {
                     try? await client.setHFToken(token)
                 }

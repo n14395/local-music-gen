@@ -21,8 +21,9 @@ struct QueueLoad: Equatable {
     var takesLeft: Int = 0
     /// Transfers in flight or waiting.
     var downloads: Int = 0
-    /// Jobs that have finished and are still on the list — succeeded, failed
-    /// or cancelled, waiting for the user to dismiss them.
+    /// Rows that have finished and are still on the list — a render that
+    /// succeeded, failed or was cancelled, or a transfer that has stopped,
+    /// waiting for the user to dismiss them.
     ///
     /// Counted separately from `jobs` because the two answer different
     /// questions. `jobs` is outstanding work, which is what the counters and
@@ -40,8 +41,17 @@ struct QueueLoad: Equatable {
     /// Nothing to draw — as opposed to nothing *running*.
     var isEmpty: Bool { jobs == 0 && finished == 0 && downloads == 0 }
 
-    static func of(jobs: [JobsStore.ActiveJob], downloads: Int = 0) -> QueueLoad {
+    /// `downloads` counts the transfers still moving or waiting;
+    /// `finishedDownloads` the stopped ones the list is still holding, of which
+    /// `failedDownloads` are failures. Those two fold in beside the renders,
+    /// because `finished` and `failed` are counts of ROWS and a row is a row —
+    /// whichever half of the queue it came from.
+    static func of(jobs: [JobsStore.ActiveJob], downloads: Int = 0,
+                   finishedDownloads: Int = 0,
+                   failedDownloads: Int = 0) -> QueueLoad {
         var load = QueueLoad(downloads: downloads)
+        load.finished = finishedDownloads
+        load.failed = failedDownloads
         for job in jobs {
             guard !job.status.isTerminal else {
                 load.finished += 1
@@ -57,6 +67,17 @@ struct QueueLoad: Equatable {
             load.takesLeft += count - (job.progress?.take ?? 0)
         }
         return load
+    }
+
+    /// The same count, taken straight off the downloads store — the two
+    /// places that draw the whole queue both need all three of its numbers,
+    /// and picking them apart at each call site is how they drift.
+    @MainActor
+    static func of(jobs: [JobsStore.ActiveJob],
+                   downloads: DownloadsStore) -> QueueLoad {
+        of(jobs: jobs, downloads: downloads.downloads.count,
+           finishedDownloads: downloads.finished.count,
+           failedDownloads: downloads.finished.filter(\.isFailure).count)
     }
 
     /// "Rendering 3 takes" / "Rendering 2 jobs · 5 takes".

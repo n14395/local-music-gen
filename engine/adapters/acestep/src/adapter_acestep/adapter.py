@@ -16,13 +16,14 @@ entirely. None of the phases carry step counts; see _PHASE_BY_DESC.
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import shutil
 import threading
 
-from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb,
-                                     UnstoppableWorkError)
+from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
+                                     GenerateResult, ModelAdapter, ProgressCb,
+                                     TaskResult, UnstoppableWorkError)
 
 # How often the cancel token is checked while generate_music runs. Short enough
 # that the button feels connected, long enough to be free.
@@ -235,6 +236,23 @@ class ACEStepAdapter(ModelAdapter):
             "thinking": False if src_task else bool(params.get("thinking", True)),
             "bpm": int(params["bpm"]) if params.get("bpm") else None,
             "vocal_language": str(params.get("vocal_language", "en")),
+            # The planning half, made steerable. Everything here is inert on a
+            # src-audio task, where the pipeline skips the LM outright.
+            "keyscale": _text(params.get("keyscale")),
+            "timesignature": _text(params.get("timesignature")),
+            "use_cot_metas": _flag(params.get("use_cot_metas")),
+            "use_cot_caption": _flag(params.get("use_cot_caption")),
+            "use_cot_language": _flag(params.get("use_cot_language")),
+            "lm_temperature": _number(params.get("lm_temperature")),
+            "lm_cfg_scale": _number(params.get("lm_cfg_scale")),
+            "lm_top_p": _number(params.get("lm_top_p")),
+            # A plan captured from an earlier take. Handing these back makes
+            # upstream skip code generation and render the plan it already
+            # wrote (inference.py: `user_provided_audio_codes`), which is what
+            # "keep the song, change how it sounds" is made of. The LM still
+            # runs its cheap first phase for the metadata unless `thinking` is
+            # off, so the take stays properly conditioned.
+            "audio_codes": _text(params.get("audio_codes")),
             "src_audio": src_audio,
             "reference_audio": params.get("reference_audio"),
             "audio_cover_strength": (
@@ -287,7 +305,136 @@ class ACEStepAdapter(ModelAdapter):
         except (TypeError, ValueError):
             pass
         return GenerateResult(wav_path=out_path, duration_s=info.duration,
-                              sample_rate=info.samplerate, seed_used=seed_used)
+                              sample_rate=info.samplerate, seed_used=seed_used,
+                              extra=self._plan_of(result, gen_params))
+
+    @staticmethod
+    def _plan_of(result, gen_params) -> dict:
+        """What the language model decided, for the app to show and reuse.
+
+        Empty for the src-audio tasks, which never run the LM — an absent plan
+        is the honest answer there, and the app draws nothing rather than
+        inventing a tempo the model was never asked for.
+        """
+        extra = getattr(result, "extra_outputs", None) or {}
+        metadata = extra.get("lm_metadata")
+        # The codes actually rendered: either the ones the LM wrote this run or
+        # the ones handed in. Both are worth returning — the app cannot tell
+        # which happened, and either way this is the plan behind this audio.
+        codes = ""
+        try:
+            codes = str(getattr(gen_params, "audio_codes", "") or "")
+        except Exception:  # noqa: BLE001 — a plan is never worth failing over
+            codes = ""
+        for key in ("audio_codes", "lm_audio_codes"):
+            got = extra.get(key)
+            if isinstance(got, str) and got:
+                codes = got
+                break
+            if isinstance(got, list) and got and isinstance(got[0], str):
+                codes = got[0]
+                break
+        plan: dict = {}
+        if isinstance(metadata, dict) and metadata:
+            plan["lm_metadata"] = metadata
+        if codes:
+            plan["audio_codes"] = codes
+        if plan:
+            plan["planner"] = "acestep-5hz-lm"
+        return plan
+
+    def run_task(self, task: str, params: dict, out_dir: str,
+                 progress_cb: ProgressCb, cancel: CancelToken) -> TaskResult:
+        """`plan`: run only the language-model half and return what it wrote.
+
+        The expensive part of an ACE-Step render is the DiT. The planner in
+        front of it is comparatively cheap, and it is the half that decides
+        what the song actually *is* — tempo, key, time signature, the shape of
+        the arrangement. Running it alone lets someone read three plans in the
+        time one render would take and pick the one they want before paying
+        for it.
+
+        Each plan is (metadata, codes): the metadata is human-readable and is
+        what the app puts on screen; the codes are the sketch the DiT will
+        render, opaque but reusable. Handing a chosen plan's codes back to
+        `generate` renders that exact plan.
+        """
+        if task != "plan":
+            return super().run_task(task, params, out_dir, progress_cb, cancel)
+        assert self.llm is not None
+
+        count = max(1, min(6, int(params.get("plan_count") or 3)))
+        caption = _text(params.get("plan_caption")) or ""
+        lyrics = _text(params.get("plan_lyrics")) or ""
+        duration = _number(params.get("plan_duration_s"))
+
+        # Only the values the user actually pinned. Upstream treats a present
+        # key as "do not think about this one", so sending our own defaults
+        # here would quietly disable the planning we are trying to show off.
+        pinned: dict = {}
+        if params.get("bpm"):
+            pinned["bpm"] = int(params["bpm"])
+        if _text(params.get("keyscale")):
+            pinned["keyscale"] = _text(params.get("keyscale"))
+        if _text(params.get("timesignature")):
+            pinned["timesignature"] = _text(params.get("timesignature"))
+        if duration:
+            pinned["duration"] = int(duration)
+
+        plans: list[dict] = []
+        for i in range(count):
+            if cancel.cancelled:
+                raise CancelledError()
+            progress_cb(i / count, f"planning {i + 1} of {count}")
+
+            def plan_progress(*args, **kwargs) -> None:
+                if cancel.cancelled:
+                    raise CancelledError()
+
+            result = self._call_flexible(
+                self.llm.generate_with_stop_condition, {
+                    "caption": caption,
+                    "lyrics": lyrics,
+                    # Both phases: metadata *and* the code sketch, because a
+                    # plan the user picks has to be renderable exactly as
+                    # shown. Phase 1 alone would make "pick this one" a
+                    # re-roll rather than a choice.
+                    "infer_type": "llm_dit",
+                    "temperature": _number(params.get("lm_temperature")) or 0.85,
+                    "cfg_scale": _number(params.get("lm_cfg_scale")) or 2.0,
+                    "top_p": _number(params.get("lm_top_p")) or 0.9,
+                    "target_duration": duration,
+                    "user_metadata": pinned or None,
+                    "use_cot_metas": _flag(params.get("use_cot_metas"), True),
+                    "use_cot_caption": _flag(params.get("use_cot_caption"), True),
+                    "use_cot_language": _flag(params.get("use_cot_language"), True),
+                    "batch_size": 1,
+                    "progress": plan_progress,
+                })
+            if not isinstance(result, dict) or not result.get("success", False):
+                message = "planning failed"
+                if isinstance(result, dict):
+                    message = str(result.get("error") or message)
+                raise RuntimeError(message)
+            metadata = result.get("metadata") or {}
+            codes = result.get("audio_codes") or ""
+            if isinstance(metadata, list):
+                metadata = metadata[0] if metadata else {}
+            if isinstance(codes, list):
+                codes = codes[0] if codes else ""
+            plans.append({"index": i, "metadata": metadata,
+                          "audio_codes": codes})
+
+        progress_cb(1.0, "plans ready")
+        path = os.path.join(out_dir, "plans.json")
+        tmp = path + ".part"
+        with open(tmp, "w") as f:
+            json.dump({"plans": plans}, f, ensure_ascii=False)
+        os.replace(tmp, path)
+        return TaskResult(
+            artifacts=[Artifact(kind="plan", label="plans", path=path,
+                                format="json")],
+            meta={"plans": plans})
 
     @staticmethod
     def _generate_cancellably(call, cancel: CancelToken):
@@ -350,3 +497,31 @@ class ACEStepAdapter(ModelAdapter):
     def unload(self) -> None:
         self.dit = None
         self.llm = None
+
+
+# MARK: param coercion
+#
+# Every one of these returns None for "not set", because `_build_flexible`
+# drops None and lets upstream's own default stand. A param the user left blank
+# must reach the pipeline as absent, not as an empty string or a zero — an
+# empty `keyscale` is a key the model should choose, while `""` handed to
+# `user_metadata` would read as a key it has already been told.
+
+def _text(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flag(value, default=None):
+    if value is None:
+        return default
+    return bool(value)

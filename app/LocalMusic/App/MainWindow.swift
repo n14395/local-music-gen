@@ -474,7 +474,7 @@ struct MainWindow: View {
     /// the take that just landed is still a row, and still worth reading.
     private var queueIsEmpty: Bool {
         QueueLoad.of(jobs: Array(env.jobsStore.active.values),
-                     downloads: env.downloadsStore.downloads.count).isEmpty
+                     downloads: env.downloadsStore).isEmpty
     }
 
     /// nil (no animation at all) under Settings' reduce-motion; every use
@@ -619,6 +619,7 @@ struct MainWindow: View {
                 catalog: env.catalog, library: env.library,
                 parts: env.partsStore, jobs: env.jobsStore,
                 playback: env.playback, workbench: env.workbench,
+                assistant: env.assistant, plans: env.plans,
                 route: $actionsRoute,
                 onOpenModels: { openModels(for: $0) },
                 onOpenWorkbench: { notes in
@@ -633,6 +634,14 @@ struct MainWindow: View {
                 },
                 onOpenEditor: { materialId in
                     openEditor(materialId: materialId)
+                },
+                // The assistant's cards carry finished text rather than a
+                // preset, so they set the prefill directly instead of going
+                // through `openGenerate` — there is no card whose seed this
+                // is, only what the user just read and approved.
+                onUseText: { prefill in
+                    env.prefill.pending = prefill
+                    destination = .generate
                 })
         case .workbench:
             WorkbenchScreen(model: env.workbench, catalog: env.catalog,
@@ -1007,15 +1016,18 @@ private struct SidebarFooterCard: View {
         nonmutating set { env.catalog.onlyInstalledFilter = newValue }
     }
 
-    /// Two slots, not one: what you need *here*, and — under it, on every
-    /// screen — what the engine is doing. The engine readout is the one thing
-    /// that is worth knowing from anywhere, because a render started on any
-    /// screen runs in the same queue and costs the same memory; screens that
-    /// used to hide it behind their own card were the screens where you were
+    /// Three slots at most, in order of how local the information is: what you
+    /// need *here*, then whatever the machine is fetching, then — on every
+    /// screen — what the engine is doing. The last two are worth knowing from
+    /// anywhere, because a render started on any screen runs in the same queue
+    /// and costs the same memory, and a 57 GB model fetched from the Models
+    /// screen is still arriving long after you have left it; screens that used
+    /// to hide either behind their own card were the screens where you were
     /// most likely to be waiting on one.
     var body: some View {
         VStack(spacing: 10) {
             contextCard
+            downloadCard
             engineCard
         }
         .padding(12)
@@ -1037,6 +1049,26 @@ private struct SidebarFooterCard: View {
             storageCard
         case .generate, .editor, .library:
             EmptyView()
+        }
+    }
+
+    // MARK: download
+
+    /// Drawn only while something is actually being fetched, which is not most
+    /// of the time — the footer is already two cards tall on the screens that
+    /// have a context card, and a permanent third one saying "nothing is
+    /// downloading" would cost the nav list a row of height to report an
+    /// absence.
+    ///
+    /// Keyed on the download it is drawing so the rate smoother inside starts
+    /// clean for each one: reusing the view across the end of one transfer and
+    /// the start of the next would carry the old average into the new ETA.
+    @ViewBuilder private var downloadCard: some View {
+        if let download = SidebarDownload.make(
+            downloads: Array(env.downloadsStore.downloads.values),
+            models: env.catalog.models) {
+            SidebarDownloadCard(download: download)
+                .id(download.info.downloadId)
         }
     }
 

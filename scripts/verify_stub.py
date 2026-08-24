@@ -84,8 +84,8 @@ def main() -> int:
         print("• models & downloads")
         status, body = c.req("GET", "/v1/models")
         models = {m["id"]: m for m in body["models"]}
-        check("catalog has 7 models, all not_installed",
-              len(models) == 7 and all(m["install_state"] == "not_installed"
+        check("catalog has 8 models, all not_installed",
+              len(models) == 8 and all(m["install_state"] == "not_installed"
                                        for m in models.values()))
         check("task models advertise capabilities.tasks",
               models["separation-stub"]["capabilities"].get("tasks")
@@ -95,6 +95,8 @@ def main() -> int:
               == ["transcribe"]
               and models["render-stub"]["capabilities"].get("tasks")
               == ["render"]
+              and models["assistant-stub"]["capabilities"].get("tasks")
+              == ["assist"]
               and "tasks" not in models["musicgen-small"]["capabilities"])
         check("catalog capability variety",
               models["musicgen-small"]["capabilities"]["instrumental_only"]
@@ -112,6 +114,7 @@ def main() -> int:
                                                    "Melody-guided"]
               and models["acestep-base"]["tags"] == ["Songs with vocals",
                                                      "Remix & restyle"]
+              and models["assistant-stub"]["tags"] == ["Writing help"]
               and models["separation-stub"]["tags"] == ["Stem separation",
                                                         "Musical analysis"]
               and models["transcription-stub"]["tags"] == ["Notes & MIDI"]

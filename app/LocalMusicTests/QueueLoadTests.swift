@@ -185,6 +185,24 @@ final class QueueLoadFinishedTests: XCTestCase {
         XCTAssertFalse(load.isEmpty)
     }
 
+    /// A finished transfer is a row like any other: the rail must not draw
+    /// "Nothing queued" over a download waiting to be dismissed.
+    func testAFinishedDownloadIsNotAnEmptyQueue() {
+        let load = QueueLoad.of(jobs: [], downloads: 0, finishedDownloads: 1)
+        XCTAssertFalse(load.isEmpty)
+        XCTAssertEqual(load.finished, 1)
+        XCTAssertEqual(load.headerLabel, "1 FINISHED")
+    }
+
+    func testFinishedDownloadsCountBesideFinishedRenders() {
+        let load = QueueLoad.of(jobs: [job(status: .succeeded)],
+                                downloads: 1, finishedDownloads: 2,
+                                failedDownloads: 1)
+        XCTAssertEqual(load.finished, 3)
+        XCTAssertEqual(load.failed, 1)
+        XCTAssertEqual(load.headerLabel, "1 DOWNLOAD · 1 FAILED · 2 FINISHED")
+    }
+
     /// The transport capsule's priority: a render in flight is the more useful
     /// thing to watch, but with nothing running the failure is the truth.
     func testRunningWorkOutranksAFailureButIdleDoesNot() {

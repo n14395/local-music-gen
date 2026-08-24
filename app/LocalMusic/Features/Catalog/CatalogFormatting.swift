@@ -190,6 +190,45 @@ enum DownloadFormat {
         return parts.joined(separator: " · ")
     }
 
+    /// The whole line for a transfer in any of its three moving-or-not states.
+    ///
+    /// Shared by every place that draws a download — the Models row, the queue
+    /// row and the sidebar card — because three hand-written copies of this
+    /// branch is three chances for two of them to describe one download
+    /// differently. The runtime-install state is deliberately not here: it has
+    /// no bytes, and each site words that for its own shape.
+    static func transferLine(_ info: DownloadInfo, rate: DownloadRate) -> String {
+        let progress = progress(done: info.bytesDone, total: info.bytesTotal)
+        if info.state == .paused { return progress + " · PAUSED" }
+        // A queued download has real bytes — whatever is already cached — and
+        // no rate, because nothing is transferring. `line` would print the tail
+        // of the smoother's last window as this download's speed.
+        if info.state == .queued { return progress + " · WAITING" }
+        return line(done: info.bytesDone, total: info.bytesTotal, rate: rate)
+    }
+
+    /// The mono line under a transfer that has stopped: what it left behind,
+    /// or why it did not.
+    ///
+    /// Deliberately not "ready to use": the weights arriving is one half of an
+    /// install, and a model whose family runtime is still missing is not
+    /// something you can render with yet (§4.1). The row says what happened,
+    /// and the Models screen — which knows about both halves — says what the
+    /// model can do.
+    static func finishedLine(bytes: Int64, runtimeOnly: Bool,
+                             failure: String?) -> String {
+        if let failure {
+            let text = failure.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? "FAILED" : "FAILED · " + text.uppercased()
+        }
+        if runtimeOnly { return "RUNTIME INSTALLED" }
+        // Zero bytes means the completion arrived without this app ever seeing
+        // the transfer move — an app started mid-download, or a model already
+        // cached. There is no size to quote, so none is quoted.
+        guard bytes > 0 else { return "DOWNLOADED" }
+        return ByteFormat.gb(bytes).uppercased() + " · DOWNLOADED"
+    }
+
     /// Why Pause is offered but dead, or nil when it works. Two states have no
     /// transfer to suspend and the engine accepts pause over both and does
     /// nothing (contract §4.2) — a button that silently no-ops is worse than one

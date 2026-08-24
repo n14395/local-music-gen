@@ -200,6 +200,12 @@ enum SettingsCatalog {
             default: nil, keywords: "analysis model"),
         .of("defaultSeparatorId", .generation, "Splitter",
             \.defaultSeparatorId, default: nil, keywords: "separate stems"),
+        .of("assistantModelId", .generation, "Writing assistant",
+            \.assistantModelId, default: nil,
+            keywords: "assistant llm prompt lyrics help write"),
+        .of("assistantTemperature", .generation, "Assistant variety",
+            \.assistantTemperature, default: 0.7,
+            keywords: "assistant temperature creative"),
     ]
 
     // MARK: Audio & Output

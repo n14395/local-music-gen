@@ -83,4 +83,101 @@ final class DownloadFailureTests: XCTestCase {
                                    runtimeOnly: false))
         XCTAssertNotNil(s.failure(forModel: "m1"))
     }
+
+    // MARK: - The row a finished transfer leaves behind
+
+    /// The complaint this was written for: a download used to be the one kind
+    /// of work in the queue that reported success by disappearing.
+    func testACompletedDownloadStaysUntilItIsDismissed() {
+        let s = store()
+        s.apply(progress())
+        s.apply(.downloadCompleted(downloadId: "dl_1", modelId: "m1",
+                                   runtimeOnly: false))
+
+        XCTAssertNil(s.info(forModel: "m1"), "it is not transferring any more")
+        XCTAssertEqual(s.finished.map(\.id), ["dl_1"])
+        XCTAssertEqual(s.finished.first?.outcome, .completed)
+        // The size comes off the last progress event, because the completion
+        // event carries no bytes.
+        XCTAssertEqual(s.finished.first?.bytes, 100)
+
+        s.dismissFinished("dl_1")
+        XCTAssertTrue(s.finished.isEmpty)
+    }
+
+    func testAFailedDownloadLeavesARowSayingWhy() {
+        let s = store()
+        s.apply(progress())
+        s.apply(failure("INTERNAL", "connection reset"))
+        XCTAssertEqual(s.finished.first?.failureMessage, "connection reset")
+        XCTAssertEqual(s.finished.first?.isFailure, true)
+        // …and the model's own complaint is still there for the Models screen.
+        XCTAssertNotNil(s.failure(forModel: "m1"))
+    }
+
+    /// Newest first, and one row per model: a second attempt replaces the row
+    /// the first one left rather than stacking on it.
+    func testFinishedRowsReadNewestFirstAndDoNotDouble() {
+        let s = store()
+        s.apply(.downloadCompleted(downloadId: "dl_1", modelId: "m1",
+                                   runtimeOnly: false))
+        s.apply(.downloadCompleted(downloadId: "dl_2", modelId: "m2",
+                                   runtimeOnly: false))
+        XCTAssertEqual(s.finished.map(\.id), ["dl_2", "dl_1"])
+
+        // m1 is downloaded again: the old row goes, and the new one arrives at
+        // the top when it lands.
+        s.apply(progress("dl_3", model: "m1"))
+        XCTAssertEqual(s.finished.map(\.id), ["dl_2"])
+        s.apply(.downloadCompleted(downloadId: "dl_3", modelId: "m1",
+                                   runtimeOnly: false))
+        XCTAssertEqual(s.finished.map(\.id), ["dl_3", "dl_2"])
+    }
+
+    /// A replayed completion (a reconnect re-reading the ring buffer) is the
+    /// same row, not a second one.
+    func testAReplayedCompletionDoesNotDrawTwice() {
+        let s = store()
+        let done = EngineEvent.downloadCompleted(downloadId: "dl_1",
+                                                 modelId: "m1",
+                                                 runtimeOnly: false)
+        s.apply(done)
+        s.apply(done)
+        XCTAssertEqual(s.finished.count, 1)
+    }
+
+    /// A runtime install fetched no weights, and its row has to say so rather
+    /// than claim a model arrived.
+    func testARuntimeInstallIsMarkedAsOne() {
+        let s = store()
+        s.apply(.downloadCompleted(downloadId: "dl_1", modelId: "m1",
+                                   runtimeOnly: true))
+        XCTAssertEqual(s.finished.first?.isRuntimeOnly, true)
+    }
+
+    /// Off by default — the row waits for a click — and on the Settings
+    /// schedule when there is one.
+    func testFinishedRowsClearOnTheQueueSchedule() {
+        let s = store()
+        let t0 = Date()
+        s.apply(.downloadCompleted(downloadId: "dl_1", modelId: "m1",
+                                   runtimeOnly: false))
+        s.sweepFinished(now: t0.addingTimeInterval(86_400))
+        XCTAssertEqual(s.finished.count, 1, "no policy means keep it")
+
+        s.autoClearAfterS = { 60 }
+        s.sweepFinished(now: t0.addingTimeInterval(30))
+        XCTAssertEqual(s.finished.count, 1, "still inside the grace period")
+        s.sweepFinished(now: t0.addingTimeInterval(61))
+        XCTAssertTrue(s.finished.isEmpty)
+    }
+
+    func testClearDoneTakesEveryFinishedRow() {
+        let s = store()
+        s.apply(.downloadCompleted(downloadId: "dl_1", modelId: "m1",
+                                   runtimeOnly: false))
+        s.apply(failure("INTERNAL"))
+        s.dismissAllFinished()
+        XCTAssertTrue(s.finished.isEmpty)
+    }
 }

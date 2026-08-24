@@ -600,6 +600,192 @@
                 "repaint"
               ]
             }
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
+            "group": "sampling"
           }
         ],
         "lyrics_tags": [
@@ -611,7 +797,11 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections."
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "tasks": [
+          "generate",
+          "plan"
+        ]
       },
       "requirements": {
         "min_ram_bytes": 17179869184,
@@ -1518,7 +1708,7 @@
           "gated": false
         }
       ],
-      "size_bytes": 4344115217,
+      "size_bytes": 5667181945,
       "capabilities": {
         "supports_lyrics": false,
         "instrumental_only": true,
@@ -1616,7 +1806,7 @@
       },
       "requirements": {
         "min_ram_bytes": 17179869184,
-        "disk_bytes": 4344115217,
+        "disk_bytes": 5667181945,
         "speed_tier": "medium"
       },
       "license": {
@@ -4867,6 +5057,45 @@
             "group": "musical"
           },
           {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": "en",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -4875,6 +5104,192 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
             "group": "sampling"
           },
           {
@@ -5090,6 +5505,10 @@
               ]
             }
           }
+        ],
+        "tasks": [
+          "generate",
+          "plan"
         ]
       },
       "requirements": {
@@ -5228,6 +5647,45 @@
             "group": "musical"
           },
           {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": "en",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -5236,6 +5694,192 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
             "group": "sampling"
           },
           {
@@ -5451,6 +6095,10 @@
               ]
             }
           }
+        ],
+        "tasks": [
+          "generate",
+          "plan"
         ]
       },
       "requirements": {
@@ -5589,6 +6237,45 @@
             "group": "musical"
           },
           {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": "en",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -5597,6 +6284,192 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
             "group": "sampling"
           },
           {
@@ -5728,6 +6601,10 @@
               ]
             }
           }
+        ],
+        "tasks": [
+          "generate",
+          "plan"
         ]
       },
       "requirements": {
@@ -5866,6 +6743,45 @@
             "group": "musical"
           },
           {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": "en",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -5874,6 +6790,192 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
             "group": "sampling"
           },
           {
@@ -6089,6 +7191,10 @@
               ]
             }
           }
+        ],
+        "tasks": [
+          "generate",
+          "plan"
         ]
       },
       "requirements": {
@@ -6227,6 +7333,45 @@
             "group": "musical"
           },
           {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": "en",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -6235,6 +7380,192 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_metas",
+            "type": "bool",
+            "label": "Model picks tempo & key",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner choose the tempo, key and time signature. Turn it off and it uses only what you have set, leaving anything blank to the renderer.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_caption",
+            "type": "bool",
+            "label": "Model rewrites the description",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner rewrite your description into its own words before rendering. Often an improvement; turn it off when you have worded the prompt carefully.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "use_cot_language",
+            "type": "bool",
+            "label": "Model detects the language",
+            "default": true,
+            "nullable": false,
+            "help": "Let the planner work out which language the lyrics are in, rather than taking the language you set.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": 0.85,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": 2.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "audio_codes",
+            "type": "string",
+            "label": "Captured plan",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "plan_caption",
+            "type": "string",
+            "label": "Description",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_lyrics",
+            "type": "string",
+            "label": "Lyrics",
+            "default": null,
+            "nullable": true,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_count",
+            "type": "int",
+            "label": "How many plans",
+            "default": 3,
+            "nullable": false,
+            "min": 1,
+            "max": 6,
+            "internal": true,
+            "group": "sampling"
+          },
+          {
+            "key": "plan_duration_s",
+            "type": "float",
+            "label": "Length",
+            "default": null,
+            "nullable": true,
+            "min": 10.0,
+            "max": 300.0,
+            "internal": true,
             "group": "sampling"
           },
           {
@@ -6450,6 +7781,10 @@
               ]
             }
           }
+        ],
+        "tasks": [
+          "generate",
+          "plan"
         ]
       },
       "requirements": {
@@ -7632,6 +8967,302 @@
       ]
     },
     {
+      "id": "assistant-qwen",
+      "family": "assistant",
+      "featured": true,
+      "format": null,
+      "variant_of": null,
+      "display_name": "Writing assistant",
+      "description": "A small language model that runs on your Mac and helps you write: it interviews you about the music you want, fleshes out a rough idea into a full description in the form your chosen model understands, drafts lyrics with the right section tags, and names and tags finished songs for your library.",
+      "hf_repos": [
+        {
+          "repo_id": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+          "gated": false
+        }
+      ],
+      "size_bytes": 880172064,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "assist"
+        ],
+        "params": [
+          {
+            "key": "kind",
+            "type": "enum",
+            "label": "What to write",
+            "default": "flesh_out",
+            "nullable": false,
+            "internal": true,
+            "choices": [
+              {
+                "value": "interview",
+                "label": "Interview"
+              },
+              {
+                "value": "interview_finish",
+                "label": "Interview Finish"
+              },
+              {
+                "value": "flesh_out",
+                "label": "Flesh Out"
+              },
+              {
+                "value": "lyrics",
+                "label": "Lyrics"
+              },
+              {
+                "value": "pick_model",
+                "label": "Pick Model"
+              },
+              {
+                "value": "plan_song",
+                "label": "Plan Song"
+              },
+              {
+                "value": "route_intent",
+                "label": "Route Intent"
+              },
+              {
+                "value": "brief",
+                "label": "Brief"
+              },
+              {
+                "value": "translate_lyrics",
+                "label": "Translate Lyrics"
+              },
+              {
+                "value": "describe_song",
+                "label": "Describe Song"
+              },
+              {
+                "value": "more_like_this",
+                "label": "More Like This"
+              },
+              {
+                "value": "critique_fix",
+                "label": "Critique Fix"
+              },
+              {
+                "value": "name_and_tag",
+                "label": "Name And Tag"
+              }
+            ]
+          },
+          {
+            "key": "assist_input",
+            "type": "json",
+            "label": "Input",
+            "default": null,
+            "nullable": false,
+            "internal": true
+          },
+          {
+            "key": "target_family",
+            "type": "string",
+            "label": "Writing for",
+            "default": null,
+            "nullable": true,
+            "internal": true
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Variety",
+            "default": 0.7,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps."
+          },
+          {
+            "key": "max_tokens",
+            "type": "int",
+            "label": "Length limit",
+            "default": null,
+            "nullable": true,
+            "min": 64,
+            "max": 2048,
+            "internal": true
+          }
+        ],
+        "est_realtime_factor": 0.05
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 880172064,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "Apache-2.0",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": null
+      },
+      "notes": "Runs on MLX. Small enough to stay loaded alongside a music model rather than displacing it.",
+      "tags": [
+        "Writing help"
+      ]
+    },
+    {
+      "id": "assistant-llama-1b",
+      "family": "assistant",
+      "featured": false,
+      "format": "1B",
+      "variant_of": "assistant-qwen",
+      "display_name": "Writing assistant (lighter)",
+      "description": "A smaller, faster writing assistant for machines where memory is tight. Quicker to answer and less reliable at long lyrics.",
+      "hf_repos": [
+        {
+          "repo_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+          "gated": false
+        }
+      ],
+      "size_bytes": 712593855,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "assist"
+        ],
+        "params": [
+          {
+            "key": "kind",
+            "type": "enum",
+            "label": "What to write",
+            "default": "flesh_out",
+            "nullable": false,
+            "internal": true,
+            "choices": [
+              {
+                "value": "interview",
+                "label": "Interview"
+              },
+              {
+                "value": "interview_finish",
+                "label": "Interview Finish"
+              },
+              {
+                "value": "flesh_out",
+                "label": "Flesh Out"
+              },
+              {
+                "value": "lyrics",
+                "label": "Lyrics"
+              },
+              {
+                "value": "pick_model",
+                "label": "Pick Model"
+              },
+              {
+                "value": "plan_song",
+                "label": "Plan Song"
+              },
+              {
+                "value": "route_intent",
+                "label": "Route Intent"
+              },
+              {
+                "value": "brief",
+                "label": "Brief"
+              },
+              {
+                "value": "translate_lyrics",
+                "label": "Translate Lyrics"
+              },
+              {
+                "value": "describe_song",
+                "label": "Describe Song"
+              },
+              {
+                "value": "more_like_this",
+                "label": "More Like This"
+              },
+              {
+                "value": "critique_fix",
+                "label": "Critique Fix"
+              },
+              {
+                "value": "name_and_tag",
+                "label": "Name And Tag"
+              }
+            ]
+          },
+          {
+            "key": "assist_input",
+            "type": "json",
+            "label": "Input",
+            "default": null,
+            "nullable": false,
+            "internal": true
+          },
+          {
+            "key": "target_family",
+            "type": "string",
+            "label": "Writing for",
+            "default": null,
+            "nullable": true,
+            "internal": true
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Variety",
+            "default": 0.7,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps."
+          },
+          {
+            "key": "max_tokens",
+            "type": "int",
+            "label": "Length limit",
+            "default": null,
+            "nullable": true,
+            "min": 64,
+            "max": 2048,
+            "internal": true
+          }
+        ],
+        "est_realtime_factor": 0.03
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 712593855,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "Llama 3.2 Community License",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE"
+      },
+      "notes": null,
+      "tags": [
+        "Writing help"
+      ]
+    },
+    {
       "id": "dsp-mixdown",
       "family": "dsp",
       "featured": true,
@@ -7698,7 +9329,7 @@
             "label": "True-peak limiter",
             "default": true,
             "nullable": false,
-            "help": "\u22121 dBTP limiter after normalization."
+            "help": "−1 dBTP limiter after normalization."
           },
           {
             "key": "output_format",
@@ -7707,10 +9338,22 @@
             "default": "wav",
             "nullable": false,
             "choices": [
-              {"value": "wav", "label": "WAV"},
-              {"value": "aiff", "label": "AIFF"},
-              {"value": "flac", "label": "FLAC"},
-              {"value": "mp3", "label": "MP3"}
+              {
+                "value": "wav",
+                "label": "WAV"
+              },
+              {
+                "value": "aiff",
+                "label": "AIFF"
+              },
+              {
+                "value": "flac",
+                "label": "FLAC"
+              },
+              {
+                "value": "mp3",
+                "label": "MP3"
+              }
             ],
             "help": "Container of the rendered mixdown. Stems stay 16-bit WAV."
           },
@@ -7721,9 +9364,18 @@
             "default": "pcm16",
             "nullable": false,
             "choices": [
-              {"value": "pcm16", "label": "16-bit"},
-              {"value": "pcm24", "label": "24-bit"},
-              {"value": "float32", "label": "32-bit float"}
+              {
+                "value": "pcm16",
+                "label": "16-bit"
+              },
+              {
+                "value": "pcm24",
+                "label": "24-bit"
+              },
+              {
+                "value": "float32",
+                "label": "32-bit float"
+              }
             ],
             "help": "Sample format of the mixdown. 32-bit float is not valid for FLAC; ignored for MP3."
           }
