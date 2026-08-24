@@ -22,13 +22,26 @@ enum SongDigest {
     /// Callers treat that as "no analysis" and say so in their own words
     /// rather than sending the model an empty list to reason about.
     static func text(payload: AnalysisPayload?, title: String? = nil,
-                     durationS: Double? = nil, prompt: String? = nil) -> String {
+                     durationS: Double? = nil, prompt: String? = nil,
+                     descriptions: [String] = [], tags: [String] = []) -> String {
         var lines: [String] = []
         if let title, !title.isEmpty {
             lines.append("Title: \(title)")
         }
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("It was made from this description: \(prompt)")
+        }
+        // What a listening model wrote about the track, when one has — the
+        // one line in this digest that comes from the audio itself rather
+        // than from measurements, and the closest the assistant gets to
+        // hearing anything. First description only: a small model reasons
+        // from one good sentence better than from three that disagree.
+        if let heard = descriptions.first?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !heard.isEmpty {
+            lines.append("A model that listened to it wrote: \(heard)")
+        }
+        if !tags.isEmpty {
+            lines.append("Tags: \(tags.joined(separator: ", "))")
         }
         let seconds = durationS ?? payload?.durationS
         if let seconds, seconds > 0 {
@@ -96,10 +109,18 @@ enum SongDigest {
     /// answer far more often than naming whichever third won by a point.
     static func balance(_ bands: [Double]) -> String {
         guard bands.count >= 3 else { return "even across the range" }
+        // Per-band averages, not bucket sums: the middle bucket holds more
+        // bands than the outer two (4 of 8, against 2 and 2), so summing
+        // called a perfectly even mix "mid-focused" — the middle won by
+        // having more members, not more energy.
         let third = bands.count / 3
-        let low = bands.prefix(third).reduce(0, +)
-        let high = bands.suffix(third).reduce(0, +)
-        let mid = max(0, bands.reduce(0, +) - low - high)
+        let low = bands.prefix(third).reduce(0, +) / Double(third)
+        let high = bands.suffix(third).reduce(0, +) / Double(third)
+        let midCount = bands.count - 2 * third
+        let mid = max(0, bands.reduce(0, +)
+                         - bands.prefix(third).reduce(0, +)
+                         - bands.suffix(third).reduce(0, +))
+            / Double(midCount)
         let spread = max(low, max(mid, high)) - min(low, min(mid, high))
         if spread < 0.12 { return "evenly balanced across the range" }
         if low >= mid && low >= high { return "bass-heavy, weighted low" }

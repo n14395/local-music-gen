@@ -525,7 +525,7 @@ struct SettingsView: View {
     }
 
     private func analysisGroup(_ settings: Bindable<AppSettings>) -> some View {
-        SettingsGroup("AUTOMATIC ANALYSIS & SPLITTING") {
+        SettingsGroup("WHEN NEW AUDIO LANDS") {
             SettingsToggleRow(
                 title: "Analyze new audio automatically",
                 detail: "Runs a quick tempo/key/beats pass on every track that "
@@ -540,6 +540,59 @@ struct SettingsView: View {
                                 task: "analyze",
                                 automaticLabel: "Automatic") {
                         env.settings.analyzerModelId = $0
+                    }
+                }
+            }
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Describe new audio automatically",
+                detail: "Has a model listen to every new track and write a "
+                    + "description onto it. Off by default: describers are "
+                    + "language models, and one large enough to be good "
+                    + "unloads the music model between renders.",
+                isOn: settings.autoDescribe)
+            if env.settings.autoDescribe {
+                SettingsDivider()
+                SettingsRow(title: "Describer", alignment: .center) {
+                    modelPicker(selection: env.settings.describerModelId,
+                                task: "caption",
+                                automaticLabel: "Automatic") {
+                        env.settings.describerModelId = $0
+                    }
+                }
+            }
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Tag new audio automatically",
+                detail: "Scores every new track against genre, mood and "
+                    + "instrument vocabularies, and adds the confident "
+                    + "labels to its tags. Nothing you typed is removed.",
+                isOn: settings.autoTagScan)
+            if env.settings.autoTagScan {
+                SettingsDivider()
+                SettingsRow(title: "Tagger", alignment: .center) {
+                    modelPicker(selection: env.settings.taggerModelId,
+                                task: "tag",
+                                automaticLabel: "Automatic") {
+                        env.settings.taggerModelId = $0
+                    }
+                }
+            }
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Transcribe lyrics automatically",
+                detail: "Writes down the sung words of every new track as "
+                    + "their own attributed text, with timings. The song's "
+                    + "own lyrics field — what a generator was given — is "
+                    + "never touched.",
+                isOn: settings.autoLyrics)
+            if env.settings.autoLyrics {
+                SettingsDivider()
+                SettingsRow(title: "Lyric transcriber", alignment: .center) {
+                    modelPicker(selection: env.settings.lyricsTranscriberModelId,
+                                task: "lyrics",
+                                automaticLabel: "Automatic") {
+                        env.settings.lyricsTranscriberModelId = $0
                     }
                 }
             }

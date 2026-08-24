@@ -31,6 +31,11 @@ struct AssistantActionView: View {
     let onOpenAction: (String, String?) -> Void
     let onBack: () -> Void
 
+    /// Ambient, optional — see `TextDocsSection`. When present, what a
+    /// listening model wrote about the source joins the digest, which is the
+    /// closest this page's small LLM ever gets to hearing the track.
+    @Environment(TextStore.self) private var textStore: TextStore?
+
     @State private var source: PickedMaterial?
     @State private var choosing = false
     /// What the user typed, whatever this kind calls it.
@@ -262,10 +267,15 @@ struct AssistantActionView: View {
 
     private var sourceDigest: String {
         guard let source else { return "" }
+        let described = (textStore?.docs(for: source.id) ?? [])
+            .filter { $0.kindValue == .description || $0.kindValue == .caption }
+            .map(\.text)
         return SongDigest.text(payload: analysisPayload,
                                title: source.name,
                                durationS: source.durationS,
-                               prompt: sourcePrompt)
+                               prompt: sourcePrompt,
+                               descriptions: described,
+                               tags: library.tags(for: source.songId))
     }
 
     private var analysisPayload: AnalysisPayload? {

@@ -25,6 +25,27 @@ enum JobContext {
     /// by itself — what happens to it (replace a file in place, save a copy,
     /// become a snippet) is the Editor's decision, made in `onEditorArtifact`.
     case editor(purpose: EditorRenderPurpose)
+    /// A music-to-text job (caption / lyrics / tag) whose result becomes a
+    /// text document on `ownerId`. Read-once text jobs — a caption shown on a
+    /// page and thrown away — run through `MetaJobRunner` instead and never
+    /// carry a context; this case exists precisely for the results that
+    /// become library rows and must land with nobody watching (auto-runs,
+    /// pipeline stages, a page the user has already left).
+    case text(TextJobContext)
+}
+
+/// Where a text-producing job's words belong. A struct rather than loose
+/// associated values so the three context switches stay one-line arms.
+struct TextJobContext {
+    var ownerId: String
+    var ownerType: String         // "song" | "part"
+    var title: String             // what the queue row calls the source
+    var kind: TextDocKind         // the doc kind to write — authoritative
+                                  // over the payload's own `kind`
+    /// Merge the payload's tags into the song's tag records (tag jobs).
+    var applyTags = false
+    /// The question a QA caption asked, echoed onto the stored doc.
+    var question: String?
 }
 
 /// Why the Editor submitted a mix, carried through the queue so completion
@@ -278,6 +299,9 @@ final class JobsStore {
     var modelName: (String) -> String = { $0 }
     var onSongsIngested: ([SongRecord]) -> Void = { _ in }
     var onPartsIngested: ([PartRecord]) -> Void = { _ in }
+    /// Text documents that just landed (descriptions, lyrics, tags, ABC).
+    /// Single-assignment like its two siblings — AppEnvironment owns it.
+    var onTextIngested: ([TextDocRecord]) -> Void = { _ in }
     /// A finished Editor render, with why it was made. The audio artifact's
     /// file still sits in the engine's Outputs directory; the handler moves
     /// it, or the engine's retention sweep collects it eventually.
@@ -422,6 +446,77 @@ final class JobsStore {
                               title: title))
     }
 
+    /// Describe a song or part in prose (task "caption") and keep the words
+    /// as a text document. `question` turns it into QA on models that take
+    /// one. Pages that only want to *show* a caption go through
+    /// `MetaJobRunner` instead — this path is for words that become rows.
+    @discardableResult
+    func submitCaption(modelId: String, ownerId: String, ownerType: String,
+                       title: String, sourceURL: URL,
+                       kind: TextDocKind = .description,
+                       question: String? = nil,
+                       params: [String: JSONValue] = [:]) async -> JobsCreated? {
+        var params = params
+        if let question, !question.isEmpty {
+            params["question"] = .string(question)
+        }
+        return await submitTask(
+            "caption", modelId: modelId, sourceURL: sourceURL, params: params,
+            context: .text(TextJobContext(
+                ownerId: ownerId, ownerType: ownerType, title: title,
+                kind: kind, question: question)))
+    }
+
+    /// Transcribe the sung words (task "lyrics") into a lyrics document with
+    /// timed segments. Never touches `song.lyrics` — that column is what the
+    /// generator was given, and a transcription is a different fact.
+    @discardableResult
+    func submitLyrics(modelId: String, ownerId: String, ownerType: String,
+                      title: String, sourceURL: URL,
+                      language: String? = nil) async -> JobsCreated? {
+        var params: [String: JSONValue] = [:]
+        if let language, !language.isEmpty {
+            params["language"] = .string(language)
+        }
+        return await submitTask(
+            "lyrics", modelId: modelId, sourceURL: sourceURL, params: params,
+            context: .text(TextJobContext(
+                ownerId: ownerId, ownerType: ownerType, title: title,
+                kind: .lyrics)))
+    }
+
+    /// Tag a song's genre / mood / instrumentation (task "tag"). The labels
+    /// merge into the same tag records the user edits by hand, and the full
+    /// scored list is kept as a tags document.
+    @discardableResult
+    func submitTag(modelId: String, ownerId: String, ownerType: String,
+                   title: String, sourceURL: URL,
+                   params: [String: JSONValue] = [:]) async -> JobsCreated? {
+        await submitTask(
+            "tag", modelId: modelId, sourceURL: sourceURL, params: params,
+            context: .text(TextJobContext(
+                ownerId: ownerId, ownerType: ownerType, title: title,
+                kind: .tags, applyTags: ownerType == "song")))
+    }
+
+    /// Compose from notation (task "compose"): ABC text in, ABC + midi out.
+    ///
+    /// The midi artifact lands as a notes part of `songId` through the same
+    /// `.split` routing every transcription uses, and the ABC text rides the
+    /// split arm's text case — zero ingest code of its own. No audio upload:
+    /// the model's input is the string param `prompt` (contract 5.4).
+    @discardableResult
+    func submitComposeABC(modelId: String, abc: String, songId: String,
+                          sourceTitle: String,
+                          params: [String: JSONValue] = [:]) async
+        -> JobsCreated? {
+        var params = params
+        params["prompt"] = .string(abc)
+        return await submitTextOnlyTask(
+            "compose", modelId: modelId, params: params,
+            context: .split(songId: songId, sourceTitle: sourceTitle))
+    }
+
     /// Resolved material for one ingredient: the payload file plus its stored
     /// musical profile. `partId` may name a part or a whole library song.
     struct ResolvedIngredient {
@@ -552,10 +647,15 @@ final class JobsStore {
 
     /// Literal recombination (task "mix"): resolve ingredients, plan the
     /// auto-match against the target grid, upload payloads, build mix_spec.
+    ///
+    /// `context` overrides where the result lands — the default is a new
+    /// recombined library song; section slicing passes `.generativePart` so
+    /// each cut lands as a part of the song it was cut from.
     @discardableResult
     func submitRecombine(modelId: String, recipeId: String?, title: String,
                          ingredients: [IngredientSubmission],
-                         options: RecombineOptions = RecombineOptions())
+                         options: RecombineOptions = RecombineOptions(),
+                         context: JobContext? = nil)
         async -> JobsCreated? {
         guard let client else { return nil }
         let resolved = ingredients.compactMap(resolveIngredient)
@@ -595,7 +695,7 @@ final class JobsStore {
                 durationS: 0, count: 1, params: params, force: false))
             lastError = nil
             for ref in created.jobs {
-                pendingContext[ref.jobId] = .recombine(
+                pendingContext[ref.jobId] = context ?? .recombine(
                     recipeId: recipeId, title: title, applied: applied)
                 await track(jobId: ref.jobId)
             }
@@ -737,6 +837,30 @@ final class JobsStore {
         }
     }
 
+    /// `submitTask` without the upload, for the tasks whose input is already
+    /// in `params` (compose's `prompt`). A sibling rather than an optional
+    /// sourceURL on `submitTask`, because "forgot to pass the source" must
+    /// stay a compile error on every task that needs one.
+    private func submitTextOnlyTask(_ task: String, modelId: String,
+                                    params: [String: JSONValue],
+                                    context: JobContext) async -> JobsCreated? {
+        guard let client else { return nil }
+        do {
+            let created = try await client.submit(JobSubmission(
+                modelIds: [modelId], task: task, prompt: "", lyrics: nil,
+                durationS: 0, count: 1, params: params, force: false))
+            lastError = nil
+            for ref in created.jobs {
+                pendingContext[ref.jobId] = context
+                await track(jobId: ref.jobId)
+            }
+            return created
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     private func submitTask(_ task: String, modelId: String, sourceURL: URL,
                             params: [String: JSONValue],
                             inputKey: String = "source_audio",
@@ -779,6 +903,14 @@ final class JobsStore {
                 ? "Transcribe: \(sourceTitle)" : "Split: \(sourceTitle)"
         case .analyze(_, _, let title):
             return "Analyze: \(title)"
+        case .text(let context):
+            switch context.kind {
+            case .description, .caption: return "Describe: \(context.title)"
+            case .qa: return "Ask: \(context.title)"
+            case .lyrics: return "Lyrics: \(context.title)"
+            case .tags: return "Tag: \(context.title)"
+            case .abc: return "ABC: \(context.title)"
+            }
         case .recombine(_, let title, _):
             return title
         case .generativePart(_, let sourceTitle, _, let name):
@@ -815,9 +947,9 @@ final class JobsStore {
         case .recombine(_, let title, _): return title
         case .generativePart(_, _, _, let name): return name
         case .editor(let purpose): return purpose.title
-        // Neither produces a library song: a split makes parts, an analysis
-        // makes a row of numbers.
-        case .split, .analyze, .none: return nil
+        // None of these produce a library song: a split makes parts, an
+        // analysis makes a row of numbers, a text job makes a document.
+        case .split, .analyze, .text, .none: return nil
         }
     }
 
@@ -1290,6 +1422,13 @@ final class JobsStore {
             active[jobId]?.progress = nil
             onPartsIngested([])   // refresh part badges with the new analysis
             return
+        case .text(let textContext):
+            let docs = ingestText(artifacts, context: textContext, job: job,
+                                  result: result, repo: partsRepo)
+            active[jobId]?.status = .succeeded
+            active[jobId]?.progress = nil
+            onTextIngested(docs)
+            return
         case .recombine(let recipeId, let title, let applied):
             ingestRecombine(job: job, result: result, recipeId: recipeId,
                             title: title, applied: applied, repo: partsRepo)
@@ -1348,6 +1487,7 @@ final class JobsStore {
         let songTitle = ((try? repo.song(id: songId)) ?? nil)?.title ?? ""
 
         var parts: [PartRecord] = []
+        var textDocs: [TextDocRecord] = []
         for artifact in artifacts {
             switch artifact.kind {
             case "stem", "midi":
@@ -1398,6 +1538,18 @@ final class JobsStore {
                 ingestAnalysis([artifact], ownerId: songId, ownerType: "song",
                                modelId: job.modelId, repo: partsRepo,
                                meta: result.meta)
+            case "text":
+                // A transcribe run with emit_abc writes each track's notation
+                // beside its midi ("abc:<label>"); a compose lands its ABC
+                // beside the composition midi. Either way the words belong on
+                // the source song as an "abc" document — this arm is the
+                // entire ingest story for extracted notation.
+                textDocs += ingestText(
+                    [artifact],
+                    context: TextJobContext(
+                        ownerId: songId, ownerType: "song",
+                        title: songTitle, kind: .abc),
+                    job: job, result: result, repo: partsRepo)
             default:
                 break   // audio artifacts (recombine output) land in SR2
             }
@@ -1414,6 +1566,7 @@ final class JobsStore {
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
         onPartsIngested(parts)
+        if !textDocs.isEmpty { onTextIngested(textDocs) }
     }
 
     /// A finished mix: the mixdown becomes a library song (origin
@@ -1505,6 +1658,110 @@ final class JobsStore {
         record(songs, for: jobId)
         onSongsIngested(songs)
         if !parts.isEmpty { onPartsIngested(parts) }
+    }
+
+    /// Land `text` artifacts as documents on the context's owner.
+    ///
+    /// The context's `kind` is authoritative — the payload's own `kind` is
+    /// advisory (a captioner asked to describe writes "caption" whether the
+    /// result is bound for a description slot or not). Empty text inserts
+    /// nothing: an instrumental transcribed for lyrics is a model that heard
+    /// no words, not a failure worth a blank row. The artifact file is
+    /// deleted after decode, like an analysis artifact.
+    private func ingestText(_ artifacts: [JobArtifact],
+                            context: TextJobContext, job: JobInfo,
+                            result: JobResult,
+                            repo: PartsRepository) -> [TextDocRecord] {
+        var docs: [TextDocRecord] = []
+        for artifact in artifacts where artifact.kind == "text" {
+            let url = URL(fileURLWithPath: artifact.path)
+            var payload: TextPayload?
+            if let data = try? Data(contentsOf: url) {
+                payload = try? BackendClient.decoder.decode(
+                    TextPayload.self, from: data)
+                try? FileManager.default.removeItem(at: url)
+            }
+            if payload == nil, let metaText = result.meta?["text"],
+               let data = try? BackendClient.encoder.encode(metaText) {
+                // The payload also rides result.meta (contract 5.4) — the
+                // same fallback ingestAnalysis makes for headline numbers.
+                payload = try? BackendClient.decoder.decode(
+                    TextPayload.self, from: data)
+            }
+            guard let payload else { continue }
+            guard let doc = Self.textDoc(from: payload, context: context,
+                                         modelId: job.modelId,
+                                         modelName: modelName(job.modelId),
+                                         jobId: job.jobId) else { continue }
+            do {
+                try repo.insertTextDoc(doc)
+                docs.append(doc)
+            } catch {
+                lastError = "Could not save text: \(error.localizedDescription)"
+                continue
+            }
+            if context.applyTags, context.ownerType == "song" {
+                applyTags(payload.tags ?? [], songId: context.ownerId)
+            }
+        }
+        return docs
+    }
+
+    /// Build the stored document for one payload, or nil when there is
+    /// nothing worth storing. Internal (not private) for tests, like
+    /// `ingestGenerate`.
+    static func textDoc(from payload: TextPayload, context: TextJobContext,
+                        modelId: String, modelName: String,
+                        jobId: String?) -> TextDocRecord? {
+        let text: String
+        if context.kind == .tags {
+            // A tags document's text is its labels, one per line — readable
+            // in any slot that shows it, and searchable like the rest.
+            text = (payload.tags ?? []).map(\.label)
+                .joined(separator: "\n")
+        } else {
+            text = (payload.text ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !text.isEmpty else { return nil }
+        let segmentsJSON = payload.segments.flatMap { segments -> String? in
+            guard !segments.isEmpty,
+                  let data = try? JSONEncoder().encode(segments)
+            else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+        return TextDocRecord(
+            id: UUID().uuidString.lowercased(),
+            ownerId: context.ownerId, ownerType: context.ownerType,
+            kind: context.kind.rawValue, text: text,
+            segmentsJSON: segmentsJSON,
+            question: context.question ?? payload.question,
+            language: payload.language,
+            modelId: modelId, modelName: modelName, jobId: jobId,
+            edited: false, createdAt: Date(), updatedAt: Date())
+    }
+
+    /// Merge model tags into the song's own tag records — the same rows the
+    /// user edits by hand, so the labels are findable exactly where typed
+    /// ones are. Union, capped: a tagger's fifteenth-best guess is noise,
+    /// and nothing the user already chose is ever removed.
+    private func applyTags(_ tags: [TextPayload.Tag], songId: String) {
+        let confident = tags
+            .filter { ($0.score ?? 1.0) >= 0.35 }
+            .prefix(6)
+            .map { $0.label.lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !confident.isEmpty else { return }
+        let existing = (try? repo.tags(for: songId)) ?? []
+        var merged = existing
+        for label in confident where !merged.contains(where: {
+            $0.caseInsensitiveCompare(label) == .orderedSame
+        }) {
+            merged.append(label)
+        }
+        guard merged != existing else { return }
+        try? repo.setTags(merged, for: songId)
     }
 
     private func ingestAnalysis(_ artifacts: [JobArtifact], ownerId: String,

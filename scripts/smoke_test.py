@@ -76,7 +76,8 @@ def main() -> int:
                     help="generate-path audio param key=path — uploads the "
                          "file and passes its upload id (repeatable)")
     ap.add_argument("--task", default=None,
-                    choices=["separate", "analyze", "transcribe", "render"],
+                    choices=["separate", "analyze", "transcribe", "render",
+                             "caption", "lyrics", "tag", "compose"],
                     help="run a task job on --input instead of generating")
     ap.add_argument("--input", default=None,
                     help="source file for task jobs (audio; a .mid for render)")
@@ -165,17 +166,26 @@ def main() -> int:
                 return report()
 
         if args.task:
-            if not args.input or not os.path.exists(args.input):
-                check("task jobs need an existing --input file", False)
-                return report()
-            with open(args.input, "rb") as f:
-                data = f.read()
-            status, up = c.req_raw(
-                "POST", f"/v1/uploads?filename={os.path.basename(args.input)}",
-                data)
-            check("input uploaded", status == 201 and "upload_id" in up)
-            input_key = "midi_file" if args.task == "render" else "source_audio"
-            params: dict = {input_key: up["upload_id"]}
+            params: dict = {}
+            if args.task == "compose":
+                # compose is text-in: its input is the string param `prompt`
+                # (the top-level prompt field is not forwarded to task
+                # workers), so there is nothing to upload
+                params["prompt"] = args.prompt
+            else:
+                if not args.input or not os.path.exists(args.input):
+                    check("task jobs need an existing --input file", False)
+                    return report()
+                with open(args.input, "rb") as f:
+                    data = f.read()
+                status, up = c.req_raw(
+                    "POST",
+                    f"/v1/uploads?filename={os.path.basename(args.input)}",
+                    data)
+                check("input uploaded", status == 201 and "upload_id" in up)
+                input_key = ("midi_file" if args.task == "render"
+                             else "source_audio")
+                params[input_key] = up["upload_id"]
             for kv in args.param:
                 k, _, v = kv.partition("=")
                 try:
@@ -281,7 +291,7 @@ def main() -> int:
             arts = (job.get("result") or {}).get("artifacts") or []
             check("artifacts reported", len(arts) >= 1,
                   str([(a.get("kind"), a.get("label")) for a in arts]))
-            in_dur, _ = wav_stats(args.input)
+            in_dur = wav_stats(args.input)[0] if args.input else None
             if args.task == "separate":
                 stems = [a for a in arts if a["kind"] == "stem"]
                 check("at least 2 stems", len(stems) >= 2,
@@ -361,6 +371,62 @@ def main() -> int:
                         check("512-dim unit CLAP embedding present",
                               len(vec) == 512 and abs(norm - 1.0) < 0.01,
                               f"len={len(vec)} norm={norm:.3f}")
+                    if "prompt_text" in (body.get("params") or {}):
+                        score = payload.get("clap_prompt_score")
+                        check("clap_prompt_score present and in range",
+                              isinstance(score, (int, float))
+                              and -1.0 <= score <= 1.0, str(score))
+                        check("clap_prompt echoes the scored text",
+                              payload.get("clap_prompt")
+                              == body["params"]["prompt_text"])
+            elif args.task in ("caption", "lyrics", "tag"):
+                txt = next((a for a in arts if a["kind"] == "text"), None)
+                check("text artifact present", txt is not None,
+                      str([(a.get("kind"), a.get("label")) for a in arts]))
+                if txt:
+                    payload = json.load(open(txt["path"]))
+                    meta = (job.get("result") or {}).get("meta") or {}
+                    check("meta mirrors the payload",
+                          meta.get("text") == payload)
+                    if args.task == "caption":
+                        check("caption text non-empty",
+                              bool(str(payload.get("text") or "").strip()))
+                        print(f"  caption: {payload.get('text')!r}")
+                    elif args.task == "lyrics":
+                        segs = payload.get("segments") or []
+                        check("segments timed and monotonic",
+                              all(s["start_s"] < s["end_s"] for s in segs)
+                              and all(a["end_s"] <= b["start_s"] for a, b
+                                      in zip(segs, segs[1:])), str(segs[:3]))
+                        print(f"  lyrics ({payload.get('language')}): "
+                              f"{len(segs)} segments")
+                    else:  # tag
+                        tags = payload.get("tags") or []
+                        check("tags present", bool(tags))
+                        check("tag scores in [0,1] where given",
+                              all(0.0 <= t["score"] <= 1.0 for t in tags
+                                  if t.get("score") is not None), str(tags))
+                        print("  tags: " + ", ".join(
+                            t["label"] for t in tags))
+            elif args.task == "compose":
+                txt = next((a for a in arts if a["kind"] == "text"), None)
+                midi = next((a for a in arts if a["kind"] == "midi"), None)
+                check("ABC text artifact present", txt is not None)
+                if txt:
+                    payload = json.load(open(txt["path"]))
+                    abc = str(payload.get("text") or "")
+                    check("ABC starts with a tune header (X:)",
+                          abc.lstrip().startswith("X:"), abc[:40])
+                    print(f"  abc: {len(abc)} chars")
+                meta = (job.get("result") or {}).get("meta") or {}
+                if midi is None:
+                    # legal degradation: unparseable ABC ships text-only
+                    check("midi absent only with meta.midi_error",
+                          bool(meta.get("midi_error")), str(meta))
+                else:
+                    with open(midi["path"], "rb") as f:
+                        check("composition midi parses",
+                              f.read(4) == b"MThd")
             return report()
 
         outputs = job.get("result", {}).get("outputs", [])

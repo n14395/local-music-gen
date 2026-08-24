@@ -67,7 +67,24 @@ enum ModelActions {
             return tasks.contains("assist")
         case .songPlan:
             return tasks.contains("plan")
-        case .workbench, .match, .editor:
+        case .textAction(let action):
+            return tasks.contains(action.task)
+        case .textCompare:
+            // Any describer is a candidate for a comparison; needing two of
+            // them is a fact about the machine, as with `.compareModels`.
+            return tasks.contains("caption")
+        case .textPipeline(let kind):
+            // A model that runs *any* stage of the pipeline makes the card
+            // more possible — the same reading `.styleTransfer` gives its
+            // chain. Generators are deliberately not counted: every one of
+            // them would claim the telephone card, which says nothing.
+            return kind.requiredTasks.contains { tasks.contains($0) }
+        case .promptScore:
+            // Only the CLAP-equipped analyzer can score a prompt, and the
+            // param is the honest test for it, as with `.mix` above.
+            return tasks.contains("analyze")
+                && capabilities.params.contains { $0.key == "prompt_text" }
+        case .workbench, .match, .editor, .mapSections, .similar:
             return false
         }
     }

@@ -82,7 +82,8 @@ final class GeneratePresetTests: XCTestCase {
     /// is the test that fails first instead.
     func testEveryGenerateCardHasItsPreset() {
         for recipe in RecipeCatalog.all
-        where recipe.category == .generate && recipe.id != "gen-compare-models" {
+        where recipe.category == .generate && recipe.id != "gen-compare-models"
+            && !recipe.isPlanCard {
             guard case .generate(let preset) = recipe.engine else {
                 XCTFail("\(recipe.id) is on the Generate shelf with a "
                         + "\(recipe.engine) engine")
@@ -110,13 +111,30 @@ final class GeneratePresetTests: XCTestCase {
 
     /// The shelf's whole premise: these start from a sentence. A slot would be
     /// a source picker with nothing to pick.
+    ///
+    /// The plan cards are the exception the premise allows for: two of them
+    /// read a *finished* take to show (or re-render) the plan behind it, which
+    /// is material they genuinely use.
     func testGenerateCardsCarryNoSourceExceptTheOneThatMeasuresOne() {
-        for recipe in RecipeCatalog.all where recipe.category == .generate {
+        for recipe in RecipeCatalog.all
+        where recipe.category == .generate && !recipe.isPlanCard {
             if recipe.id == "gen-fit-track" {
                 XCTAssertEqual(recipe.slots.count, 1)
             } else {
                 XCTAssertTrue(recipe.slots.isEmpty,
                               "\(recipe.id) asks for material it cannot use")
+            }
+        }
+    }
+
+    /// The plan cards that read a take read a whole song, never a stem: a
+    /// plan belongs to the take it rendered, and a stem cut out of one
+    /// afterwards has none of its own.
+    func testPlanCardsThatReadATakeTakeOnlySongs() {
+        for recipe in RecipeCatalog.all where recipe.isPlanCard {
+            for slot in recipe.slots {
+                XCTAssertEqual(slot.accepts,
+                               [KindPattern(pattern: "song.mix")], recipe.id)
             }
         }
     }
@@ -253,12 +271,21 @@ final class TrackTransformTests: XCTestCase {
         XCTAssertEqual(seen, Set(TrackTransform.allCases))
     }
 
-    /// The two specialists exist and are preferred by name. A typo here is a
-    /// card that silently opens on the general transcriber — which works, and
-    /// is wrong, and says nothing.
+    /// The specialists exist and are preferred by name. A typo here is a card
+    /// that silently opens on the general transcriber — which works, and is
+    /// wrong, and says nothing.
+    ///
+    /// Pinned rather than derived because the catalog is not visible from the
+    /// app's tests; `scripts/verify_engine.py` cross-checks the same ids
+    /// against `models.json`, which is where a typo can actually be caught.
+    /// The three music-to-text ids are named here before their catalog
+    /// entries ship — a card whose favourite is not installed opens on
+    /// whatever else can do the job, which is the documented behaviour.
     func testTheSpecialistCardsNameRealModels() {
         let preferred = RecipeCatalog.all.flatMap(\.prefersModelIds)
         XCTAssertEqual(Set(preferred),
-                       ["transcribe-swiftf0", "transcribe-transkun"])
+                       ["transcribe-swiftf0", "transcribe-transkun",
+                        "transcribe-basicpitch", "caption-lpmusiccaps",
+                        "tag-clap", "lyrics-whisper-turbo"])
     }
 }

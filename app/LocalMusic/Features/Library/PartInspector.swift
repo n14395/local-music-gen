@@ -81,6 +81,10 @@ struct PartInspector: View {
                     metadata
                         .padding(.horizontal, 20)
 
+                    TextDocsSection(ownerId: part.id, ownerType: "part",
+                                    playback: playback, onDescribe: nil)
+                        .padding(.horizontal, 20).padding(.top, 12)
+
                     if !siblings.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("SIBLING PARTS").eyebrow()

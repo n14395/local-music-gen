@@ -246,11 +246,38 @@ def check_catalog_curation() -> None:
           not strays, f"variants marked featured: {strays}")
 
     # A task with no featured model is a feature the user cannot discover.
-    tasks = ["generate", "analyze", "separate", "transcribe", "mix", "render"]
+    # ("plan" is deliberately absent: it rides the featured generate models.
+    # The music-to-text tasks — tag, lyrics, caption, compose — join this
+    # list one by one, in the same change that lands each task's featured
+    # catalog entry, so the check never fails against work not yet done.)
+    tasks = ["generate", "analyze", "separate", "transcribe", "mix", "render",
+             "assist", "tag", "lyrics", "caption", "compose"]
     covered = {t for m in featured
                for t in (m["capabilities"].get("tasks") or ["generate"])}
     check("every task has at least one featured model",
           set(tasks) <= covered, f"uncovered: {sorted(set(tasks) - covered)}")
+
+    # Cards name their preferred model by id (`prefersModelIds`). A typo there
+    # is invisible at run time — the card opens on whatever else can do the
+    # job — so it is checked here, against the catalog, which the app's own
+    # tests cannot see. Ids for models that have not shipped yet are listed in
+    # PENDING_PREFERRED and expected to be absent; a pending id that turns up
+    # in the catalog should be taken off the list.
+    PENDING_PREFERRED: set[str] = set()
+    recipe_src = open(os.path.join(ROOT, "app", "LocalMusic", "Features",
+                                   "SplitRecombine",
+                                   "RecipeCatalog.swift")).read()
+    preferred: list[str] = []
+    for block in re.findall(r"prefersModelIds: \[(.*?)\]", recipe_src, re.S):
+        preferred += re.findall(r'"([^"]+)"', block)
+    unknown = [i for i in preferred
+               if i not in by_id and i not in PENDING_PREFERRED]
+    check("every card's preferred model exists in the catalog",
+          not unknown, f"unknown ids: {unknown}")
+    arrived = sorted(PENDING_PREFERRED & set(by_id))
+    check("no pending preferred id has quietly shipped",
+          not arrived,
+          f"now in the catalog, remove from PENDING_PREFERRED: {arrived}")
 
     # The first-run sheet installs by id; a renamed catalog entry would silently
     # drop a model from onboarding rather than fail anywhere visible.

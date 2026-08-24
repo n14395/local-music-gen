@@ -7,6 +7,7 @@ immediately."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -132,8 +133,35 @@ class TranscriptionAdapter(ModelAdapter):
                 kind="audio", label=f"preview:{label}", path=wav_path,
                 format="wav", sample_rate=PREVIEW_SR,
                 duration_s=round(len(audio) / PREVIEW_SR, 3)))
-        return TaskResult(artifacts=artifacts,
-                          meta={"engine": engine, "tracks": note_counts})
+        meta = {"engine": engine, "tracks": note_counts}
+        if params.get("emit_abc"):
+            # One text artifact per note track, labeled to pair with its midi
+            # the way `preview:<label>` does. Written after the previews so a
+            # notation failure can never cost the audio you can already hear.
+            progress_cb(0.96, "writing notation (ABC)")
+            from .abc_out import midi_to_abc
+
+            wrote = []
+            for label, midi_path, _notes in midis:
+                abc = midi_to_abc(midi_path, title=label)
+                if not abc:
+                    continue
+                payload = {"text_version": 1, "kind": "abc", "text": abc,
+                           "model": self.model_id, "engine": engine}
+                path = os.path.join(out_dir, f"abc-{_safe(label)}.json")
+                tmp = path + ".part"
+                with open(tmp, "w") as f:
+                    json.dump(payload, f, ensure_ascii=False)
+                os.replace(tmp, path)
+                artifacts.append(Artifact(kind="text", label=f"abc:{label}",
+                                          path=path, format="json"))
+                wrote.append(label)
+            meta["abc_tracks"] = wrote
+            if not wrote:
+                # Legal and worth saying: music21 could make nothing of these
+                # notes, and the job still succeeded with the midi it cut.
+                meta["abc_error"] = ("no track could be written as notation")
+        return TaskResult(artifacts=artifacts, meta=meta)
 
     # MARK: engines — each returns [(label, midi_path, note_count)]
 

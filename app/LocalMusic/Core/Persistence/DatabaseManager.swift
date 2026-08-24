@@ -266,6 +266,46 @@ final class DatabaseManager: Sendable {
                 t.add(column: "rating", .integer).notNull().defaults(to: 0)
             }
         }
+        // Text documents: what the music-to-text models write about a track —
+        // descriptions, transcribed lyrics, Q&A answers, tags, ABC notation —
+        // and what the user writes in the same slots by hand.
+        //
+        // One table with a `kind` column rather than one per kind, because
+        // every kind is the same shape: an owner, attributed editable text, a
+        // model, a date. "Several description slots" is simply several rows
+        // with kind "description" — which is why this is NOT a column on
+        // `song` and NOT a row in `analysis` (whose ownerId is a primary key:
+        // one row per owner, replaced on re-run — the opposite of slots).
+        //
+        // Its own FTS table rather than a rebuild of `songFts`: song-row
+        // writes keep exactly the trigger cost they have today, and the
+        // library search unions the two indexes instead. No FK on ownerId for
+        // the same reason `analysis` has none — two possible parents; cleanup
+        // rides the delete paths.
+        migrator.registerMigration("v10") { db in
+            try db.create(table: "textDoc") { t in
+                t.primaryKey("id", .text)
+                t.column("ownerId", .text).notNull().indexed()
+                t.column("ownerType", .text).notNull()   // "song" | "part"
+                // description | lyrics | caption | qa | abc | tags
+                t.column("kind", .text).notNull().indexed()
+                t.column("text", .text).notNull()
+                t.column("segmentsJSON", .text)          // timed lyric lines
+                t.column("question", .text)              // what a QA doc asked
+                t.column("language", .text)
+                t.column("modelId", .text).notNull()     // "" = user-written
+                t.column("modelName", .text).notNull()   // "You" when written
+                t.column("jobId", .text)
+                t.column("edited", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull().indexed()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(virtualTable: "textDocFts", using: FTS5()) { t in
+                t.synchronize(withTable: "textDoc")
+                t.column("text")
+                t.column("question")
+            }
+        }
         return migrator
     }
 }

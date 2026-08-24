@@ -39,7 +39,7 @@ STARTED_AT = time.monotonic()
 
 # Mirrors the engine's closed task set (jobqueue.TASKS)
 TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
-         "assist", "plan")
+         "assist", "plan", "caption", "lyrics", "tag", "compose")
 
 # Mirrors the assistant family's closed helper set — the `kind` enum on its
 # assist task, one value per thing the app can ask the little LLM for.
@@ -471,6 +471,109 @@ def _catalog() -> dict[str, dict[str, Any]]:
                                "Qwen2.5-1.5B-Instruct-4bit"},
             "notes": "Task model: writing help.",
         },
+        {
+            # Caption fixture: audio in, prose out. Dual-task on purpose —
+            # the text-model analogue of separation-stub's separate+analyze,
+            # so the app's task filtering is exercised against a model that
+            # declares more than one text verb.
+            "id": "caption-stub",
+            "family": "captioning",
+            "display_name": "Describer (stub)",
+            "description": "Listens to audio and writes prose about it",
+            "hf_repos": [],
+            "size_bytes": 500_000_000,
+            "capabilities": {
+                "supports_lyrics": False,
+                "instrumental_only": True,
+                "duration": {"min_s": 1, "max_s": 1, "default_s": 1},
+                "sample_rate": 44100,
+                "outputs_per_job_max": 1,
+                "est_seconds_per_audio_second": 0,
+                "tasks": ["caption", "tag"],
+                "est_realtime_factor": 0.05,
+                "params": [
+                    spec("source_audio", "audio", "Audio", None,
+                         nullable=False),
+                    spec("question", "string", "Question", None,
+                         nullable=True),
+                    spec("max_tokens", "int", "Length limit", 256,
+                         min=32, max=1024, internal=True),
+                    spec("temperature", "float", "Variety", 0.7,
+                         min=0.1, max=1.5, step=0.05),
+                ],
+            },
+            "requirements": {"min_ram_bytes": 4 << 30,
+                             "disk_bytes": 500_000_000, "speed_tier": "fast"},
+            "license": {"name": "Apache-2.0", "commercial_use": True,
+                        "requires_hf_token": False, "url": None},
+            "notes": "Task model: captions.",
+        },
+        {
+            # Lyrics fixture: whisper-class transcriber with timed segments.
+            "id": "lyrics-stub",
+            "family": "mlxstt",
+            "display_name": "Lyric transcriber (stub)",
+            "description": "Writes down the sung words with timings",
+            "hf_repos": [],
+            "size_bytes": 800_000_000,
+            "capabilities": {
+                "supports_lyrics": False,
+                "instrumental_only": True,
+                "duration": {"min_s": 1, "max_s": 1, "default_s": 1},
+                "sample_rate": 44100,
+                "outputs_per_job_max": 1,
+                "est_seconds_per_audio_second": 0,
+                "tasks": ["lyrics"],
+                "est_realtime_factor": 0.1,
+                "params": [
+                    spec("source_audio", "audio", "Audio", None,
+                         nullable=False),
+                    spec("language", "string", "Language", None,
+                         nullable=True),
+                ],
+            },
+            "requirements": {"min_ram_bytes": 4 << 30,
+                             "disk_bytes": 800_000_000, "speed_tier": "fast"},
+            "license": {"name": "MIT", "commercial_use": True,
+                        "requires_hf_token": False, "url": None},
+            "notes": "Task model: lyrics.",
+        },
+        {
+            # Compose fixture: text/ABC in, ABC + midi out. Weightless, and
+            # its primary input is a string param — which submit validation
+            # does not presence-check, so the "adapter" (this stub) fails the
+            # job on an empty prompt exactly as the real notation worker does.
+            "id": "notation-stub",
+            "family": "notation",
+            "display_name": "Notation composer (stub)",
+            "description": "Writes ABC notation from a text idea",
+            "hf_repos": [],
+            "size_bytes": 0,
+            "capabilities": {
+                "supports_lyrics": False,
+                "instrumental_only": True,
+                "duration": {"min_s": 1, "max_s": 1, "default_s": 1},
+                "sample_rate": 44100,
+                "outputs_per_job_max": 1,
+                "est_seconds_per_audio_second": 0,
+                "tasks": ["compose"],
+                "est_realtime_factor": 0.05,
+                "params": [
+                    spec("prompt", "string", "Idea or ABC", None,
+                         nullable=True),
+                    spec("max_tokens", "int", "Length limit", 1024,
+                         min=64, max=2048, internal=True),
+                    spec("temperature", "float", "Variety", 0.7,
+                         min=0.1, max=1.5, step=0.05),
+                    *common,
+                ],
+            },
+            "requirements": {"min_ram_bytes": 2 << 30, "disk_bytes": 0,
+                             "speed_tier": "fast"},
+            "license": {"name": "MIT", "commercial_use": True,
+                        "requires_hf_token": False, "url": None},
+            "notes": "Task model: composes notation.",
+        },
     ]
     for m in models:
         m["tags"] = _derive_tags(m)
@@ -543,7 +646,7 @@ def _derive_tags(entry: dict) -> list[str]:
             tags.append("Remix & restyle")
     if "separate" in tasks:
         tags.append("Stem separation")
-    if tasks & {"transcribe", "render"}:
+    if tasks & {"transcribe", "render", "compose"}:
         tags.append("Notes & MIDI")
     if "analyze" in tasks:
         tags.append("Musical analysis")
@@ -551,6 +654,8 @@ def _derive_tags(entry: dict) -> list[str]:
         tags.append("Mixing & recombining")
     if "assist" in tasks:
         tags.append("Writing help")
+    if tasks & {"caption", "lyrics", "tag"}:
+        tags.append("Hears & describes")
     # "plan" adds no tag, deliberately: planning is a step of a generate on a
     # model installed for generating, never a reason to install one.
     return tags
@@ -1411,7 +1516,75 @@ async def make_task_artifacts(job: Job, out_dir: str,
                       "format": "json", "sample_rate": None,
                       "duration_s": None}]
         return artifacts, {"plans": plans}
+    if job.task == "caption":
+        question = job.params.get("question")
+        text = ("It sits in A minor with the hats pushed forward."
+                if question else
+                "A dreamy lo-fi hip hop beat with vinyl crackle, dusty "
+                "Rhodes chords and a lazy swung drum loop.")
+        payload = {"text_version": 1, "kind": "caption", "text": text,
+                   "question": question, "model": job.model_id,
+                   "engine": "stub"}
+        artifacts = [write_text_artifact(out_dir, "caption", payload)]
+        meta = {"text": payload, "caption_preview": text[:200]}
+        if question:
+            meta["question"] = question
+        return artifacts, meta
+    if job.task == "lyrics":
+        segments = [{"start_s": 0.0, "end_s": 2.0, "text": "la la la"},
+                    {"start_s": 2.0, "end_s": 4.0, "text": "ooh ooh"}]
+        text = "\n".join(s["text"] for s in segments)
+        payload = {"text_version": 1, "kind": "lyrics", "text": text,
+                   "language": str(job.params.get("language") or "en"),
+                   "segments": segments, "model": job.model_id,
+                   "engine": "stub"}
+        artifacts = [write_text_artifact(out_dir, "lyrics", payload)]
+        return artifacts, {"text": payload, "language": payload["language"],
+                           "segments": len(segments),
+                           "lyrics_preview": text[:200]}
+    if job.task == "tag":
+        tags = [{"label": "techno", "score": 0.83, "group": "genre"},
+                {"label": "dark", "score": 0.71, "group": "mood"},
+                {"label": "synthesizer", "score": 0.66,
+                 "group": "instrument"}]
+        payload = {"text_version": 1, "kind": "tags", "tags": tags,
+                   "model": job.model_id, "engine": "stub"}
+        artifacts = [write_text_artifact(out_dir, "tags", payload)]
+        return artifacts, {"text": payload,
+                           "top_tags": [t["label"] for t in tags]}
+    if job.task == "compose":
+        # The prompt is a string param, which submit validation does not
+        # presence-check — so the "adapter" fails the job on emptiness, as
+        # the real notation worker does.
+        idea = str(job.params.get("prompt") or "").strip()
+        if not idea:
+            raise RuntimeError("prompt missing — nothing to compose from")
+        abc = ("X:1\nT:Stub Tune\nM:4/4\nL:1/8\nK:C\n"
+               "CDEF GABc | c2 G2 E2 C2 |\n")
+        payload = {"text_version": 1, "kind": "abc", "text": abc,
+                   "model": job.model_id, "engine": "stub"}
+        artifacts = [write_text_artifact(out_dir, "abc", payload)]
+        midi_path = os.path.join(out_dir, "composition.mid")
+        with open(midi_path + ".part", "wb") as f:
+            f.write(minimal_smf())
+        os.replace(midi_path + ".part", midi_path)
+        artifacts.append({"kind": "midi", "label": "composition",
+                          "path": midi_path, "format": "mid",
+                          "sample_rate": None, "duration_s": None})
+        return artifacts, {"text": payload, "notes": 8,
+                           "abc_preview": abc[:200]}
     raise RuntimeError(f"stub has no simulation for task '{job.task}'")
+
+
+def write_text_artifact(out_dir: str, label: str, payload: dict) -> dict:
+    """One `text` artifact per contract 5.4, written complete (tmp+rename)."""
+    path = os.path.join(out_dir, f"{label}.json")
+    tmp = path + ".part"
+    with open(tmp, "w") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    os.replace(tmp, path)
+    return {"kind": "text", "label": label, "path": path, "format": "json",
+            "sample_rate": None, "duration_s": None}
 
 
 def minimal_smf() -> bytes:

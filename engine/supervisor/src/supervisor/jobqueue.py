@@ -57,8 +57,15 @@ CANCEL_POLL_S = 0.5
 # language-model half of its pipeline so the user can choose a plan before
 # paying for the render. Both still return artifacts, so nothing else in the
 # task machinery changes.
+# The four music-to-text tasks are audio in (or, for "compose", notation in),
+# text out: "caption" is prose about the audio (a `question` param turns it
+# into QA), "lyrics" is the sung words with timed segments, "tag" is
+# genre/mood/instrument labels, and "compose" writes ABC notation from a text
+# prompt — the one task whose primary input is a declared string param
+# (`params.prompt`), which submit validation does not presence-check, so its
+# adapter fails the job on an empty prompt itself.
 TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
-         "assist", "plan")
+         "assist", "plan", "caption", "lyrics", "tag", "compose")
 
 # Models at or below this run in the transient slot: never evicting the
 # resident model, never kept resident themselves. The catalog leaves a clean

@@ -184,6 +184,14 @@ final class SettingsCatalogTests: XCTestCase {
         settings.livePreview = true
         settings.autoAnalyze = false
         settings.analyzerModelId = "analysis-basic"
+        settings.autoDescribe = true
+        settings.describerModelId = "caption-lpmusiccaps"
+        settings.autoTagScan = true
+        settings.taggerModelId = "tag-clap"
+        settings.autoLyrics = true
+        settings.lyricsTranscriberModelId = "lyrics-whisper-turbo"
+        settings.assistantModelId = "assistant-qwen"
+        settings.assistantTemperature = 1.2
         settings.defaultSeparatorId = "separation-basic"
         settings.targetLufs = -9
         settings.autoMatchTempo = false

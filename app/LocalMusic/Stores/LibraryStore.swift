@@ -219,8 +219,10 @@ final class LibraryStore {
                 try? FileManager.default.removeItem(at: part.waveformURL)
                 LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash)
                 try? partsRepo.deleteAnalysis(ownerId: part.id)
+                try? partsRepo.deleteTextDocs(ownerId: part.id)
             }
             try? partsRepo.deleteAnalysis(ownerId: song.id)
+            try? partsRepo.deleteTextDocs(ownerId: song.id)
         }
         FileDisposal.dispose(song.fileURL, toTrash: toTrash)
         try? FileManager.default.removeItem(at: song.waveformURL)

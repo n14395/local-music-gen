@@ -18,6 +18,8 @@ struct ActionsScreen: View {
     let workbench: WorkbenchModel
     let assistant: AssistantStore
     let plans: PlanStore
+    let textStore: TextStore
+    let textChain: TextChainModel
     @Binding var route: Route?
     let onOpenModels: (ModelRequirement?) -> Void
     /// Switches the shell to the Workbench destination, carrying the one-off
@@ -168,6 +170,10 @@ struct ActionsScreen: View {
                 case "separate": "Get a separation model — 84 MB"
                 case "transcribe": "Get a transcription model — free"
                 case "analyze": "Get Musical analysis — 81 MB"
+                case "caption": "Get a describer model"
+                case "lyrics": "Get a lyric transcriber"
+                case "tag": "Get a tagging model"
+                case "compose": "Get a notation composer"
                 default: "Get a model for this"
                 }
             }
@@ -306,9 +312,41 @@ struct ActionsScreen: View {
                 hint: PlanModels.candidates(catalog.models).first
                     .map { "Get \($0.displayName)" }
                     ?? "No model here plans before it renders")
+        case .textAction(let action) where !installed(task: action.task):
+            return .needsTaskModel(action.task)
+        case .textCompare where installedCount(task: "caption") < 2:
+            // Two is the least that can be compared, as with .compareModels.
+            return .needsTaskModel("caption")
+        case .textPipeline(let kind):
+            if let missing = firstMissingTask(of: kind) {
+                return .needsTaskModel(missing)
+            }
+            if kind.needsGenerator && generativeInstalled.isEmpty {
+                return .needsGenerateModel(
+                    need: GenerateNeed(),
+                    hint: "Get a model that generates audio")
+            }
+            return .active
+        case .promptScore where !installed(task: "analyze"):
+            return .needsTaskModel("analyze")
+        // `.mapSections` and `.similar` stay active on purpose: both read
+        // analysis the library already holds and degrade in-page — the
+        // `.match` precedent.
         default:
             return .active
         }
+    }
+
+    /// The first wire task a pipeline needs that nothing installed can run.
+    private func firstMissingTask(of kind: TextChain.Kind) -> String? {
+        kind.requiredTasks.first { !installed(task: $0) }
+    }
+
+    private func installedCount(task: String) -> Int {
+        catalog.models.filter {
+            $0.installState == .installed
+                && $0.capabilities.supportedTasks.contains(task)
+        }.count
     }
 
     /// What a recipe needs installed, read off the recipe rather than off its
@@ -331,6 +369,18 @@ struct ActionsScreen: View {
         // verb or it does not, which is exactly what `.task` tests.
         case .assistant: .task("assist")
         case .songPlan: .task("plan")
+        case .textAction(let action): .task(action.task)
+        case .textCompare: .task("caption")
+        // The *missing* task, when one is — a card gated on its second stage
+        // (transcribe installed, compose not) should land the user on the
+        // list that actually ungates it, not on models they already have.
+        case .textPipeline(let kind):
+            .task(firstMissingTask(of: kind)
+                  ?? kind.requiredTasks.first ?? "caption")
+        case .promptScore: .task("analyze")
+        // Neither runs a model of its own: both read analysis the library
+        // already holds, like `.match`.
+        case .mapSections, .similar: nil
         // Neither runs a model: the bench is a surface, and matching is
         // ranking maths over analysis the library already holds.
         case .workbench, .match: nil
@@ -514,6 +564,48 @@ struct ActionsScreen: View {
         case .workbench:
             // `open(_:)` never routes here; the shell switches destination.
             gallery
+        case .textAction(let action):
+            TextActionView(recipe: recipe, action: action, sourceId: sourceId,
+                           settings: settings, catalog: catalog,
+                           library: library, parts: parts, jobs: jobs,
+                           textStore: textStore, playback: playback,
+                           onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                           onUseText: onUseText, onBack: back)
+        case .textCompare:
+            TextCompareActionView(recipe: recipe, sourceId: sourceId,
+                                  catalog: catalog, library: library,
+                                  parts: parts, jobs: jobs,
+                                  textStore: textStore, playback: playback,
+                                  onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                                  onUseText: onUseText, onBack: back)
+        case .similar:
+            SimilarActionView(recipe: recipe, sourceId: sourceId,
+                              catalog: catalog, library: library,
+                              parts: parts, jobs: jobs, playback: playback,
+                              onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                              onBack: back)
+        case .textPipeline(let kind):
+            TextPipelineView(recipe: recipe, kind: kind, sourceId: sourceId,
+                             settings: settings, catalog: catalog,
+                             library: library, parts: parts, jobs: jobs,
+                             textStore: textStore, chain: textChain,
+                             playback: playback,
+                             onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                             onBack: back)
+        case .mapSections:
+            SectionsActionView(recipe: recipe, sourceId: sourceId,
+                               settings: settings, catalog: catalog,
+                               library: library, parts: parts, jobs: jobs,
+                               playback: playback,
+                               onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                               onBack: back)
+        case .promptScore:
+            ScoreActionView(recipe: recipe, sourceId: sourceId,
+                            settings: settings, catalog: catalog,
+                            library: library, parts: parts, jobs: jobs,
+                            playback: playback,
+                            onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                            onBack: back)
         }
     }
 }

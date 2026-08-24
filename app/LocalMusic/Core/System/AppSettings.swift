@@ -191,6 +191,47 @@ final class AppSettings {
         didSet { setOrRemove(analyzerModelId, "settings.generation.analyzerModelId") }
     }
 
+    /// Have a model listen to every new track and write a description.
+    ///
+    /// Off by default, unlike `autoAnalyze`, and for a reason worth stating:
+    /// a describer is a language model, usually far larger than the 1.5 GB
+    /// warm-pool line, so an automatic pass evicts the resident music model
+    /// and the next render pays a full reload. Analysis is 80 MB and free by
+    /// comparison.
+    var autoDescribe: Bool {
+        didSet { defaults.set(autoDescribe, forKey: "settings.generation.autoDescribe") }
+    }
+
+    /// Which describer the automatic pass uses; nil = the first installed one.
+    var describerModelId: String? {
+        didSet { setOrRemove(describerModelId, "settings.generation.describerModelId") }
+    }
+
+    /// Tag every new track's genre, mood and instrumentation automatically.
+    var autoTagScan: Bool {
+        didSet { defaults.set(autoTagScan, forKey: "settings.generation.autoTagScan") }
+    }
+
+    /// Which tagger the automatic pass uses; nil = the first installed one.
+    var taggerModelId: String? {
+        didSet { setOrRemove(taggerModelId, "settings.generation.taggerModelId") }
+    }
+
+    /// Transcribe the sung words of every new track automatically. The words
+    /// land as their own attributed document — `song.lyrics` stays what the
+    /// generator was given.
+    var autoLyrics: Bool {
+        didSet { defaults.set(autoLyrics, forKey: "settings.generation.autoLyrics") }
+    }
+
+    /// Which transcriber the automatic pass uses; nil = the first installed.
+    var lyricsTranscriberModelId: String? {
+        didSet {
+            setOrRemove(lyricsTranscriberModelId,
+                        "settings.generation.lyricsTranscriberModelId")
+        }
+    }
+
     /// Which writing assistant the "Help me write" cards use; nil = the first
     /// installed one, which the catalog orders best-first.
     var assistantModelId: String? {
@@ -454,6 +495,15 @@ final class AppSettings {
                                 default: true)
         analyzerModelId = defaults
             .string(forKey: "settings.generation.analyzerModelId")
+        autoDescribe = defaults.bool(forKey: "settings.generation.autoDescribe")
+        describerModelId = defaults
+            .string(forKey: "settings.generation.describerModelId")
+        autoTagScan = defaults.bool(forKey: "settings.generation.autoTagScan")
+        taggerModelId = defaults
+            .string(forKey: "settings.generation.taggerModelId")
+        autoLyrics = defaults.bool(forKey: "settings.generation.autoLyrics")
+        lyricsTranscriberModelId = defaults
+            .string(forKey: "settings.generation.lyricsTranscriberModelId")
         assistantModelId = defaults
             .string(forKey: "settings.generation.assistantModelId")
         assistantTemperature = defaults
@@ -576,6 +626,12 @@ final class AppSettings {
         livePreview = false
         autoAnalyze = true
         analyzerModelId = nil
+        autoDescribe = false
+        describerModelId = nil
+        autoTagScan = false
+        taggerModelId = nil
+        autoLyrics = false
+        lyricsTranscriberModelId = nil
         assistantModelId = nil
         assistantTemperature = 0.7
         defaultSeparatorId = nil

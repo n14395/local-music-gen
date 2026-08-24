@@ -8837,7 +8837,7 @@
       "format": "+ CLAP",
       "variant_of": "analysis-basic",
       "display_name": "Musical analysis + timbre (CLAP)",
-      "description": "Everything Musical analysis does, plus a CLAP timbre embedding — adds a timbral-similarity signal to compatibility ranking (\"What mashes with this?\").",
+      "description": "Everything Musical analysis does, plus a CLAP timbre embedding — adds a timbral-similarity signal to compatibility ranking (\"What mashes with this?\"), and can score a render against the prompt that asked for it.",
       "hf_repos": [
         {
           "repo_id": "laion/larger_clap_music",
@@ -8882,6 +8882,15 @@
             "default": true,
             "nullable": false,
             "help": "Also segment the song into sections (a little slower)."
+          },
+          {
+            "key": "prompt_text",
+            "type": "string",
+            "label": "Score vs prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "dreamy synthwave with saxophone",
+            "help": "Also measure how closely the audio matches this description (CLAP similarity, stored with the analysis)."
           }
         ],
         "est_realtime_factor": 0.15
@@ -8903,6 +8912,613 @@
       },
       "tags": [
         "Musical analysis"
+      ]
+    },
+    {
+      "id": "tag-clap",
+      "family": "analysis",
+      "featured": true,
+      "format": null,
+      "variant_of": null,
+      "display_name": "Genre & mood tags (CLAP)",
+      "description": "Scores a track against vocabularies of genres, moods and instruments and keeps the labels that fit. No tagging model is trained or downloaded — it is the same CLAP encoder that powers timbre matching, asked a different question.",
+      "hf_repos": [
+        {
+          "repo_id": "laion/larger_clap_music",
+          "gated": false
+        }
+      ],
+      "size_bytes": 779815837,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "tag"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to tag."
+          },
+          {
+            "key": "top_k",
+            "type": "int",
+            "label": "Tags per group",
+            "default": 5,
+            "nullable": false,
+            "min": 1,
+            "max": 15,
+            "help": "How many labels to keep for each of genre, mood and instrumentation."
+          }
+        ],
+        "est_realtime_factor": 0.05
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 779815837,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "Apache-2.0",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": null
+      },
+      "notes": "Zero-shot: the vocabulary is the model. Labels it has never been trained on still score, and niche genres score poorly.",
+      "settings": {
+        "embed": "clap",
+        "tagger": "zeroshot"
+      },
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "lyrics-whisper-turbo",
+      "family": "mlxstt",
+      "featured": true,
+      "format": null,
+      "variant_of": null,
+      "display_name": "Lyric transcriber (Whisper turbo)",
+      "description": "Writes down the words as sung, with a timing on every line. Quantised small enough to stay loaded alongside a music model rather than displacing it — run it on a separated vocal for a transcript rather than a guess.",
+      "hf_repos": [
+        {
+          "repo_id": "mlx-community/whisper-large-v3-turbo-q4",
+          "gated": false
+        },
+        {
+          "repo_id": "openai/whisper-large-v3-turbo",
+          "gated": false,
+          "allow_patterns": [
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "normalizer.json",
+            "added_tokens.json",
+            "special_tokens_map.json",
+            "generation_config.json"
+          ]
+        }
+      ],
+      "size_bytes": 468284080,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "lyrics"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to transcribe — a vocals stem reads far more cleanly than a full mix."
+          },
+          {
+            "key": "language",
+            "type": "string",
+            "label": "Language",
+            "default": null,
+            "nullable": true,
+            "placeholder": "auto",
+            "help": "Two-letter code (en, fr, ja). Left blank the model detects it, which is usually right and occasionally confident and wrong."
+          }
+        ],
+        "est_realtime_factor": 0.08
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 468284080,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "MIT (OpenAI Whisper)",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": "https://github.com/openai/whisper/blob/main/LICENSE"
+      },
+      "notes": "Whisper is a speech model: given music with no words in it, it invents some. Lines it had no confidence in are dropped, so an instrumental usually comes back empty rather than wrong — but run it on a vocal and it is a transcript.",
+      "settings": {
+        "engine": "whisper"
+      },
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "lyrics-whisper-turbo-fp16",
+      "family": "mlxstt",
+      "featured": false,
+      "format": "fp16",
+      "variant_of": "lyrics-whisper-turbo",
+      "display_name": "Lyric transcriber (Whisper turbo, full precision)",
+      "description": "The same model unquantised: a little more accurate on quiet or crowded vocals, and large enough that loading it unloads whatever music model was resident.",
+      "hf_repos": [
+        {
+          "repo_id": "mlx-community/whisper-large-v3-turbo",
+          "gated": false
+        },
+        {
+          "repo_id": "openai/whisper-large-v3-turbo",
+          "gated": false,
+          "allow_patterns": [
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "normalizer.json",
+            "added_tokens.json",
+            "special_tokens_map.json",
+            "generation_config.json"
+          ]
+        }
+      ],
+      "size_bytes": 1618596977,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "lyrics"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to transcribe — a vocals stem reads far more cleanly than a full mix."
+          },
+          {
+            "key": "language",
+            "type": "string",
+            "label": "Language",
+            "default": null,
+            "nullable": true,
+            "placeholder": "auto",
+            "help": "Two-letter code (en, fr, ja); blank to detect."
+          }
+        ],
+        "est_realtime_factor": 0.12
+      },
+      "requirements": {
+        "min_ram_bytes": 6442450944,
+        "disk_bytes": 1618596977,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "MIT (OpenAI Whisper)",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": "https://github.com/openai/whisper/blob/main/LICENSE"
+      },
+      "notes": "Over the small-model line, so it takes the resident slot.",
+      "settings": {
+        "engine": "whisper"
+      },
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "caption-qwen2audio",
+      "family": "mlxstt",
+      "featured": false,
+      "format": null,
+      "variant_of": null,
+      "display_name": "Qwen2-Audio (listener)",
+      "description": "An audio-language model that listens and writes: descriptions of what it hears, answers to questions you type, and genre/mood/instrument labels. The most capable listener here, and the heaviest — it unloads the resident music model to run.",
+      "hf_repos": [
+        {
+          "repo_id": "mlx-community/Qwen2-Audio-7B-Instruct-4bit",
+          "gated": false
+        }
+      ],
+      "size_bytes": 6574659991,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "caption",
+          "tag"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to listen to."
+          },
+          {
+            "key": "question",
+            "type": "string",
+            "label": "Question",
+            "default": null,
+            "nullable": true,
+            "placeholder": "What instruments carry the chorus?",
+            "help": "Ask something specific about the audio. Left blank it writes a general description."
+          },
+          {
+            "key": "max_tokens",
+            "type": "int",
+            "label": "Length limit",
+            "default": 256,
+            "nullable": false,
+            "min": 32,
+            "max": 1024,
+            "help": "How long the answer may run before it is cut off."
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Variety",
+            "default": 0.7,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "Lower is literal and repetitive; higher is more evocative and less reliable."
+          }
+        ],
+        "est_realtime_factor": 0.5
+      },
+      "requirements": {
+        "min_ram_bytes": 17179869184,
+        "disk_bytes": 6574659991,
+        "speed_tier": "medium"
+      },
+      "license": {
+        "name": "Apache-2.0",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": null
+      },
+      "notes": "4-bit MLX conversion of Qwen2-Audio-7B-Instruct.",
+      "settings": {
+        "engine": "qwen2audio"
+      },
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "caption-lpmusiccaps",
+      "family": "captioning",
+      "featured": true,
+      "format": null,
+      "variant_of": null,
+      "display_name": "LP-MusicCaps (describer)",
+      "description": "A music captioner: it listens in ten-second windows across the track and writes what it hears — instruments, mood, genre, feel. Purpose-built for music rather than adapted from speech.",
+      "hf_repos": [
+        {
+          "repo_id": "seungheondoh/lp-music-caps",
+          "gated": false,
+          "allow_patterns": [
+            "transfer.pth",
+            "transfer.yaml"
+          ]
+        },
+        {
+          "repo_id": "facebook/bart-base",
+          "gated": false,
+          "allow_patterns": [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "special_tokens_map.json"
+          ]
+        }
+      ],
+      "size_bytes": 1786363870,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "caption"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to describe."
+          },
+          {
+            "key": "num_beams",
+            "type": "int",
+            "label": "Search width",
+            "default": 5,
+            "nullable": false,
+            "min": 1,
+            "max": 8,
+            "help": "Higher writes steadier, more conventional sentences and takes a little longer."
+          }
+        ],
+        "est_realtime_factor": 0.1
+      },
+      "requirements": {
+        "min_ram_bytes": 6442450944,
+        "disk_bytes": 1786363870,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "CC BY-NC 4.0",
+        "commercial_use": false,
+        "requires_hf_token": false,
+        "url": "https://github.com/seungheondoh/lp-music-caps"
+      },
+      "notes": "Describes; it cannot answer questions — for that use an audio-language model. Non-commercial: the project's licence is CC BY-NC 4.0, despite the Hugging Face card saying MIT.",
+      "settings": {
+        "engine": "lpmusiccaps",
+        "checkpoint": "transfer"
+      },
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "compose-text2music",
+      "family": "notation",
+      "featured": true,
+      "format": null,
+      "variant_of": null,
+      "display_name": "Text to notation (BART)",
+      "description": "Writes a tune in ABC notation from a description — BART-base fine-tuned on 283,000 text-and-score pairs. Small enough to stay loaded beside a music model; writes one stave, in a wide range of styles.",
+      "hf_repos": [
+        {
+          "repo_id": "sander-wood/text-to-music",
+          "gated": false
+        }
+      ],
+      "size_bytes": 560692898,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "compose"
+        ],
+        "params": [
+          {
+            "key": "prompt",
+            "type": "string",
+            "label": "Description or ABC",
+            "default": null,
+            "nullable": true,
+            "placeholder": "a traditional Irish dance tune in D",
+            "help": "What to write. The ABC cards send the notation they extracted; typed by hand, a plain description works best."
+          },
+          {
+            "key": "max_tokens",
+            "type": "int",
+            "label": "Length limit",
+            "default": 1024,
+            "nullable": false,
+            "min": 64,
+            "max": 2048,
+            "help": "How long the notation may run before it is cut off."
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Variety",
+            "default": 0.7,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "Lower writes conventional, predictable tunes; higher takes more chances and parses less often."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
+          }
+        ],
+        "est_realtime_factor": 0.1
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 560692898,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "MIT",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": null
+      },
+      "notes": "One stave, classical notation. Its own authors note it is input-sensitive and not built for high creativity.",
+      "settings": {
+        "engine": "text2music"
+      },
+      "tags": [
+        "Notes & MIDI"
+      ]
+    },
+    {
+      "id": "compose-chatmusician",
+      "family": "notation",
+      "featured": false,
+      "format": "7B",
+      "variant_of": "compose-text2music",
+      "display_name": "ChatMusician (notation)",
+      "description": "A LLaMA-2 tuned on music theory and ABC notation: give it a tune and it writes a new piece in the same key and metre, rather than only composing from a description.",
+      "hf_repos": [
+        {
+          "repo_id": "m-a-p/ChatMusician",
+          "gated": false,
+          "allow_patterns": [
+            "*.safetensors",
+            "*.json",
+            "*.model",
+            "*.txt"
+          ]
+        }
+      ],
+      "size_bytes": 13479258562,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "compose"
+        ],
+        "params": [
+          {
+            "key": "prompt",
+            "type": "string",
+            "label": "Description or ABC",
+            "default": null,
+            "nullable": true,
+            "placeholder": "X:1\nT:My tune\nM:4/4\nK:D\n…",
+            "help": "Paste ABC notation to continue in its style, or describe the piece you want."
+          },
+          {
+            "key": "max_tokens",
+            "type": "int",
+            "label": "Length limit",
+            "default": 1024,
+            "nullable": false,
+            "min": 64,
+            "max": 2048,
+            "help": "How long the notation may run before it is cut off."
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Variety",
+            "default": 0.7,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "Lower is conventional; higher is more adventurous and parses less often."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
+          }
+        ],
+        "est_realtime_factor": 1.2
+      },
+      "requirements": {
+        "min_ram_bytes": 25769803776,
+        "disk_bytes": 13479258562,
+        "speed_tier": "slow"
+      },
+      "license": {
+        "name": "MIT",
+        "commercial_use": true,
+        "requires_hf_token": false,
+        "url": null
+      },
+      "notes": "13 GB of weights; loading it unloads the resident music model.",
+      "settings": {
+        "engine": "chatmusician"
+      },
+      "tags": [
+        "Notes & MIDI"
       ]
     },
     {
@@ -9439,6 +10055,14 @@
             "nullable": true,
             "placeholder": "guitar",
             "help": "Names the resulting notes part."
+          },
+          {
+            "key": "emit_abc",
+            "type": "bool",
+            "label": "Also write ABC",
+            "default": false,
+            "nullable": false,
+            "help": "Also write each note track as ABC notation text — a readable sketch, and the input the notation composers take."
           }
         ],
         "est_realtime_factor": 0.15
@@ -9502,6 +10126,14 @@
             "default": null,
             "nullable": false,
             "help": "The song to transcribe into per-instrument note tracks."
+          },
+          {
+            "key": "emit_abc",
+            "type": "bool",
+            "label": "Also write ABC",
+            "default": false,
+            "nullable": false,
+            "help": "Also write each note track as ABC notation text — a readable sketch, and the input the notation composers take."
           }
         ],
         "est_realtime_factor": 0.8
@@ -9558,6 +10190,14 @@
             "default": null,
             "nullable": false,
             "help": "Piano audio — solo recordings or a separated piano stem."
+          },
+          {
+            "key": "emit_abc",
+            "type": "bool",
+            "label": "Also write ABC",
+            "default": false,
+            "nullable": false,
+            "help": "Also write each note track as ABC notation text — a readable sketch, and the input the notation composers take."
           }
         ],
         "est_realtime_factor": 1.0
@@ -9613,6 +10253,14 @@
             "default": null,
             "nullable": false,
             "help": "Monophonic audio — a vocals stem or a single-instrument line."
+          },
+          {
+            "key": "emit_abc",
+            "type": "bool",
+            "label": "Also write ABC",
+            "default": false,
+            "nullable": false,
+            "help": "Also write each note track as ABC notation text — a readable sketch, and the input the notation composers take."
           }
         ],
         "est_realtime_factor": 0.02

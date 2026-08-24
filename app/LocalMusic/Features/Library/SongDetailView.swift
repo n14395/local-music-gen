@@ -8,6 +8,8 @@ struct SongActions {
     var reusePrompt: (SongRecord) -> Void = { _ in }
     var split: (SongRecord) -> Void = { _ in }
     var findMatches: (SongRecord) -> Void = { _ in }
+    /// Open "Describe it by listening" on this track.
+    var describe: (SongRecord) -> Void = { _ in }
     var openMix: (SongRecord) -> Void = { _ in }
     /// Open the Style Transfer workspace on this track. Every member here has a
     /// default, so adding one is source-compatible with every construction.
@@ -71,6 +73,10 @@ struct SongDetailView: View {
                             editor.tagsText = tags.joined(separator: ", ")
                             editor.commitTags(in: library)
                         }
+                        TextDocsSection(ownerId: song.id, ownerType: "song",
+                                        playback: playback,
+                                        onDescribe: { actions.describe(song) })
+                            .padding(.top, 6)
                         Text("NOTES").eyebrow()
                             .padding(.top, 6)
                         notes
@@ -562,6 +568,10 @@ struct SongDetailView: View {
                 ) { actions.findMatches(song) }
             }
             HStack(spacing: 8) {
+                LibraryActionTile(
+                    title: "Describe…",
+                    help: "A model listens and writes the track down"
+                ) { actions.describe(song) }
                 LibraryActionTile(title: "Export…",
                                   help: "Save a copy of the audio file") {
                     exportSong()

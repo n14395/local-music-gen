@@ -24,6 +24,7 @@ struct PartsRepository: Sendable {
     func delete(id: String) throws {
         _ = try db.queue.write { database in
             try AnalysisRecord.filter(Column("ownerId") == id).deleteAll(database)
+            try TextDocRecord.filter(Column("ownerId") == id).deleteAll(database)
             return try PartRecord.deleteOne(database, key: id)
         }
     }
@@ -216,6 +217,60 @@ struct PartsRepository: Sendable {
 
     func deleteAnalysis(ownerId: String) throws {
         _ = try db.queue.write { try AnalysisRecord.deleteOne($0, key: ownerId) }
+    }
+
+    // MARK: text documents
+
+    /// Every text document on one song or part, newest first inside each
+    /// kind so "the latest description" is always the first of its group.
+    func textDocs(ownerId: String) throws -> [TextDocRecord] {
+        try db.queue.read {
+            try TextDocRecord.filter(Column("ownerId") == ownerId)
+                .order(Column("kind"), Column("createdAt").desc)
+                .fetchAll($0)
+        }
+    }
+
+    /// The whole table, in the same order — `TextStore` mirrors it entire,
+    /// the way `PartsStore.refresh` re-reads its results, because a handful
+    /// of rows per song never justifies incremental cache surgery.
+    func allTextDocs() throws -> [TextDocRecord] {
+        try db.queue.read {
+            try TextDocRecord
+                .order(Column("kind"), Column("createdAt").desc)
+                .fetchAll($0)
+        }
+    }
+
+    /// The auto-run idempotence guard: has some model already written this
+    /// kind onto this owner? User-written docs count too — a description the
+    /// user typed is exactly as much a reason not to auto-describe.
+    func hasTextDoc(ownerId: String, kind: String) throws -> Bool {
+        try db.queue.read {
+            try TextDocRecord.filter(Column("ownerId") == ownerId)
+                .filter(Column("kind") == kind)
+                .fetchCount($0) > 0
+        }
+    }
+
+    func insertTextDoc(_ record: TextDocRecord) throws {
+        try db.queue.write { try record.insert($0) }
+    }
+
+    func updateTextDoc(_ record: TextDocRecord) throws {
+        try db.queue.write { try record.update($0) }
+    }
+
+    func deleteTextDoc(id: String) throws {
+        _ = try db.queue.write { try TextDocRecord.deleteOne($0, key: id) }
+    }
+
+    /// Rides the owner's delete path, like `deleteAnalysis`.
+    func deleteTextDocs(ownerId: String) throws {
+        _ = try db.queue.write {
+            try TextDocRecord.filter(Column("ownerId") == ownerId)
+                .deleteAll($0)
+        }
     }
 
     // MARK: recombination provenance

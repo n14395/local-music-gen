@@ -182,6 +182,56 @@ final class DTOTests: XCTestCase {
         XCTAssertEqual(job.result?.meta?["tempo_bpm"], .double(127.5))
     }
 
+    /// The text-artifact payload decodes from the wire (snake_case) whether
+    /// it arrived as a file or inside `result.meta.text`, and every field
+    /// tolerates absence — the same contract analyzers hold.
+    func testTextPayloadFixture() throws {
+        let json = """
+        {"text_version": 1, "kind": "lyrics",
+         "text": "la la la",
+         "language": "en",
+         "segments": [{"start_s": 0.0, "end_s": 2.0, "text": "la la la"},
+                      {"start_s": 2.0, "end_s": 4.0, "text": "ooh"}],
+         "tags": [{"label": "techno", "score": 0.83, "group": "genre"},
+                  {"label": "moody", "score": null, "group": null}],
+         "question": null, "model": "lyrics-whisper-turbo",
+         "engine": "whisper"}
+        """
+        let payload = try decode(TextPayload.self, json)
+        XCTAssertEqual(payload.kind, "lyrics")
+        XCTAssertEqual(payload.segments?.count, 2)
+        XCTAssertEqual(payload.segments?[0].startS, 0.0)
+        XCTAssertEqual(payload.segments?[1].endS, 4.0)
+        XCTAssertEqual(payload.tags?[0].score, 0.83)
+        XCTAssertNil(payload.tags?[1].score)
+        XCTAssertEqual(payload.model, "lyrics-whisper-turbo")
+    }
+
+    func testTextPayloadToleratesAbsence() throws {
+        let payload = try decode(TextPayload.self, #"{"kind": "caption"}"#)
+        XCTAssertEqual(payload.kind, "caption")
+        XCTAssertNil(payload.text)
+        XCTAssertNil(payload.segments)
+        XCTAssertNil(payload.tags)
+    }
+
+    /// A legacy analysis payload — no prompt-score fields — still decodes,
+    /// and one that carries them exposes both.
+    func testAnalysisPayloadPromptScoreIsAdditive() throws {
+        let legacy = try decode(AnalysisPayload.self,
+                                #"{"tempo_bpm": 120.0, "camelot": "8B"}"#)
+        XCTAssertEqual(legacy.tempoBpm, 120.0)
+        XCTAssertNil(legacy.clapPromptScore)
+        XCTAssertNil(legacy.clapPrompt)
+
+        let scored = try decode(AnalysisPayload.self, """
+            {"tempo_bpm": 120.0, "clap_prompt_score": 0.41,
+             "clap_prompt": "dreamy synthwave"}
+            """)
+        XCTAssertEqual(scored.clapPromptScore, 0.41)
+        XCTAssertEqual(scored.clapPrompt, "dreamy synthwave")
+    }
+
     func testTaskCapabilitiesAndParamSpecs() throws {
         let json = """
         {

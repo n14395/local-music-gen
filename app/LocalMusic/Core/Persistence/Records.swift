@@ -253,12 +253,88 @@ struct AnalysisPayload: Codable, Sendable {
     var clap: [Double]?           // 512-dim unit CLAP timbre embedding (v3)
     var durationS: Double?
     var sampleRate: Int?
+    /// CLAP text-vs-audio cosine against `clapPrompt`, −1…1. Present only
+    /// when the analyze job carried a `prompt_text` param (contract 5.4).
+    var clapPromptScore: Double?
+    /// The text that score was measured against — the idempotence key for
+    /// batch scoring: same prompt, no re-run.
+    var clapPrompt: String?
 
     struct Section: Codable, Sendable, Equatable {
         var startS: Double
         var endS: Double
         var group: String?
         var label: String?
+    }
+}
+
+/// A text document attached to a song or part: a model's description of it,
+/// its transcribed lyrics, a Q&A answer, its tags, its ABC notation — or the
+/// same slots written by hand. Many rows per owner (that is the point:
+/// several description slots), unlike `analysis`, whose ownerId is a key.
+struct TextDocRecord: Codable, Identifiable, Equatable, FetchableRecord,
+                      PersistableRecord {
+    static let databaseTableName = "textDoc"
+
+    var id: String
+    var ownerId: String
+    var ownerType: String     // "song" | "part"
+    var kind: String          // TextDocKind raw value
+    var text: String
+    var segmentsJSON: String?
+    var question: String?
+    var language: String?
+    var modelId: String       // "" = user-written
+    var modelName: String     // "You" when the user wrote it
+    var jobId: String?
+    var edited: Bool
+    var createdAt: Date
+    var updatedAt: Date
+
+    /// The typed `kind`; an unrecognised value reads as a description — the
+    /// same never-vanish rule `SongRecord.originKind` follows.
+    var kindValue: TextDocKind { TextDocKind(rawValue: kind) ?? .description }
+
+    /// Timed lyric lines, decoded on demand from `segmentsJSON`.
+    var segments: [TextPayload.Segment] {
+        guard let segmentsJSON, let data = segmentsJSON.data(using: .utf8),
+              let decoded = try? JSONDecoder()
+                  .decode([TextPayload.Segment].self, from: data)
+        else { return [] }
+        return decoded
+    }
+}
+
+/// What a text document is. Raw values are stored in `textDoc.kind` and are
+/// wire-adjacent (the payload's `kind` uses "tags" too), so they never change.
+enum TextDocKind: String, CaseIterable, Sendable {
+    case description, lyrics, caption, qa, abc, tags
+}
+
+/// Decoded shape of a "text" artifact JSON, which also rides `result.meta`
+/// under "text" (engine wire: snake_case via BackendClient.decoder). Every
+/// field tolerates absence — text models evolve the way analyzers do, and an
+/// empty `text` is "the model heard no words", not an error.
+struct TextPayload: Codable, Sendable, Equatable {
+    var kind: String?             // caption | lyrics | tags | abc
+    var text: String?
+    var language: String?
+    var segments: [Segment]?
+    var tags: [Tag]?
+    var question: String?
+    var model: String?
+    var engine: String?
+
+    struct Segment: Codable, Sendable, Equatable {
+        var startS: Double
+        var endS: Double
+        var text: String
+    }
+
+    struct Tag: Codable, Sendable, Equatable {
+        var label: String
+        var score: Double?        // null from LLM taggers
+        var group: String?        // genre | mood | instrument
     }
 }
 

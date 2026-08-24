@@ -69,8 +69,18 @@ class AnalysisAdapter(ModelAdapter):
         return ([round(float(b), 4) for b in np.asarray(beats).ravel()],
                 [round(float(b), 4) for b in np.asarray(downbeats).ravel()])
 
+    def _clap_snapshot(self) -> str | None:
+        """The CLAP snapshot among this entry's repos, if it has one."""
+        if not self.model_paths:
+            return None
+        return next((p for r, p in self.model_paths.items()
+                     if "clap" in r.lower()),
+                    next(iter(self.model_paths.values())))
+
     def run_task(self, task: str, params: dict, out_dir: str,
                  progress_cb: ProgressCb, cancel: CancelToken) -> TaskResult:
+        if task == "tag":
+            return self._run_tag(params, out_dir, progress_cb, cancel)
         if task != "analyze":
             raise NotImplementedError(f"unsupported task '{task}'")
         src = params.get("source_audio")
@@ -113,14 +123,22 @@ class AnalysisAdapter(ModelAdapter):
             check()
 
         clap_vec = None
-        if self.settings.get("embed") == "clap" and self.model_paths:
+        prompt_score = None
+        prompt_text = str(params.get("prompt_text") or "").strip()
+        snapshot = self._clap_snapshot()
+        if self.settings.get("embed") == "clap" and snapshot:
             progress_cb(0.82, "computing timbre embedding (CLAP)")
             from . import clap
-            snapshot = next((p for r, p in self.model_paths.items()
-                             if "clap" in r.lower()),
-                            next(iter(self.model_paths.values())))
             clap_vec = clap.embed(mono, sr, snapshot)
             check()
+            if prompt_text:
+                # The same encoder, one more sentence: how close the audio
+                # landed to the words that asked for it.
+                progress_cb(0.86, "scoring against the prompt")
+                from . import tagging
+                prompt_score = tagging.prompt_score(clap_vec, prompt_text,
+                                                    snapshot)
+                check()
 
         progress_cb(0.9, "measuring loudness")
         lufs = None
@@ -141,6 +159,12 @@ class AnalysisAdapter(ModelAdapter):
                    "analysis_version": 3 if clap_vec is not None else 2}
         if clap_vec is not None:
             payload["clap"] = clap_vec
+        if prompt_score is not None:
+            # The text is echoed beside the number: a score means nothing
+            # without knowing what it was measured against, and it is what
+            # lets a client skip re-scoring the same prompt.
+            payload["clap_prompt_score"] = prompt_score
+            payload["clap_prompt"] = prompt_text
         final = os.path.join(out_dir, "analysis.json")
         tmp = final + ".part"
         with open(tmp, "w") as f:
@@ -149,10 +173,64 @@ class AnalysisAdapter(ModelAdapter):
 
         meta = {"tempo_bpm": tempo_bpm, "key": key_info["key"],
                 "camelot": key_info["camelot"]}
+        if prompt_score is not None:
+            meta["clap_prompt_score"] = prompt_score
+            meta["clap_prompt"] = prompt_text
         return TaskResult(
             artifacts=[Artifact(kind="analysis", label="analysis", path=final,
                                 format="json")],
             meta=meta)
+
+    def _run_tag(self, params: dict, out_dir: str, progress_cb: ProgressCb,
+                 cancel: CancelToken) -> TaskResult:
+        """Genre / mood / instrument labels, zero-shot against CLAP.
+
+        No beat tracking, no key estimation, no structure: this task embeds
+        the audio once and scores it against three vocabularies, which is a
+        second or two rather than the analyze pass's tens of them.
+        """
+        def check() -> None:
+            if cancel.cancelled:
+                raise CancelledError()
+
+        src = params.get("source_audio")
+        if not src or not os.path.isfile(src):
+            raise RuntimeError("source_audio missing")
+        snapshot = self._clap_snapshot()
+        if not snapshot:
+            raise RuntimeError("tagging needs the CLAP model snapshot")
+        top_k = max(1, min(15, int(params.get("top_k") or 5)))
+
+        progress_cb(0.05, "loading audio")
+        audio, sr = sf.read(src, dtype="float32", always_2d=True)
+        mono = audio.mean(axis=1)
+        check()
+
+        progress_cb(0.1, "listening (CLAP)")
+        from . import clap, tagging
+        audio_vector = clap.embed(mono, sr, snapshot)
+        check()
+
+        tags = tagging.zero_shot(audio_vector, snapshot, top_k=top_k,
+                                 progress_cb=progress_cb, check=check)
+
+        progress_cb(0.95, "writing tags")
+        payload = {"text_version": 1, "kind": "tags", "tags": tags,
+                   "model": self.model_id, "engine": "clap-zeroshot"}
+        final = os.path.join(out_dir, "tags.json")
+        tmp = final + ".part"
+        with open(tmp, "w") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, final)
+
+        progress_cb(1.0, "done")
+        # The whole payload rides meta as well as the file (contract 5.4), so
+        # a client that keeps job results never has to read the disk.
+        return TaskResult(
+            artifacts=[Artifact(kind="text", label="tags", path=final,
+                                format="json")],
+            meta={"text": payload,
+                  "top_tags": [t["label"] for t in tags[:6]]})
 
     def unload(self) -> None:
         self._audio2beats = None

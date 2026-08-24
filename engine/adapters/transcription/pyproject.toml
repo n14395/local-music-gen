@@ -16,6 +16,9 @@ dependencies = [
     "soundfile>=0.12",
     "soxr>=0.4",
     "tinysoundfont==0.3.7",
+    # MIDI -> ABC notation for the `emit_abc` param. Pure python (BSD), so
+    # it adds no wheels to an already crowded venv.
+    "music21>=9.1,<10",
     # resampy (via basic-pitch) imports pkg_resources at runtime; setuptools
     # 81+ removed it, so pin below
     "setuptools<81",

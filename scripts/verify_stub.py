@@ -84,9 +84,9 @@ def main() -> int:
         print("• models & downloads")
         status, body = c.req("GET", "/v1/models")
         models = {m["id"]: m for m in body["models"]}
-        check("catalog has 8 models, all not_installed",
-              len(models) == 8 and all(m["install_state"] == "not_installed"
-                                       for m in models.values()))
+        check("catalog has 11 models, all not_installed",
+              len(models) == 11 and all(m["install_state"] == "not_installed"
+                                        for m in models.values()))
         check("task models advertise capabilities.tasks",
               models["separation-stub"]["capabilities"].get("tasks")
               == ["separate", "analyze"]
@@ -97,6 +97,12 @@ def main() -> int:
               == ["render"]
               and models["assistant-stub"]["capabilities"].get("tasks")
               == ["assist"]
+              and models["caption-stub"]["capabilities"].get("tasks")
+              == ["caption", "tag"]
+              and models["lyrics-stub"]["capabilities"].get("tasks")
+              == ["lyrics"]
+              and models["notation-stub"]["capabilities"].get("tasks")
+              == ["compose"]
               and "tasks" not in models["musicgen-small"]["capabilities"])
         check("catalog capability variety",
               models["musicgen-small"]["capabilities"]["instrumental_only"]
@@ -118,7 +124,10 @@ def main() -> int:
               and models["separation-stub"]["tags"] == ["Stem separation",
                                                         "Musical analysis"]
               and models["transcription-stub"]["tags"] == ["Notes & MIDI"]
-              and models["dsp-stub"]["tags"] == ["Mixing & recombining"],
+              and models["dsp-stub"]["tags"] == ["Mixing & recombining"]
+              and models["caption-stub"]["tags"] == ["Hears & describes"]
+              and models["lyrics-stub"]["tags"] == ["Hears & describes"]
+              and models["notation-stub"]["tags"] == ["Notes & MIDI"],
               str({k: v["tags"] for k, v in models.items()}))
         # contract 5.5: generation models declare the stages their adapter can
         # name; task models declare none, so the app falls back to one bar
@@ -825,6 +834,128 @@ def main() -> int:
             "model_ids": ["render-stub"], "task": "render",
             "params": {"midi_file": "up_bogus"}})
         check("422 unknown midi upload id",
+              status == 422 and body["error"]["code"] == "VALIDATION")
+
+        print("• task jobs (caption / lyrics / tag / compose)")
+        for mid in ("caption-stub", "lyrics-stub", "notation-stub"):
+            c.req("POST", f"/v1/models/{mid}/download")
+            done = sse.wait_for("download.completed", 60,
+                                lambda d, m=mid: d["model_id"] == m)
+            check(f"{mid} installs", done is not None)
+
+        def run_text_task(model_id, task, params):
+            status, body = c.req("POST", "/v1/jobs", {
+                "model_ids": [model_id], "task": task, "params": params})
+            if status != 202:
+                return None, None, status
+            job_id = body["jobs"][0]["job_id"]
+            sse.wait_for("job.completed", 60,
+                         lambda d: d["job_id"] == job_id)
+            _, job = c.req("GET", f"/v1/jobs/{job_id}")
+            return job, (job.get("result") or {}), 202
+
+        job, result, status = run_text_task(
+            "caption-stub", "caption", {"source_audio": upload_id})
+        arts = result.get("artifacts") or []
+        meta = result.get("meta") or {}
+        cap_ok = (status == 202 and len(arts) == 1
+                  and arts[0]["kind"] == "text"
+                  and arts[0]["format"] == "json"
+                  and arts[0]["label"] == "caption"
+                  and os.path.exists(arts[0]["path"]))
+        if cap_ok:
+            parsed = json.load(open(arts[0]["path"]))
+            cap_ok = (parsed.get("kind") == "caption"
+                      and parsed.get("text")
+                      # contract: the whole payload also rides result.meta
+                      and meta.get("text") == parsed
+                      and meta.get("caption_preview")
+                      == parsed["text"][:200])
+        check("caption: text artifact parses and meta mirrors it", cap_ok)
+
+        job, result, status = run_text_task(
+            "caption-stub", "caption",
+            {"source_audio": upload_id, "question": "What key is this in?"})
+        meta = result.get("meta") or {}
+        check("caption: question echoed through payload and meta",
+              status == 202
+              and (meta.get("text") or {}).get("question")
+              == "What key is this in?"
+              and meta.get("question") == "What key is this in?")
+
+        job, result, status = run_text_task(
+            "lyrics-stub", "lyrics", {"source_audio": upload_id})
+        arts = result.get("artifacts") or []
+        meta = result.get("meta") or {}
+        lyr_ok = (status == 202 and len(arts) == 1
+                  and arts[0]["kind"] == "text"
+                  and os.path.exists(arts[0]["path"]))
+        if lyr_ok:
+            parsed = json.load(open(arts[0]["path"]))
+            segs = parsed.get("segments") or []
+            lyr_ok = (parsed.get("kind") == "lyrics" and len(segs) >= 2
+                      # segments are timed and monotonic
+                      and all(s["start_s"] < s["end_s"] for s in segs)
+                      and all(a["end_s"] <= b["start_s"]
+                              for a, b in zip(segs, segs[1:]))
+                      and meta.get("segments") == len(segs)
+                      and meta.get("language") == parsed.get("language"))
+        check("lyrics: timed segments, monotonic, meta summary", lyr_ok)
+
+        job, result, status = run_text_task(
+            "caption-stub", "tag", {"source_audio": upload_id})
+        arts = result.get("artifacts") or []
+        meta = result.get("meta") or {}
+        tag_ok = (status == 202 and len(arts) == 1
+                  and arts[0]["kind"] == "text"
+                  and os.path.exists(arts[0]["path"]))
+        if tag_ok:
+            parsed = json.load(open(arts[0]["path"]))
+            tags = parsed.get("tags") or []
+            tag_ok = (parsed.get("kind") == "tags" and tags
+                      and all(0.0 <= t["score"] <= 1.0 for t in tags
+                              if t.get("score") is not None)
+                      and all(t.get("group") in ("genre", "mood",
+                                                 "instrument")
+                              for t in tags)
+                      and meta.get("top_tags")
+                      == [t["label"] for t in tags])
+        check("tag: scored, grouped tags with meta top_tags", tag_ok)
+
+        job, result, status = run_text_task(
+            "notation-stub", "compose",
+            {"prompt": "a cheerful folk tune in D"})
+        arts = result.get("artifacts") or []
+        meta = result.get("meta") or {}
+        texts = [a for a in arts if a["kind"] == "text"]
+        midis = [a for a in arts if a["kind"] == "midi"]
+        abc_ok = (status == 202 and len(texts) == 1 and len(midis) == 1
+                  and midis[0]["label"] == "composition"
+                  and os.path.exists(texts[0]["path"])
+                  and open(midis[0]["path"], "rb").read(4) == b"MThd")
+        if abc_ok:
+            parsed = json.load(open(texts[0]["path"]))
+            abc_ok = (parsed.get("kind") == "abc"
+                      and str(parsed.get("text") or "").startswith("X:")
+                      and meta.get("abc_preview"))
+        check("compose: ABC text + paired midi", abc_ok)
+
+        # compose's primary input is a string param, which submit validation
+        # does not presence-check — the worker fails the job instead
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["notation-stub"], "task": "compose", "params": {}})
+        check("compose with no prompt is accepted then fails in the worker",
+              status == 202)
+        if status == 202:
+            empty_job = body["jobs"][0]["job_id"]
+            failed = sse.wait_for("job.failed", 60,
+                                  lambda d: d["job_id"] == empty_job)
+            check("compose empty-prompt job fails", failed is not None)
+
+        status, body = c.req("POST", "/v1/jobs", {
+            "model_ids": ["musicgen-small"], "task": "caption",
+            "params": {"source_audio": upload_id}})
+        check("422 caption on a model that does not declare it",
               status == 422 and body["error"]["code"] == "VALIDATION")
 
         status, body = c.req_raw("POST", "/v1/uploads?filename=long.wav",

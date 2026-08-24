@@ -85,7 +85,22 @@ struct LibraryRepository: Sendable {
                     sql: "SELECT rowid FROM songFts WHERE songFts MATCH ?",
                     arguments: [pattern]
                 ).map { $0["rowid"] as Int64 }
-                request = request.filter(ids.contains(Column.rowID))
+                // Text documents index separately (see the v10 migration): a
+                // song whose only match is in a model-written description or
+                // transcribed lyric still belongs in the results, so the two
+                // indexes union here rather than sharing a table.
+                let docOwnerIds = try String.fetchAll(
+                    database,
+                    sql: """
+                        SELECT DISTINCT textDoc.ownerId FROM textDocFts
+                        JOIN textDoc ON textDoc.rowid = textDocFts.rowid
+                        WHERE textDoc.ownerType = 'song'
+                          AND textDocFts MATCH ?
+                        """,
+                    arguments: [pattern])
+                request = request.filter(
+                    ids.contains(Column.rowID)
+                        || docOwnerIds.contains(Column("id")))
             }
             if let modelId = filters.modelId {
                 request = request.filter(Column("modelId") == modelId)

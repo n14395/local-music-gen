@@ -99,6 +99,7 @@ TAG_NOTES = "Notes & MIDI"
 TAG_ANALYSIS = "Musical analysis"
 TAG_MIXING = "Mixing & recombining"
 TAG_WRITING = "Writing help"
+TAG_TEXT = "Hears & describes"
 
 # params that mean "this model can take existing audio and rework it".
 # `melody_audio` and `style_audio` belong here for the same reason the rest do:
@@ -125,7 +126,7 @@ def derive_tags(entry: dict) -> list[str]:
             tags.append(TAG_REMIX)
     if "separate" in tasks:
         tags.append(TAG_SEPARATION)
-    if tasks & {"transcribe", "render"}:
+    if tasks & {"transcribe", "render", "compose"}:
         tags.append(TAG_NOTES)
     if "analyze" in tasks:
         tags.append(TAG_ANALYSIS)
@@ -133,6 +134,12 @@ def derive_tags(entry: dict) -> list[str]:
         tags.append(TAG_MIXING)
     if "assist" in tasks:
         tags.append(TAG_WRITING)
+    # The models that listen: captioning, lyric transcription, tagging. A
+    # different promise from TAG_WRITING's — the assistant writes *for* you
+    # from measurements and never hears a thing, and a user picking between
+    # them is picking between those two promises.
+    if tasks & {"caption", "lyrics", "tag"}:
+        tags.append(TAG_TEXT)
     # Deliberately no tag for `plan`: it is never a reason to install a model,
     # only something a generative model you already have happens to offer. A
     # filter button that returned "the ACE-Step variants" under a name like
@@ -678,6 +685,20 @@ STABILITY = {"name": "Stability AI Community License", "commercial_use": False,
              "requires_hf_token": True, "url": None}
 ACE_MIT = {"name": "MIT", "commercial_use": True, "requires_hf_token": False,
            "url": "https://github.com/ace-step/ACE-Step-1.5"}
+# The mlx-community Whisper conversions carry no license file of their own.
+# Upstream (openai/whisper) is MIT and the conversions are mechanical, so the
+# term is inherited rather than asserted from nothing — but the provenance is
+# named here rather than left to look like a first-party claim.
+# LP-MusicCaps: the repository's own README states CC BY-NC 4.0, while its
+# Hugging Face card's metadata says "mit". The stricter, first-party term is
+# the one recorded — a non-commercial flag that turns out to be unnecessary
+# costs a user nothing, and the reverse mistake costs them a licence breach.
+LPMC_NC = {"name": "CC BY-NC 4.0", "commercial_use": False,
+           "requires_hf_token": False,
+           "url": "https://github.com/seungheondoh/lp-music-caps"}
+WHISPER_MIT = {"name": "MIT (OpenAI Whisper)", "commercial_use": True,
+               "requires_hf_token": False,
+               "url": "https://github.com/openai/whisper/blob/main/LICENSE"}
 
 ACE_CORE = "ACE-Step/Ace-Step1.5"
 
@@ -1503,15 +1524,265 @@ NEW_ENTRIES = [
         "Musical analysis + timbre (CLAP)",
         "Everything Musical analysis does, plus a CLAP timbre embedding — "
         "adds a timbral-similarity signal to compatibility ranking "
-        "(\"What mashes with this?\").",
+        "(\"What mashes with this?\"), and can score a render against the "
+        "prompt that asked for it.",
         task_caps(["analyze"], [
             source_audio_param("The audio to analyze"),
             {"key": "deep", "type": "bool", "label": "Structure analysis",
              "default": True, "nullable": False,
              "help": "Also segment the song into sections (a little slower)"},
+            {"key": "prompt_text", "type": "string", "label": "Score vs prompt",
+             "default": None, "nullable": True,
+             "placeholder": "dreamy synthwave with saxophone",
+             "help": "Also measure how closely the audio matches this "
+                     "description (CLAP similarity, stored with the "
+                     "analysis)"},
         ], est_realtime_factor=0.15),
         6, "fast", APACHE, variant_of="analysis-basic", format_="+ CLAP",
         settings={"embed": "clap"}),
+    # ---- Music to words: zero-shot tagging --------------------------------
+    #
+    # A base entry rather than a variant of analysis-basic, deliberately: it
+    # answers a different task (`tag`), and the featured-model check wants a
+    # base per task — a featured variant is invisible in the Models list,
+    # which places groups by their base.
+    task_entry(
+        "tag-clap", "analysis",
+        ["laion/larger_clap_music"],
+        "Genre & mood tags (CLAP)",
+        "Scores a track against vocabularies of genres, moods and "
+        "instruments and keeps the labels that fit. No tagging model is "
+        "trained or downloaded — it is the same CLAP encoder that powers "
+        "timbre matching, asked a different question.",
+        task_caps(["tag"], [
+            source_audio_param("The audio to tag"),
+            {"key": "top_k", "type": "int", "label": "Tags per group",
+             "default": 5, "nullable": False, "min": 1, "max": 15,
+             "help": "How many labels to keep for each of genre, mood and "
+                     "instrumentation"},
+        ], est_realtime_factor=0.05),
+        4, "fast", APACHE, featured=True,
+        settings={"embed": "clap", "tagger": "zeroshot"},
+        notes="Zero-shot: the vocabulary is the model. Labels it has never "
+              "been trained on still score, and niche genres score poorly."),
+    # ---- Music to words: the listeners (MLX) -----------------------------
+    #
+    # Whisper for the sung words, Qwen2-Audio for everything you would ask a
+    # person who had just heard the track. Both run on MLX in a venv of their
+    # own — see the family's pyproject for why it is not the `mlxaudio` one.
+    task_entry(
+        "lyrics-whisper-turbo", "mlxstt",
+        ["mlx-community/whisper-large-v3-turbo-q4",
+         {"repo_id": "openai/whisper-large-v3-turbo", "gated": False,
+          # Tokenizer and feature-extractor only — a few MB of JSON. The
+          # mlx-community conversions ship weights and a config and nothing
+          # else, and Whisper cannot decode a token without these.
+          "allow_patterns": ["preprocessor_config.json", "tokenizer.json",
+                             "tokenizer_config.json", "vocab.json",
+                             "merges.txt", "normalizer.json",
+                             "added_tokens.json", "special_tokens_map.json",
+                             "generation_config.json"]}],
+        "Lyric transcriber (Whisper turbo)",
+        "Writes down the words as sung, with a timing on every line. "
+        "Quantised small enough to stay loaded alongside a music model "
+        "rather than displacing it — run it on a separated vocal for a "
+        "transcript rather than a guess.",
+        task_caps(["lyrics"], [
+            source_audio_param("The audio to transcribe — a vocals stem "
+                               "reads far more cleanly than a full mix"),
+            {"key": "language", "type": "string", "label": "Language",
+             "default": None, "nullable": True, "placeholder": "auto",
+             "help": "Two-letter code (en, fr, ja). Left blank the model "
+                     "detects it, which is usually right and occasionally "
+                     "confident and wrong"},
+        ], est_realtime_factor=0.08),
+        4, "fast", WHISPER_MIT, featured=True,
+        settings={"engine": "whisper"},
+        notes="Whisper is a speech model: given music with no words in it, "
+              "it invents some. Lines it had no confidence in are dropped, "
+              "so an instrumental usually comes back empty rather than "
+              "wrong — but run it on a vocal and it is a transcript."),
+    task_entry(
+        "lyrics-whisper-turbo-fp16", "mlxstt",
+        ["mlx-community/whisper-large-v3-turbo",
+         {"repo_id": "openai/whisper-large-v3-turbo", "gated": False,
+          # Tokenizer and feature-extractor only — a few MB of JSON. The
+          # mlx-community conversions ship weights and a config and nothing
+          # else, and Whisper cannot decode a token without these.
+          "allow_patterns": ["preprocessor_config.json", "tokenizer.json",
+                             "tokenizer_config.json", "vocab.json",
+                             "merges.txt", "normalizer.json",
+                             "added_tokens.json", "special_tokens_map.json",
+                             "generation_config.json"]}],
+        "Lyric transcriber (Whisper turbo, full precision)",
+        "The same model unquantised: a little more accurate on quiet or "
+        "crowded vocals, and large enough that loading it unloads whatever "
+        "music model was resident.",
+        task_caps(["lyrics"], [
+            source_audio_param("The audio to transcribe — a vocals stem "
+                               "reads far more cleanly than a full mix"),
+            {"key": "language", "type": "string", "label": "Language",
+             "default": None, "nullable": True, "placeholder": "auto",
+             "help": "Two-letter code (en, fr, ja); blank to detect"},
+        ], est_realtime_factor=0.12),
+        6, "fast", WHISPER_MIT,
+        variant_of="lyrics-whisper-turbo", format_="fp16",
+        settings={"engine": "whisper"},
+        notes="Over the small-model line, so it takes the resident slot."),
+    task_entry(
+        "caption-qwen2audio", "mlxstt",
+        ["mlx-community/Qwen2-Audio-7B-Instruct-4bit"],
+        "Qwen2-Audio (listener)",
+        "An audio-language model that listens and writes: descriptions of "
+        "what it hears, answers to questions you type, and genre/mood/"
+        "instrument labels. The most capable listener here, and the "
+        "heaviest — it unloads the resident music model to run.",
+        task_caps(["caption", "tag"], [
+            source_audio_param("The audio to listen to"),
+            {"key": "question", "type": "string", "label": "Question",
+             "default": None, "nullable": True,
+             "placeholder": "What instruments carry the chorus?",
+             "help": "Ask something specific about the audio. Left blank it "
+                     "writes a general description"},
+            {"key": "max_tokens", "type": "int", "label": "Length limit",
+             "default": 256, "nullable": False, "min": 32, "max": 1024,
+             "help": "How long the answer may run before it is cut off"},
+            {"key": "temperature", "type": "float", "label": "Variety",
+             "default": 0.7, "nullable": False, "min": 0.0, "max": 1.5,
+             "step": 0.05,
+             "help": "Lower is literal and repetitive; higher is more "
+                     "evocative and less reliable"},
+        ], est_realtime_factor=0.5),
+        16, "medium", APACHE,
+        settings={"engine": "qwen2audio"},
+        notes="4-bit MLX conversion of Qwen2-Audio-7B-Instruct."),
+    # ---- Music to words: captioning --------------------------------------
+    task_entry(
+        "caption-lpmusiccaps", "captioning",
+        [{"repo_id": "seungheondoh/lp-music-caps", "gated": False,
+          # One checkpoint of the three (they are 1.8 GB each) plus its
+          # config; the demo audio in the same repo is not wanted.
+          "allow_patterns": ["transfer.pth", "transfer.yaml"]},
+         {"repo_id": "facebook/bart-base", "gated": False,
+          # Config and tokenizer only — the checkpoint above overwrites every
+          # weight, so none of BART's own are needed.
+          "allow_patterns": ["config.json", "tokenizer.json",
+                             "tokenizer_config.json", "vocab.json",
+                             "merges.txt", "special_tokens_map.json"]}],
+        "LP-MusicCaps (describer)",
+        "A music captioner: it listens in ten-second windows across the "
+        "track and writes what it hears — instruments, mood, genre, feel. "
+        "Purpose-built for music rather than adapted from speech.",
+        task_caps(["caption"], [
+            source_audio_param("The audio to describe"),
+            {"key": "num_beams", "type": "int", "label": "Search width",
+             "default": 5, "nullable": False, "min": 1, "max": 8,
+             "help": "Higher writes steadier, more conventional sentences "
+                     "and takes a little longer"},
+        ], est_realtime_factor=0.1),
+        6, "fast", LPMC_NC, featured=True,
+        settings={"engine": "lpmusiccaps", "checkpoint": "transfer"},
+        notes="Describes; it cannot answer questions — for that use an "
+              "audio-language model. Non-commercial: the project's licence "
+              "is CC BY-NC 4.0, despite the Hugging Face card saying MIT."),
+    # Experimental captioners, kept out of the catalog until each is proven
+    # on this machine. Every one needs vendored inference code rather than a
+    # plain transformers class, which is why LP-MusicCaps and Qwen2-Audio
+    # ship first; each arrives as another `settings.engine` branch in the
+    # captioning family, not as a family of its own.
+    #
+    #   MusiLingo   (m-a-p/MusiLingo-long-v1 + m-a-p/MERT-v1-330M) — double
+    #     vendoring: MERT is itself remote-code, and the adapter joins it to
+    #     a Vicuna-7B decoder. The most promising of the five.
+    #   MU-LLaMA    (LLaMA-2 + an audio branch) — multi-part research
+    #     checkpoint with no single HF snapshot; needs a staged downloader
+    #     like `_stage_yourmt3` in the transcription family.
+    #   SALMONN     (BEATs + Whisper encoders into Vicuna) — same shape of
+    #     problem, three checkpoints to assemble.
+    #   Pengi       (microsoft/Pengi) — research code, its own checkpoint
+    #     format.
+    #   Audio Flamingo 2 (nvidia/audio-flamingo-2) — strong on music, but
+    #     NVIDIA's licence is non-commercial AND its redistribution terms
+    #     need reading before it is catalogued at all. `commercial_use`
+    #     would be False.
+    #
+    # Deliberately excluded, not merely unbuilt:
+    #   LLark (Spotify) — the paper is public, the weights never were.
+    #   Gemini / GPT-4o audio — cloud only; this app runs on your machine.
+    # ---- Music to words: notation composers ------------------------------
+    #
+    # ABC notation is text, so these are language models: a description (or a
+    # tune) goes in and notation comes out, which the adapter converts to
+    # MIDI so the SoundFont renderer can voice it.
+    task_entry(
+        "compose-text2music", "notation",
+        ["sander-wood/text-to-music"],
+        "Text to notation (BART)",
+        "Writes a tune in ABC notation from a description — BART-base "
+        "fine-tuned on 283,000 text-and-score pairs. Small enough to stay "
+        "loaded beside a music model; writes one stave, in a wide range of "
+        "styles.",
+        task_caps(["compose"], [
+            {"key": "prompt", "type": "string", "label": "Description or ABC",
+             "default": None, "nullable": True,
+             "placeholder": "a traditional Irish dance tune in D",
+             "help": "What to write. The ABC cards send the notation they "
+                     "extracted; typed by hand, a plain description works "
+                     "best"},
+            {"key": "max_tokens", "type": "int", "label": "Length limit",
+             "default": 1024, "nullable": False, "min": 64, "max": 2048,
+             "help": "How long the notation may run before it is cut off"},
+            {"key": "temperature", "type": "float", "label": "Variety",
+             "default": 0.7, "nullable": False, "min": 0.0, "max": 1.5,
+             "step": 0.05,
+             "help": "Lower writes conventional, predictable tunes; higher "
+                     "takes more chances and parses less often"},
+            seed_param(),
+        ], est_realtime_factor=0.1),
+        4, "fast", MIT, featured=True,
+        settings={"engine": "text2music"},
+        notes="One stave, classical notation. Its own authors note it is "
+              "input-sensitive and not built for high creativity."),
+    task_entry(
+        "compose-chatmusician", "notation",
+        [{"repo_id": "m-a-p/ChatMusician", "gated": False,
+          # The repo ships the same weights twice (safetensors and the older
+          # .bin shards); fetching both would double a 13 GB download.
+          "allow_patterns": ["*.safetensors", "*.json", "*.model", "*.txt"]}],
+        "ChatMusician (notation)",
+        "A LLaMA-2 tuned on music theory and ABC notation: give it a tune "
+        "and it writes a new piece in the same key and metre, rather than "
+        "only composing from a description.",
+        task_caps(["compose"], [
+            {"key": "prompt", "type": "string", "label": "Description or ABC",
+             "default": None, "nullable": True,
+             "placeholder": "X:1\nT:My tune\nM:4/4\nK:D\n…",
+             "help": "Paste ABC notation to continue in its style, or "
+                     "describe the piece you want"},
+            {"key": "max_tokens", "type": "int", "label": "Length limit",
+             "default": 1024, "nullable": False, "min": 64, "max": 2048,
+             "help": "How long the notation may run before it is cut off"},
+            {"key": "temperature", "type": "float", "label": "Variety",
+             "default": 0.7, "nullable": False, "min": 0.0, "max": 1.5,
+             "step": 0.05,
+             "help": "Lower is conventional; higher is more adventurous and "
+                     "parses less often"},
+            seed_param(),
+        ], est_realtime_factor=1.2),
+        24, "slow", MIT,
+        variant_of="compose-text2music", format_="7B",
+        settings={"engine": "chatmusician"},
+        notes="13 GB of weights; loading it unloads the resident music "
+              "model."),
+    # Experimental notation models, kept out of the catalog until their
+    # decoding is proven here — both need vendored inference code rather
+    # than a plain transformers class, which is the whole reason the two
+    # above ship first:
+    #   NotaGen (ElectricAlexis/NotaGen, MIT) — bespoke patch-level +
+    #     character-level transformer stack, checkpoint-only repo (.pth, no
+    #     config.json), so the architecture has to be vendored to load it.
+    #   TunesFormer (sander-wood/tunesformer, MIT) — GPT-2 config, but the
+    #     bar-patching input pipeline is not what AutoModel builds.
     # ---- Split & Recombine: token splice (experimental) ------------------
     task_entry(
         "codec-tokensplice", "mlxaudio",
@@ -1607,7 +1878,12 @@ NEW_ENTRIES = [
              "label": "Instrument name", "default": None, "nullable": True,
              "placeholder": "guitar",
              "help": "Names the resulting notes part"},
-        ], est_realtime_factor=0.15),
+                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+             "default": False, "nullable": False,
+             "help": "Also write each note track as ABC notation text — a "
+                     "readable sketch, and the input the notation composers "
+                     "take"},
+], est_realtime_factor=0.15),
         4, "fast", APACHE, featured=True,
         notes="Model weights are bundled in the Python package "
               "(Apache-2.0); the ~40 MB preview SoundFont (MuseScore "
@@ -1623,7 +1899,12 @@ NEW_ENTRIES = [
         task_caps(["transcribe"], [
             source_audio_param("The song to transcribe into per-instrument "
                                "note tracks"),
-        ], est_realtime_factor=0.8),
+                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+             "default": False, "nullable": False,
+             "help": "Also write each note track as ABC notation text — a "
+                     "readable sketch, and the input the notation composers "
+                     "take"},
+], est_realtime_factor=0.8),
         8, "medium", MIT,
         settings={"engine": "mt3", "backend": "mr_mt3"}),
     # transcribe-yourmt3 GATED OUT (2026-08-17): mt3-infer 0.2.0's vendored
@@ -1642,7 +1923,12 @@ NEW_ENTRIES = [
         task_caps(["transcribe"], [
             source_audio_param("Piano audio — solo recordings or a "
                                "separated piano stem"),
-        ], est_realtime_factor=1.0),
+                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+             "default": False, "nullable": False,
+             "help": "Also write each note track as ABC notation text — a "
+                     "readable sketch, and the input the notation composers "
+                     "take"},
+], est_realtime_factor=1.0),
         4, "medium", MIT, featured=True,
         settings={"engine": "transkun"}),
     task_entry(
@@ -1653,7 +1939,12 @@ NEW_ENTRIES = [
         task_caps(["transcribe"], [
             source_audio_param("Monophonic audio — a vocals stem or a "
                                "single-instrument line"),
-        ], est_realtime_factor=0.02),
+                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+             "default": False, "nullable": False,
+             "help": "Also write each note track as ABC notation text — a "
+                     "readable sketch, and the input the notation composers "
+                     "take"},
+], est_realtime_factor=0.02),
         2, "fast", MIT, featured=True,
         settings={"engine": "swiftf0"}),
     task_entry(

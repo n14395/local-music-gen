@@ -141,6 +141,10 @@ struct MainWindow: View {
         // every layer for a yes/no would make Settings look like a
         // dependency of screens that merely honour one preference.
         .environment(env.settings)
+        // Ambient like settings, and optional at the reading end for the same
+        // reason: previews and tests host panes without an environment, and
+        // "no text store" must read as "no text-docs section".
+        .environment(env.textStore)
         // The floor rises with the pinned rail rather than letting it eat the
         // screen behind it: 1100 is already fully spent by Studio in Full
         // control (230 pt of sidebar, a 576 pt parameter panel).
@@ -620,6 +624,7 @@ struct MainWindow: View {
                 parts: env.partsStore, jobs: env.jobsStore,
                 playback: env.playback, workbench: env.workbench,
                 assistant: env.assistant, plans: env.plans,
+                textStore: env.textStore, textChain: env.textChain,
                 route: $actionsRoute,
                 onOpenModels: { openModels(for: $0) },
                 onOpenWorkbench: { notes in
@@ -695,6 +700,9 @@ struct MainWindow: View {
             findMatches: { song in
                 env.studio.pending = .findMatches(materialId: song.id)
             },
+            describe: { song in
+                env.studio.pending = .describe(materialId: song.id)
+            },
             openMix: { song in
                 env.studio.pending = .openMix(songId: song.id)
             },
@@ -756,6 +764,10 @@ struct MainWindow: View {
                 sourceId: materialId)
         case .edit(let materialId):
             openEditor(materialId: materialId)
+        case .describe(let materialId):
+            actionsRoute = .action(recipeId: "describe-song",
+                                   sourceId: materialId)
+            destination = .actions
         case .generate(let presetId, let materialId):
             if let preset = GeneratePreset.preset(id: presetId) {
                 openGenerate(preset: preset, sourceId: materialId)

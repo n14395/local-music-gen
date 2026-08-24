@@ -85,6 +85,26 @@ enum RecipeEngine: Equatable {
     case assistant(kind: AssistKind, needsSource: Bool = false)
     /// The planning half of a generative model, made visible.
     case songPlan(mode: PlanCardMode)
+    /// One source → one music-to-text job → the words, shown and (for most
+    /// cases) saved as a text document. One page type renders all of them,
+    /// the way `.transform(TrackTransform)` drives TransformActionView.
+    /// Distinct from `.assistant`: the assistant reads *measurements* and
+    /// writes for you; these models listen to the audio itself.
+    case textAction(TextAction)
+    /// One track through every installed describer at once — the text-model
+    /// sibling of `.compareModels`, for the same reason that card exists.
+    case textCompare
+    /// A planned multi-stage run (caption→generate, transcribe→compose,
+    /// with or without an editable pause) — see `TextChain.Kind`.
+    case textPipeline(TextChain.Kind)
+    /// The analysis's section map, readable and sliceable. No model of its
+    /// own: it reads stored analysis and offers analyze/mix jobs from there.
+    case mapSections
+    /// CLAP prompt-adherence scoring — an analyze job with `prompt_text`.
+    case promptScore
+    /// Timbre-only ranking over stored CLAP embeddings. No job (the `.match`
+    /// pattern: ranking maths over what the library already holds).
+    case similar
 }
 
 /// What a plan card does with the plan once it has one.
@@ -132,7 +152,14 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
     /// description, lyrics, a title, a plan. Nothing here renders anything,
     /// and nothing here commits until you have read it and said yes.
     case assist
-    case separate, recombine, reimagine
+    case separate
+    /// After separate & analyse, because it is analysis by other means:
+    /// models that *listen* and write down what they hear — descriptions,
+    /// lyrics, tags, notation — plus the round trips that turn those words
+    /// back into music. The mirror of `.assist`, which writes from
+    /// measurements without ever hearing a thing.
+    case words
+    case recombine, reimagine
 
     var id: String { rawValue }
 
@@ -142,6 +169,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
         case .generate: "Generate"
         case .assist: "Help me write"
         case .separate: "Separate & analyse"
+        case .words: "Music → words"
         case .recombine: "Recombine"
         case .reimagine: "Reimagine"
         }
@@ -153,6 +181,7 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
         case .generate: "GENERATE — FROM NOTHING BUT A DESCRIPTION"
         case .assist: "HELP ME WRITE — WORDS FIRST, MUSIC AFTER"
         case .separate: "SEPARATE & ANALYSE"
+        case .words: "MUSIC → WORDS — MODELS THAT LISTEN, AND WHAT THEY HEAR"
         case .recombine: "RECOMBINE — YOUR AUDIO, EXACTLY"
         case .reimagine: "REIMAGINE — A MODEL REWRITES IT"
         }
@@ -180,6 +209,16 @@ struct Recipe: Identifiable, Equatable {
     var prefersModelIds: [String] = []
 
     var isAvailable: Bool { phase <= 2 }
+
+    /// A card that shows (or re-renders) a generative model's own plan.
+    ///
+    /// These sit on the Generate shelf without being generate-preset cards —
+    /// they lead to a render rather than starting one — so the shelf's own
+    /// invariants ("no slots", "every card has a preset") exclude them.
+    var isPlanCard: Bool {
+        if case .songPlan = engine { return true }
+        return false
+    }
 }
 
 /// The launch recipe table. Data only — views render it, JobsStore executes it.
@@ -211,6 +250,19 @@ enum RecipeCatalog {
     /// describable as a whole song. `layer.*` rides along with `stem.*` by the
     /// convention at the top of this file.
     private static func assistSourceSlot() -> Slot {
+        Slot(id: "source", label: "Song or part",
+             accepts: [KindPattern(pattern: "song.mix"),
+                       KindPattern(pattern: "stem.*"),
+                       KindPattern(pattern: "layer.*")],
+             arity: 1...1, autoDerive: nil)
+    }
+
+    /// What the music-to-text cards listen to. The same width as the
+    /// assistant slot and for the same reason — a stem is as describable,
+    /// transcribable and taggable as the song it came from — but its own
+    /// helper, because the two shelves' slots have no reason to stay in
+    /// lockstep if one of them ever narrows.
+    private static func wordsSlot() -> Slot {
         Slot(id: "source", label: "Song or part",
              accepts: [KindPattern(pattern: "song.mix"),
                        KindPattern(pattern: "stem.*"),
@@ -422,6 +474,135 @@ enum RecipeCatalog {
                slots: [assistSourceSlot()],
                engine: .assistant(kind: .nameAndTag, needsSource: true),
                phase: 1),
+
+        // MARK: Music → words
+        //
+        // Models that hear the audio itself — as against the assist shelf,
+        // whose small LLM reads the analyzer's measurements and never hears
+        // a thing. The two compound: what a listener writes down here feeds
+        // the digest the assistant reasons from.
+        Recipe(id: "describe-song",
+               name: "Describe it by listening",
+               tagline: "Not the measurements — a model hears the track, "
+                   + "and the words are saved onto it",
+               mode: .analyse, category: .words, icon: "ear",
+               slots: [wordsSlot()], engine: .textAction(.describe),
+               phase: 1,
+               prefersModelIds: ["caption-lpmusiccaps"]),
+        Recipe(id: "music-to-text",
+               name: "Music → text",
+               tagline: "Caption any audio; read it, copy it, keep it "
+                   + "if you like it",
+               mode: .analyse, category: .words, icon: "captions.bubble",
+               slots: [wordsSlot()], engine: .textAction(.freeCaption),
+               phase: 1),
+        Recipe(id: "ask-about",
+               name: "Ask about this song",
+               tagline: "Type a question about what's in the audio; "
+                   + "get an answer",
+               mode: .analyse, category: .words,
+               icon: "questionmark.bubble",
+               slots: [wordsSlot()], engine: .textAction(.ask), phase: 1),
+        Recipe(id: "compare-describers",
+               name: "Compare describers",
+               tagline: "The same track through every describer you have",
+               mode: .analyse, category: .words,
+               icon: "rectangle.on.rectangle",
+               slots: [wordsSlot()], engine: .textCompare, phase: 1),
+        Recipe(id: "transcribe-lyrics",
+               name: "Transcribe the lyrics",
+               tagline: "The words as sung — isolating the vocal first "
+                   + "if you ask",
+               mode: .analyse, category: .words, icon: "music.mic",
+               slots: [wordsSlot()], engine: .textPipeline(.lyrics),
+               phase: 1,
+               prefersModelIds: ["lyrics-whisper-turbo"]),
+        Recipe(id: "genre-mood-tags",
+               name: "Genre & mood tags",
+               tagline: "Labels land in the same field you tag by hand",
+               mode: .analyse, category: .words, icon: "tag",
+               slots: [wordsSlot()], engine: .textAction(.tags), phase: 1,
+               prefersModelIds: ["tag-clap"]),
+        Recipe(id: "map-sections",
+               name: "Map the sections",
+               tagline: "Intro, verse, chorus — read them, or cut them "
+                   + "into parts",
+               mode: .analyse, category: .words,
+               icon: "rectangle.split.3x1",
+               slots: [wordsSlot()], engine: .mapSections, phase: 1),
+        Recipe(id: "extract-abc",
+               name: "Extract ABC notation",
+               tagline: "The tune as portable text notation",
+               mode: .analyse, category: .words, icon: "music.note.list",
+               slots: [wordsSlot()], engine: .textAction(.extractABC),
+               phase: 1,
+               prefersModelIds: ["transcribe-basicpitch"]),
+        Recipe(id: "music-text-music",
+               name: "Music → text → music",
+               tagline: "Describe it, then generate from the description",
+               mode: .reimagine, category: .words,
+               icon: "arrow.triangle.2.circlepath",
+               slots: [wordsSlot()], engine: .textPipeline(.roundTrip),
+               phase: 1),
+        Recipe(id: "music-text-edit-music",
+               name: "Music → text → edit → music",
+               tagline: "Pause in the middle and rewrite what the "
+                   + "model heard",
+               mode: .reimagine, category: .words, icon: "pencil.line",
+               slots: [wordsSlot()],
+               engine: .textPipeline(.roundTripEdited), phase: 1),
+        Recipe(id: "telephone-game",
+               name: "Telephone game",
+               tagline: "Caption, generate, caption again — rounds of drift",
+               mode: .reimagine, category: .words,
+               icon: "phone.and.waveform",
+               slots: [wordsSlot()], engine: .textPipeline(.telephone),
+               phase: 1),
+        Recipe(id: "abc-roundtrip",
+               name: "ABC: extract → generate",
+               tagline: "Notation out of one model, straight into another",
+               mode: .reimagine, category: .words,
+               icon: "arrow.triangle.2.circlepath.circle",
+               slots: [wordsSlot()], engine: .textPipeline(.abcRoundTrip),
+               phase: 1),
+        Recipe(id: "abc-edit",
+               name: "ABC: extract → edit → generate",
+               tagline: "Rewrite the notation before it becomes sound",
+               mode: .reimagine, category: .words,
+               icon: "square.and.pencil",
+               slots: [wordsSlot()], engine: .textPipeline(.abcEdited),
+               phase: 1),
+        Recipe(id: "prompt-score",
+               name: "Score against its prompt",
+               tagline: "How close did the render land to what you "
+                   + "asked for?",
+               mode: .analyse, category: .words,
+               icon: "gauge.with.needle",
+               slots: [wordsSlot()], engine: .promptScore, phase: 1),
+        Recipe(id: "find-similar",
+               name: "Find similar in library",
+               tagline: "Ranked by how it sounds, not what it's called",
+               mode: .analyse, category: .words,
+               icon: "sparkle.magnifyingglass",
+               slots: [Slot(id: "base", label: "Starting point",
+                            accepts: [KindPattern(pattern: "song.mix"),
+                                      KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*")],
+                            arity: 1...1, autoDerive: nil)],
+               engine: .similar, phase: 1),
+        // Seeds: cheap to promise, one-liners once the pages above exist.
+        Recipe(id: "liner-notes",
+               name: "Liner notes",
+               tagline: "A long-form write-up, as if for the back of "
+                   + "the sleeve",
+               mode: .analyse, category: .words, icon: "doc.text",
+               slots: [wordsSlot()], engine: .textAction(.ask), phase: 3),
+        Recipe(id: "describe-library",
+               name: "Describe everything",
+               tagline: "Every untagged track described in one batch",
+               mode: .analyse, category: .words,
+               icon: "square.stack.3d.up",
+               slots: [], engine: .textAction(.describe), phase: 3),
 
         // MARK: Separate & analyse
         Recipe(id: "melody-notes",

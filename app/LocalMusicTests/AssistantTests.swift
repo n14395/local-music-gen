@@ -224,6 +224,24 @@ final class AssistantTests: XCTestCase {
         XCTAssertTrue(SongDigest.text(payload: nil).isEmpty)
     }
 
+    /// What a listening model wrote joins the digest — one description, the
+    /// tags — and its absence leaves the digest exactly as it was.
+    func testDigestQuotesAListenerAndTags() {
+        let digest = SongDigest.text(
+            payload: nil, title: "Nocturne",
+            descriptions: ["dusty rhodes over swung drums",
+                           "a second opinion, ignored"],
+            tags: ["lo-fi", "hazy"])
+        XCTAssertTrue(digest.contains(
+            "A model that listened to it wrote: dusty rhodes over swung drums"))
+        XCTAssertFalse(digest.contains("second opinion"))
+        XCTAssertTrue(digest.contains("Tags: lo-fi, hazy"))
+
+        let bare = SongDigest.text(payload: nil, title: "Nocturne")
+        XCTAssertFalse(bare.contains("listened"))
+        XCTAssertFalse(bare.contains("Tags:"))
+    }
+
     /// Tempo words, so the model has something to reason with, and the number,
     /// so the next generation can be pinned to it.
     func testTempoIsBothAWordAndANumber() {

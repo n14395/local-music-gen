@@ -212,4 +212,76 @@ final class MigrationTests: XCTestCase {
         filters.query = "saxo"
         XCTAssertEqual(try repo.search(filters).count, 1)
     }
+
+    /// v10 adds the text-document table and its own FTS index. Existing data
+    /// survives, new rows land, and — the part worth pinning — a song whose
+    /// only match is inside a text document still comes back from search.
+    func testV9DataSurvivesV10() throws {
+        let queue = try DatabaseQueue()
+        try DatabaseManager.migrator.migrate(queue, upTo: "v9")
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO song (id, title, prompt, modelId, modelName,
+                                  paramsJSON, durationS, sampleRate, fileName,
+                                  createdAt, rating, notes, favorite, origin)
+                VALUES ('s1', 'Old song', 'lofi', 'm', 'M', '{}', 10, 32000,
+                        's1.wav', '2026-08-01T00:00:00Z', 0, '', 0,
+                        'generated')
+                """)
+        }
+        try DatabaseManager.migrator.migrate(queue)
+
+        XCTAssertNotNil(try queue.read {
+            try SongRecord.fetchOne($0, key: "s1")
+        })
+        try queue.write { db in
+            try TextDocRecord(
+                id: "d1", ownerId: "s1", ownerType: "song",
+                kind: "description",
+                text: "shimmering dulcimer over brushed drums",
+                segmentsJSON: nil, question: nil, language: nil,
+                modelId: "cap", modelName: "Describer", jobId: nil,
+                edited: false, createdAt: Date(), updatedAt: Date())
+                .insert(db)
+        }
+    }
+
+    /// The two FTS indexes union in search: a query that matches nothing on
+    /// the song row itself still finds the song through its description, and
+    /// deleting the document takes the match away again.
+    func testSearchFindsASongThroughItsTextDocs() throws {
+        let db = try DatabaseManager.inMemory()
+        let repo = LibraryRepository(db: db)
+        let parts = PartsRepository(db: db)
+        try repo.insert(SongRecord(
+            id: "a", title: "track001", prompt: "instrumental",
+            lyrics: nil, modelId: "m", modelName: "M", groupId: nil,
+            paramsJSON: "{}", durationS: 5, sampleRate: 32000,
+            fileName: "a.wav", seedUsed: nil, createdAt: Date(), rating: 0,
+            notes: "", favorite: false))
+        let doc = TextDocRecord(
+            id: "d1", ownerId: "a", ownerType: "song", kind: "description",
+            text: "haunted dulcimer waltz", segmentsJSON: nil, question: nil,
+            language: nil, modelId: "cap", modelName: "Describer",
+            jobId: nil, edited: false, createdAt: Date(), updatedAt: Date())
+        try parts.insertTextDoc(doc)
+
+        var filters = LibraryRepository.Filters()
+        filters.query = "dulcimer"
+        XCTAssertEqual(try repo.search(filters).map(\.id), ["a"])
+
+        // A part-owned doc must not surface its song through this union —
+        // the ownerType filter is what keeps part text out of song search.
+        filters.query = "zither"
+        try parts.insertTextDoc(TextDocRecord(
+            id: "d2", ownerId: "p9", ownerType: "part", kind: "description",
+            text: "solo zither", segmentsJSON: nil, question: nil,
+            language: nil, modelId: "cap", modelName: "Describer",
+            jobId: nil, edited: false, createdAt: Date(), updatedAt: Date()))
+        XCTAssertEqual(try repo.search(filters).count, 0)
+
+        filters.query = "dulcimer"
+        try parts.deleteTextDoc(id: "d1")
+        XCTAssertEqual(try repo.search(filters).count, 0)
+    }
 }

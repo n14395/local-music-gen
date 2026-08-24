@@ -1,0 +1,28 @@
+[project]
+name = "adapter-notation"
+version = "0.1.0"
+description = "Notation adapter (text/ABC in, ABC + MIDI out) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.45,<5",
+    # ABC <-> MIDI both ways. Pure python (BSD).
+    "music21>=9.1,<10",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+notation = "adapter_notation.adapter:NotationAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_notation"]

@@ -710,7 +710,7 @@ a preview is a file the client was already handed and told the duration of, so
 "keep the partial" is a client-side decision about a file it already has, never
 something inferred from a cancel. See 5.6.
 
-### 5.4 Task jobs (separate / transcribe / analyze / render / mix / assist / plan)
+### 5.4 Task jobs (separate / transcribe / analyze / render / mix / assist / plan / caption / lyrics / tag / compose)
 
 `task` selects the pipeline. `"generate"` (the default) is the classic
 prompt→audio flow above and is also how audio-conditioned generation works
@@ -727,6 +727,10 @@ other tasks are promptless transformations whose model must list them in
 | `mix`        | dsp           | `mix_spec` (json param) | `audio` (+ optional `stem` per track) |
 | `assist`     | assistant     | `assist_input` (json param; `kind` selects the helper) | `assist` (json) |
 | `plan`       | acestep       | `plan_caption` / `plan_lyrics` (string params) | `plan` (json) |
+| `caption`    | captioning, mlxstt | `source_audio` (+ optional `question` string) | `text` (json) |
+| `lyrics`     | mlxstt        | `source_audio` | `text` (json, with timed segments) |
+| `tag`        | analysis, captioning, mlxstt | `source_audio` | `text` (json, tags array) |
+| `compose`    | notation      | `prompt` (string param — see the note below) | `text` (json, ABC) + `midi` |
 
 Validation for non-generate tasks: `prompt` optional (ignored unless the model
 declares a param for it); `lyrics` present → `422 VALIDATION`; `duration_s`
@@ -737,6 +741,13 @@ non-generate tasks and every rule above applies to them unchanged — `plan` in
 particular runs on a *generate* model (ACE-Step), but a `plan` job still
 submits no `lyrics`, keeps `count` at 1, and may omit `prompt` (its inputs are
 the `plan_*` params).
+
+`compose` is the first task whose *primary* input is a declared **string
+param** (`params.prompt` — a text idea or ABC notation to continue). Submit
+validation only presence-checks non-nullable `audio`/`midi`/`json` params, so
+an empty or missing prompt passes the gate and the notation worker fails the
+job itself. The top-level `prompt` body field is **not** forwarded to task
+workers — clients must send the text as `params.prompt`.
 
 Task jobs reuse the generate status flow (`queued → loading → generating →
 encoding → terminal`); stage detail rides `progress.message` ("separating:
@@ -762,13 +773,14 @@ Result shape (replaces `outputs` for task jobs):
 }
 ```
 
-`kind` is an open set (`stem | midi | analysis | audio | assist | plan` today) —
-clients ignore unknown kinds. `label` carries the human/slot identity (stem
-name, instrument; `preview:<label>` marks an audio audition render paired with
-the same-label midi artifact; an `assist` artifact's label is the `kind` param
-of the job that made it). Artifact files obey the 5.2 delivery invariants
-(complete before `job.completed`, under `Outputs/<job_id>/`, retention GC per
-5.2).
+`kind` is an open set (`stem | midi | analysis | audio | assist | plan | text`
+today) — clients ignore unknown kinds. `label` carries the human/slot identity
+(stem name, instrument; `preview:<label>` marks an audio audition render paired
+with the same-label midi artifact; an `assist` artifact's label is the `kind`
+param of the job that made it; a `text` artifact's label is `caption`,
+`lyrics`, `tags`, `abc`, or `abc:<track>` for the per-track notation of a
+transcribe run). Artifact files obey the 5.2 delivery invariants (complete
+before `job.completed`, under `Outputs/<job_id>/`, retention GC per 5.2).
 
 **`assist`** is one round with the assistant family's small local instruct
 model: the `kind` enum param selects the helper, `assist_input` (json param)
@@ -820,6 +832,55 @@ single `plan` artifact (`plans.json`) and `result.meta` both carry:
 subset may be present**, so read every key as optional. `audio_codes` is the
 token string the chosen plan renders from; the `audio_codes` param on the same
 entries exists to hand it back to a follow-up generate.
+
+**Text artifacts** (`caption` / `lyrics` / `tag` / `compose`, plus
+transcribe's `emit_abc`) share one json payload, and — like `assist` — the
+whole payload also rides `result.meta` under `"text"`, so a client that keeps
+job results never needs to read the file:
+
+```json
+{"text_version": 1,
+ "kind": "caption",                  // "caption" | "lyrics" | "tags" | "abc"
+ "text": "A dreamy lo-fi hip hop beat with vinyl crackle.",
+ "language": "en",                   // lyrics only (detected or requested)
+ "segments": [{"start_s": 0.0, "end_s": 4.2, "text": "…"}],   // lyrics only
+ "tags": [{"label": "techno", "score": 0.83, "group": "genre"}], // tag only;
+                                     // score may be null (LLM taggers), group
+                                     // is "genre" | "mood" | "instrument"
+ "question": "What key is this in?", // caption QA echo, when one was asked
+ "model": "caption-lpmusiccaps",     // catalog id
+ "engine": "lpmusiccaps"}            // the entry's settings.engine
+```
+
+**Every field is optional** — text models evolve the way analyzers do. Empty
+`text` is legal (an instrumental transcribed for lyrics) and clients treat it
+as "the model heard no words", not an error. `result.meta` carries the payload
+plus a short summary an app can put on a job row without parsing:
+`caption` → `caption_preview` (first ~200 chars) and the echoed `question`;
+`lyrics` → `language`, `segments` (count), `lyrics_preview`;
+`tag` → `top_tags` ([str]); `compose` → `abc_preview`, `notes` (count).
+
+- `caption` reads `source_audio` and writes prose. The optional `question`
+  string param turns it into QA on models that support it; `max_tokens` /
+  `temperature` steer LLM captioners.
+- `lyrics` reads `source_audio` and writes the sung words with timed
+  `segments`; optional `language` pins the language instead of detecting it.
+- `tag` reads `source_audio` and writes the `tags` array. Declared by both
+  the zero-shot CLAP tagger (analysis family) and LLM captioners.
+- `compose` reads `params.prompt` (an idea, or ABC to continue) and returns
+  the ABC as its `text` artifact **plus a `midi` artifact** (label
+  `"composition"`, converted engine-side) so the `render` task can voice it.
+  When the model's ABC fails MIDI conversion the job still succeeds with the
+  text artifact alone and `meta.midi_error` explains — the model's notation
+  is real even when it does not parse.
+- `transcribe` with `emit_abc: true` additionally emits one `text` artifact
+  per note track, labeled `abc:<track>`, payload kind `"abc"`.
+- `analyze` on a CLAP-equipped analyzer accepts an optional `prompt_text`
+  string param: the analysis payload and `result.meta` gain
+  `clap_prompt_score` (cosine of CLAP text vs audio embeddings, −1…1) and
+  `clap_prompt` (the echoed text, so a client can tell what the score was
+  measured against). Entries without the CLAP embedder never declare the
+  param.
 
 The `mix` task's `mix_spec` json param (built by the app from stored analysis;
 all beat math is precomputed — the dsp worker performs no analysis):

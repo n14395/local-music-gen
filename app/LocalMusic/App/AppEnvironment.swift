@@ -58,6 +58,8 @@ final class StudioBox {
         case generate(presetId: String, materialId: String?)
         /// Open the Editor on this song or part.
         case edit(materialId: String)
+        /// Open "Describe it by listening" on this song or part.
+        case describe(materialId: String)
     }
     var pending: StudioIntent?
 }
@@ -77,6 +79,9 @@ final class AppEnvironment {
     let modelLibrary = ModelLibraryStore()
     let library: LibraryStore
     let partsStore: PartsStore
+    /// Text documents on songs and parts — what the music-to-text models
+    /// wrote, and what the user typed into the same slots.
+    let textStore: TextStore
     let partsRepo: PartsRepository
     let jobsStore: JobsStore
     let playback: PlaybackController
@@ -104,6 +109,11 @@ final class AppEnvironment {
     /// neither goes through JobsStore. See `MetaJobRunner`.
     let assistant = AssistantStore()
     let plans = PlanStore()
+    /// A music↔text pipeline in flight. Owned here rather than by the page
+    /// for the reason the style-transfer chain is: the telephone game is
+    /// minutes of work, and leaving Actions to listen to round two must not
+    /// cancel round three — nor lose a run parked waiting for an edit.
+    let textChain = TextChainModel()
     /// The Editor is a workspace too: leaving mid-edit and coming back keeps
     /// the file, the selection and the pending program.
     private(set) var editor: EditorStore!
@@ -144,6 +154,7 @@ final class AppEnvironment {
         self.partsRepo = partsRepo
         self.library = LibraryStore(repo: repo, partsRepo: partsRepo)
         self.partsStore = PartsStore(repo: partsRepo)
+        self.textStore = TextStore(repo: partsRepo)
         self.jobsStore = JobsStore(repo: repo, partsRepo: partsRepo)
         self.playback = PlaybackController()
         self.editor = EditorStore(library: library, partsRepo: partsRepo,
@@ -220,21 +231,28 @@ final class AppEnvironment {
         // chained here, in the one place that owns them.
         jobsStore.onSongsIngested = { [weak self] songs in
             self?.library.refreshRecent()
-            for song in songs { self?.autoAnalyze(song: song) }
+            for song in songs { self?.autoRun(song: song) }
             self?.advanceStyleTransfer(songs: songs, parts: [])
+            self?.advanceTextChain(songs: songs, parts: [], texts: [])
         }
         jobsStore.onPartsIngested = { [weak self] parts in
             self?.partsStore.refresh()
             if let songId = parts.first?.songId {
-                self?.autoAnalyzeSong(id: songId)
+                self?.autoRunSong(id: songId)
             }
             self?.advanceStyleTransfer(songs: [], parts: parts)
+            self?.advanceTextChain(songs: [], parts: parts, texts: [])
         }
         library.onSongsImported = { [weak self] songs in
-            for song in songs { self?.autoAnalyze(song: song) }
+            for song in songs { self?.autoRun(song: song) }
         }
         library.onPartsRenamed = { [weak self] in
             self?.partsStore.refresh()
+        }
+        // Same single-assignment rule as its two siblings above.
+        jobsStore.onTextIngested = { [weak self] docs in
+            self?.textStore.noteIngested(docs)
+            self?.advanceTextChain(songs: [], parts: [], texts: docs)
         }
         jobsStore.onEditorArtifact = { [weak self] job, result, purpose in
             self?.editor.handleArtifact(job: job, result: result,
@@ -289,27 +307,74 @@ final class AppEnvironment {
         }
     }
 
-    /// Analysis (tempo/key/beats) powers part badges and later alignment, so
-    /// run it opportunistically whenever new audio appears — if Settings
-    /// allows it, an analyzer is installed and the song hasn't been analyzed
-    /// yet.
-    private func autoAnalyze(song: SongRecord) {
-        let analyzers = catalog.models.filter {
-            $0.installState == .installed
-                && $0.capabilities.supportedTasks.contains("analyze")
-        }
-        // Settings may name an analyzer; one that is gone falls back to the
-        // first installed rather than silently not analyzing.
-        guard settings.autoAnalyze,
-              ((try? partsRepo.analysis(ownerId: song.id)) ?? nil) == nil,
-              let analyzer = analyzers.first(where: {
-                  $0.id == settings.analyzerModelId
-              }) ?? analyzers.first else { return }
+    /// Everything Settings asks for whenever new audio appears: analysis
+    /// (tempo/key/beats, which part badges and alignment read), and — off by
+    /// default — a description, tags, and transcribed lyrics.
+    ///
+    /// The decision itself lives in `AutoRunPlanner`, which is pure and
+    /// tested; this is only the part that needs the stores. Every pass is
+    /// guarded on what the song already carries, because each pass's own
+    /// ingest re-enters the hooks that started it: without the guards, one
+    /// landed description schedules the next one forever.
+    private func autoRun(song: SongRecord) {
+        let passes = AutoRunPlanner.passes(
+            preferences: autoRunPreferences,
+            existing: AutoRunPlanner.Existing(
+                hasAnalysis: ((try? partsRepo.analysis(ownerId: song.id))
+                              ?? nil) != nil,
+                hasDescription: hasTextDoc(song.id, .description),
+                hasTags: !library.tags(for: song.id).isEmpty,
+                hasLyrics: hasTextDoc(song.id, .lyrics)),
+            installed: installedModelIds)
+        guard !passes.isEmpty else { return }
         Task { [jobsStore] in
-            await jobsStore.submitAnalyze(
-                modelId: analyzer.id, ownerId: song.id, ownerType: "song",
-                title: song.title, sourceURL: song.fileURL)
+            for pass in passes {
+                switch pass {
+                case .analyze(let modelId):
+                    await jobsStore.submitAnalyze(
+                        modelId: modelId, ownerId: song.id, ownerType: "song",
+                        title: song.title, sourceURL: song.fileURL)
+                case .describe(let modelId):
+                    await jobsStore.submitCaption(
+                        modelId: modelId, ownerId: song.id, ownerType: "song",
+                        title: song.title, sourceURL: song.fileURL)
+                case .tag(let modelId):
+                    await jobsStore.submitTag(
+                        modelId: modelId, ownerId: song.id, ownerType: "song",
+                        title: song.title, sourceURL: song.fileURL)
+                case .lyrics(let modelId):
+                    await jobsStore.submitLyrics(
+                        modelId: modelId, ownerId: song.id, ownerType: "song",
+                        title: song.title, sourceURL: song.fileURL)
+                }
+            }
         }
+    }
+
+    private var autoRunPreferences: AutoRunPlanner.Preferences {
+        AutoRunPlanner.Preferences(
+            autoAnalyze: settings.autoAnalyze,
+            analyzerModelId: settings.analyzerModelId,
+            autoDescribe: settings.autoDescribe,
+            describerModelId: settings.describerModelId,
+            autoTagScan: settings.autoTagScan,
+            taggerModelId: settings.taggerModelId,
+            autoLyrics: settings.autoLyrics,
+            lyricsTranscriberModelId: settings.lyricsTranscriberModelId)
+    }
+
+    private func installedModelIds(task: String) -> [String] {
+        catalog.models
+            .filter {
+                $0.installState == .installed
+                    && $0.capabilities.supportedTasks.contains(task)
+            }
+            .map(\.id)
+    }
+
+    private func hasTextDoc(_ ownerId: String, _ kind: TextDocKind) -> Bool {
+        ((try? partsRepo.hasTextDoc(ownerId: ownerId,
+                                    kind: kind.rawValue)) ?? false)
     }
 
     /// A job the Style Transfer chain was waiting on has landed.
@@ -329,11 +394,27 @@ final class AppEnvironment {
         }
     }
 
-    private func autoAnalyzeSong(id: String) {
+    /// A job the music↔text pipeline was waiting on has landed. Routed here
+    /// for the same reason the style-transfer chain is: the ingest hooks are
+    /// single-assignment and already spoken for, and submitting the next
+    /// stage needs the stores.
+    private func advanceTextChain(songs: [SongRecord], parts: [PartRecord],
+                                  texts: [TextDocRecord]) {
+        guard textChain.isRunning else { return }
+        Task { @MainActor in
+            await textChain.ingested(
+                songs: songs, parts: parts, texts: texts,
+                context: .init(jobs: jobsStore, parts: partsStore,
+                               library: library, textStore: textStore,
+                               models: catalog.models))
+        }
+    }
+
+    private func autoRunSong(id: String) {
         guard let song = ((try? library.repository.song(id: id)) ?? nil) else {
             return
         }
-        autoAnalyze(song: song)
+        autoRun(song: song)
     }
 
     private func route(_ item: EventStreamClient.StreamItem) {
@@ -395,9 +476,11 @@ final class AppEnvironment {
                 // never ingests anything.
                 styleTransfer.chainStepFailed(jobId: jobId,
                                               message: error.message)
+                textChain.stepFailed(jobId: jobId, message: error.message)
             case .jobCanceled(let jobId):
                 styleTransfer.chainStepFailed(jobId: jobId,
                                               message: "cancelled")
+                textChain.stepFailed(jobId: jobId, message: "cancelled")
             case .libraryFinished(let op):
                 // Applied on any terminal state, not only success: a relocate
                 // that fell over halfway has still moved repositories, and the

@@ -70,3 +70,37 @@ def embed(mono: np.ndarray, sr: int, snapshot: str) -> list[float]:
     if norm > 1e-9:
         pooled = pooled / norm
     return [round(float(v), 6) for v in pooled]
+
+
+def embed_text(texts: list[str], snapshot: str) -> np.ndarray:
+    """L2-normalized text embeddings, one row per string.
+
+    The same space `embed` returns, which is the whole point of CLAP: a
+    cosine between a sentence and a piece of audio is a real answer. Used
+    for zero-shot tagging (a vocabulary of labels) and for prompt-adherence
+    scoring (one prompt).
+
+    Batched in one processor call — the vocabularies are ~150 short strings
+    and a per-string call spends more time in tokenization than in the model.
+    """
+    global _device
+    import torch
+
+    _load(snapshot)
+    if not texts:
+        return np.zeros((0, 512), dtype=np.float32)
+
+    inputs = _processor(text=list(texts), return_tensors="pt", padding=True)
+    inputs = {k: v.to(_device) for k, v in inputs.items()}
+    with torch.no_grad():
+        try:
+            feats = _model.get_text_features(**inputs)
+        except Exception:  # noqa: BLE001 — MPS kernel gaps: retry on CPU
+            _device = "cpu"
+            _model.to("cpu")
+            inputs = {k: v.to("cpu") for k, v in inputs.items()}
+            feats = _model.get_text_features(**inputs)
+    matrix = feats.float().cpu().numpy()
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms < 1e-9] = 1.0
+    return matrix / norms

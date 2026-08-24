@@ -103,6 +103,13 @@ final class ModelRequirementTests: XCTestCase {
         XCTAssertEqual(ModelRequirement.task("render").title,
                        "Render notes to audio")
         XCTAssertEqual(ModelRequirement.mixdown.title, "Create a mix")
+        XCTAssertEqual(ModelRequirement.task("caption").title,
+                       "Describe music by listening")
+        XCTAssertEqual(ModelRequirement.task("lyrics").title,
+                       "Transcribe lyrics")
+        XCTAssertEqual(ModelRequirement.task("tag").title, "Tag genre & mood")
+        XCTAssertEqual(ModelRequirement.task("compose").title,
+                       "Compose from notation")
     }
 
     /// Distinct gates must stay distinguishable — the id is what the Models
