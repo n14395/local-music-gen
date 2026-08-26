@@ -88,8 +88,10 @@ struct StudioParameterPanel: View {
 
     private var inlineBody: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // No "PARAMETERS" title here: the Full control banner sits
+            // directly above and already names what this is. Two headings
+            // for one section is one heading too many.
             HStack(spacing: 9) {
-                Text("PARAMETERS").eyebrow()
                 if state.changedCount > 0 {
                     Text("\(state.changedCount) CHANGED")
                         .font(Bench.Typo.mono(10))

@@ -199,7 +199,7 @@ extension Bench {
         enum Inspector {
             static let takes: CGFloat = 392
             static let parameters: CGFloat = 576
-            static let queue: CGFloat = 340
+            static let queue: CGFloat = 408
             static let library: CGFloat = 404
             static let actionConfig: CGFloat = 352
             static let workbench: CGFloat = 322

@@ -39,7 +39,8 @@ struct OnboardingView: View {
 
     private var plan: OnboardingPlan {
         OnboardingPlan.make(models: catalog.models,
-                            physicalRAM: ModelCatalogStore.physicalRAM)
+                            physicalRAM: ModelCatalogStore.physicalRAM,
+                            hasHFToken: catalog.hasHFToken)
     }
 
     private var selectedBytes: Int64 { plan.bytes(for: selection) }

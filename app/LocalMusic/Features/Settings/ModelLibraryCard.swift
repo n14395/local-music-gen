@@ -18,10 +18,25 @@ import SwiftUI
 struct ModelLibraryCard: View {
     let env: AppEnvironment
 
-    @State private var relocating = false
+    /// Everything the relocate sheet needs, in ONE piece of state.
+    ///
+    /// It used to be a `Bool` plus a separate `URL?`, presented with
+    /// `.sheet(isPresented:)` and unwrapped inside the content closure. Both
+    /// are set in the instant `NSOpenPanel.runModal()` returns — an AppKit
+    /// modal run loop unwinding into a SwiftUI update — and the presentation
+    /// could be processed against a self whose URL was still nil, leaving the
+    /// closure to build an `EmptyView`: a sheet that opens as an empty grey
+    /// box. `.sheet(item:)` hands the value to the closure as a parameter,
+    /// so the data cannot be missing at the moment the content is built.
+    struct RelocateRequest: Identifiable {
+        let destination: URL
+        let info: LibraryInfo
+        var id: String { destination.path }
+    }
+
+    @State private var relocateRequest: RelocateRequest?
     @State private var clearing = false
     @State private var showingReport = false
-    @State private var pendingDestination: URL?
 
     private var store: ModelLibraryStore { env.modelLibrary }
     private var info: LibraryInfo? { store.info }
@@ -52,13 +67,12 @@ struct ModelLibraryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .benchCard()
         .task { await store.refresh() }
-        .sheet(isPresented: $relocating) {
-            if let destination = pendingDestination, let info {
-                LibraryRelocateSheet(info: info, destination: destination) {
-                    disposition in
-                    Task { await beginRelocate(to: destination,
-                                               disposition: disposition) }
-                }
+        .sheet(item: $relocateRequest) { request in
+            LibraryRelocateSheet(info: request.info,
+                                 destination: request.destination) {
+                disposition in
+                Task { await beginRelocate(to: request.destination,
+                                           disposition: disposition) }
             }
         }
         .sheet(isPresented: $clearing) {
@@ -229,9 +243,8 @@ struct ModelLibraryCard: View {
         panel.prompt = "Use This Folder"
         panel.message = "Choose where LocalMusic keeps model weights."
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard url.path != info?.path else { return }
-        pendingDestination = url
-        relocating = true
+        guard let info, url.path != info.path else { return }
+        relocateRequest = RelocateRequest(destination: url, info: info)
     }
 
     /// The engine reads HF_HOME once, at launch. So the files move first, then

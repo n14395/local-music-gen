@@ -120,8 +120,18 @@ struct QueueRail: View {
     /// One control over both halves of the queue: the engine's render hold
     /// (§5.7) and every transfer (§4.2). Holding only one of them would leave
     /// the Mac just as busy as before, which is the thing the button is for.
+    /// The circled glyph, against the rows' filled one: this is the same verb
+    /// aimed at everything rather than at one row, and the two have to be
+    /// tellable apart at a glance in the same 340 pt.
     private var pauseAllButton: some View {
-        Button(jobs.queueHeld ? "Resume all" : "Pause all") {
+        QueueIconButton(
+            symbol: jobs.queueHeld ? "play.circle" : "pause.circle",
+            help: jobs.queueHeld
+                ? "Start the queue again"
+                : "Hold the queue and pause every transfer — the render "
+                  + "already running finishes",
+            label: jobs.queueHeld ? "Resume all" : "Pause all",
+            tone: jobs.queueHeld ? .accent : .quiet) {
             let held = jobs.queueHeld
             Task {
                 await jobs.holdQueue(!held)
@@ -133,11 +143,6 @@ struct QueueRail: View {
                 else { await downloads.pauseAll() }
             }
         }
-        .buttonStyle(.bench(jobs.queueHeld ? .accent : .quiet))
-        .help(jobs.queueHeld
-              ? "Start the queue again"
-              : "Hold the queue and pause every transfer — the render already "
-                + "running finishes")
     }
 
     /// Finished rows wait to be dismissed now rather than vanishing on a
@@ -148,14 +153,16 @@ struct QueueRail: View {
     @ViewBuilder
     private var clearFinishedButton: some View {
         if load.finished > 0 {
-            Button("Clear done") {
+            // An eraser, not a bin: this clears rows off a list, it does not
+            // delete anything that was made.
+            QueueIconButton(symbol: "eraser",
+                            help: "Dismiss every row that has finished",
+                            label: "Clear done") {
                 // Both halves: the button counts the transfers that have
                 // stopped as rows to clear, so it had better clear them.
                 jobs.dismissFinished()
                 downloads.dismissAllFinished()
             }
-            .buttonStyle(.bench(.quiet))
-            .help("Dismiss every row that has finished")
         }
     }
 

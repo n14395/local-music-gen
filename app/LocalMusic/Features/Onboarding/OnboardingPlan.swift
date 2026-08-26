@@ -63,15 +63,19 @@ struct OnboardingPlan: Equatable {
     /// with an 8 GB floor and MPS rendering (10 s in ~3 s) it is the
     /// smallest and fastest real generator on the sheet.
     ///
-    /// No gated model appears here on purpose. All three Stability entries
-    /// need a Hugging Face token in the Keychain, and demanding one in the
-    /// first minute of the app is the wrong trade for a fifth generator.
+    /// `stableaudio3-medium` is the one gated entry offered here. A gated
+    /// model cannot be demanded of someone in their first minute, so it is
+    /// never ticked without a token already in the Keychain — the row still
+    /// appears, says what it needs, and points at Settings. That is the same
+    /// bargain the RAM check makes: show the model, explain the obstacle,
+    /// never start a download that is going to 401.
     static let generatorIds = [
         "acestep-base",              // songs with vocals, up to 5 minutes
         "acestep-15-dit-base",       // unlocks extract / layer / complete
         "minimax-music3-mlx-small",  // a second, different full-song model
         "musicgen-small",            // instrumental, runs on an 8 GB Mac
         "melodyflow-t24",            // fast instrumental + edits audio with words
+        "stableaudio3-medium",       // the Stable Audio lineage (gated)
     ]
 
     /// What a generator buys that its description does not already say.
@@ -151,7 +155,12 @@ struct OnboardingPlan: Equatable {
     /// - Parameters:
     ///   - models: the catalog as the engine reported it.
     ///   - physicalRAM: this Mac's memory, against each model's declared floor.
-    static func make(models: [ModelInfo], physicalRAM: Int64) -> OnboardingPlan {
+    ///   - hasHFToken: whether a Hugging Face token is in the Keychain. A
+    ///     gated model without one is offered but never ticked — its download
+    ///     would 401, and a first run that opens with a failed install is
+    ///     worse than one that opens with an honest note.
+    static func make(models: [ModelInfo], physicalRAM: Int64,
+                     hasHFToken: Bool = false) -> OnboardingPlan {
         let byId = Dictionary(models.map { ($0.id, $0) },
                               uniquingKeysWith: { first, _ in first })
 
@@ -165,10 +174,19 @@ struct OnboardingPlan: Equatable {
                 guard model.installState != .installed else { return nil }
 
                 let needs = model.requirements.minRamBytes
-                let blocked = needs > physicalRAM
-                    ? "Needs \(ByteFormat.wholeGB(needs)) GB — this Mac has "
-                        + "\(ByteFormat.wholeGB(physicalRAM)) GB"
-                    : nil
+                // RAM first: a model this Mac cannot run is a harder no than
+                // a licence it has not accepted yet.
+                let blocked: String?
+                if needs > physicalRAM {
+                    blocked = "Needs \(ByteFormat.wholeGB(needs)) GB — this "
+                        + "Mac has \(ByteFormat.wholeGB(physicalRAM)) GB"
+                } else if model.license.requiresHfToken, !hasHFToken {
+                    blocked = "Needs a Hugging Face token and its licence "
+                        + "accepted — add one in Settings, then download it "
+                        + "from Models"
+                } else {
+                    blocked = nil
+                }
                 return Item(model: model, isEssential: essential,
                             defaultsOn: blocked == nil, blockedReason: blocked)
             }

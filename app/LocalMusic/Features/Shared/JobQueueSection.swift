@@ -1,5 +1,52 @@
 import SwiftUI
 
+/// A queue row's action, drawn as its symbol instead of its name.
+///
+/// The rows are narrow — a panel-width card carrying a model's name, a
+/// progress bar and a transfer line — and "Pause" plus "Cancel" spelled out
+/// took more of that width than the name they sat beside. The symbols say
+/// the same thing in a fifth of the space, and the row can finally show what
+/// is downloading.
+///
+/// Every one takes a `help` string, and it is not optional: an icon with no
+/// tooltip is a rebus. It doubles as the accessibility label, so VoiceOver
+/// reads the sentence rather than "button".
+struct QueueIconButton: View {
+    let symbol: String
+    let help: String
+    /// Words beside the glyph. The row controls go without — they sit in a
+    /// card that names what they act on. The header's two do not: "pause"
+    /// and "pause everything" are different promises, and the header is the
+    /// one place with room to say which.
+    var label: String?
+    var tone: BenchSecondaryButtonStyle.Tone = .quiet
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    // A fixed box, so a wide glyph (trash) and a narrow one
+                    // (pause) do not make two differently-sized buttons.
+                    .frame(width: 14, height: 14)
+                if let label {
+                    Text(label).font(Bench.Typo.secondaryEmphasis)
+                }
+            }
+        }
+        .buttonStyle(BenchSecondaryButtonStyle(
+            tone: tone,
+            padding: EdgeInsets(top: 6, leading: label == nil ? 8 : 10,
+                                bottom: 6, trailing: label == nil ? 8 : 10)))
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
 /// The queue, as the design draws it in Studio's right rail.
 ///
 /// It is embedded at several call sites, so it stays a plain vertical stack
@@ -249,11 +296,16 @@ struct JobRow: View {
                 .foregroundStyle(Bench.Palette.textMuted)
         }
         if isRunning {
-            Button(isCanceling ? "Canceling…" : "Cancel", action: onCancel)
-                .buttonStyle(.bench(.quiet))
-                .controlSize(.small)
-                .disabled(isCanceling)
-                .opacity(isCanceling ? 0.6 : 1)
+            QueueIconButton(
+                symbol: "trash",
+                // The disabled state has to say what it is waiting for: the
+                // word "Canceling…" used to carry that, and an icon cannot.
+                help: isCanceling
+                    ? "Asked the engine to stop — some models only stop at "
+                      + "the end of a step"
+                    : "Cancel this render",
+                tone: .destructive, isDisabled: isCanceling,
+                action: onCancel)
         } else {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
@@ -386,6 +438,26 @@ struct DownloadQueueRow: View {
                                          ? Bench.Palette.accent
                                          : Bench.Palette.textMuted)
                 }
+                // Back beside the percentage now that they are glyphs: as
+                // words they crowded the title off the row, but two icons
+                // cost about what "0%" does, and this keeps the card three
+                // lines instead of four.
+                //
+                // Pause is accepted but does nothing over a runtime install or
+                // a download still waiting for its turn (contract §4.2).
+                // Offering a live button there would be an affordance that
+                // quietly fails, so it dims and says why.
+                let blocked = DownloadFormat.pauseBlockedReason(info.state)
+                let paused = info.state == .paused
+                QueueIconButton(
+                    symbol: paused ? "play.fill" : "pause.fill",
+                    help: blocked ?? (paused ? "Resume this download"
+                                             : "Pause this download"),
+                    isDisabled: blocked != nil) {
+                    paused ? onResume() : onPause()
+                }
+                QueueIconButton(symbol: "trash", help: "Cancel this download",
+                                tone: .destructive, action: onCancel)
             }
             if let fraction {
                 BenchProgressBar(fraction: fraction, height: 5,
@@ -396,28 +468,6 @@ struct DownloadQueueRow: View {
             }
             Text(metaLine)
                 .metaLine()
-            // The controls get a row of their own, centered: the top row
-            // belongs to the model's name (buttons there truncated it to a
-            // few characters), and the transfer line above is already full
-            // at panel width.
-            HStack(spacing: 9) {
-                Spacer(minLength: 6)
-                // Pause is accepted but does nothing over a runtime install or a
-                // download still waiting for its turn (contract §4.2). Offering
-                // a live button there would be an affordance that quietly
-                // fails, so it dims and says why.
-                let blocked = DownloadFormat.pauseBlockedReason(info.state)
-                Button(info.state == .paused ? "Resume" : "Pause") {
-                    info.state == .paused ? onResume() : onPause()
-                }
-                .buttonStyle(.bench(.quiet))
-                .disabled(blocked != nil)
-                .opacity(blocked == nil ? 1 : 0.45)
-                .help(blocked ?? "")
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.bench(.destructive))
-                Spacer(minLength: 6)
-            }
         }
         .padding(13)
         // The selected-card treatment means "this is the one the machine is

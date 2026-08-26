@@ -12,7 +12,8 @@ final class OnboardingPlanTests: XCTestCase {
 
     private func model(_ id: String, minRamGB: Int64 = 8,
                        sizeBytes: Int64 = 1_000_000_000,
-                       installState: String = "not_installed") -> ModelInfo {
+                       installState: String = "not_installed",
+                       gated: Bool = false) -> ModelInfo {
         let json = """
         {
           "id": "\(id)", "family": "test",
@@ -29,7 +30,7 @@ final class OnboardingPlanTests: XCTestCase {
                             "disk_bytes": \(sizeBytes),
                             "speed_tier": "fast"},
           "license": {"name": "MIT", "commercial_use": true,
-                       "requires_hf_token": false, "url": null},
+                       "requires_hf_token": \(gated), "url": null},
           "notes": null
         }
         """
@@ -69,6 +70,42 @@ final class OnboardingPlanTests: XCTestCase {
         // MelodyFlow is the one model that edits existing audio toward a
         // prompt — the "Edit with words" card is dimmed without it.
         XCTAssertTrue(OnboardingPlan.generatorIds.contains("melodyflow-t24"))
+    }
+
+    // MARK: - Gated models
+
+    /// The sheet may offer a gated model, but it must never start a download
+    /// that is going to 401 — so without a token it arrives unticked, with
+    /// the one thing the user can act on written under it.
+    func testAGatedModelWithoutATokenArrivesUntickedWithAReason() {
+        let models = [model("stableaudio3-medium", gated: true)]
+        let plan = OnboardingPlan.make(models: models, physicalRAM: 64 * gib,
+                                       hasHFToken: false)
+        let sa3 = plan.generators.first { $0.id == "stableaudio3-medium" }
+        XCTAssertEqual(sa3?.defaultsOn, false)
+        XCTAssertEqual(sa3?.blockedReason,
+                       "Needs a Hugging Face token and its licence accepted "
+                       + "— add one in Settings, then download it from Models")
+        XCTAssertFalse(plan.defaultSelection.contains("stableaudio3-medium"))
+    }
+
+    func testAGatedModelWithATokenArrivesTicked() {
+        let models = [model("stableaudio3-medium", gated: true)]
+        let plan = OnboardingPlan.make(models: models, physicalRAM: 64 * gib,
+                                       hasHFToken: true)
+        let sa3 = plan.generators.first { $0.id == "stableaudio3-medium" }
+        XCTAssertEqual(sa3?.defaultsOn, true)
+        XCTAssertNil(sa3?.blockedReason)
+    }
+
+    /// A Mac that cannot run it needs to hear that first: the token is
+    /// fixable in a minute, the memory is not.
+    func testRAMIsReportedBeforeTheToken() {
+        let models = [model("stableaudio3-medium", minRamGB: 64, gated: true)]
+        let plan = OnboardingPlan.make(models: models, physicalRAM: 8 * gib,
+                                       hasHFToken: false)
+        XCTAssertEqual(plan.generators.first?.blockedReason,
+                       "Needs 64 GB — this Mac has 8 GB")
     }
 
     func testTheSetsDoNotOverlap() {

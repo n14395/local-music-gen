@@ -267,7 +267,8 @@ struct MainWindow: View {
             return
         }
         let plan = OnboardingPlan.make(models: env.catalog.models,
-                                       physicalRAM: ModelCatalogStore.physicalRAM)
+                                       physicalRAM: ModelCatalogStore.physicalRAM,
+                                       hasHFToken: env.catalog.hasHFToken)
         guard !plan.isEmpty else {
             onboardingVersion = Self.onboardingVersionCurrent
             return

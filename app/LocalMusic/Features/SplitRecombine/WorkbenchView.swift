@@ -274,7 +274,8 @@ struct WorkbenchScreen: View {
                 RenderStatusPill(
                     label: showingBench
                         ? "Back to render"
-                        : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
+                        : QueueLoad.of(jobs: renderingJobs).renderingLabel,
+                    direction: showingBench ? .toRender : .toWorkspace) {
                     showingBench.toggle()
                 }
             }

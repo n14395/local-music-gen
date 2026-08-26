@@ -146,7 +146,8 @@ struct StyleTransferScreen: View {
                     RenderStatusPill(
                         label: showingWorkspace
                             ? "Back to render"
-                            : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
+                            : QueueLoad.of(jobs: renderingJobs).renderingLabel,
+                        direction: showingWorkspace ? .toRender : .toWorkspace) {
                         showingWorkspace.toggle()
                     }
                 }

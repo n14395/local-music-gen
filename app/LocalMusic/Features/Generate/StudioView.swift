@@ -152,7 +152,8 @@ struct StudioView: View {
                     RenderStatusPill(
                         label: showingComposer
                             ? "Back to render"
-                            : QueueLoad.of(jobs: renderingJobs).renderingLabel) {
+                            : QueueLoad.of(jobs: renderingJobs).renderingLabel,
+                        direction: showingComposer ? .toRender : .toWorkspace) {
                         showingComposer.toggle()
                     }
                     .help(showingComposer ? "Watch the render" : "Set up another take")
@@ -190,7 +191,7 @@ struct StudioView: View {
                     if let model {
                         nameCard
                         lengthAndTakes(model)
-                        if mode == .simple { advancedSummary }
+                        advancedSummary
                         // Full control's parameters belong in the reading
                         // order they are used in: after the settings they
                         // refine, before the button that spends them. They
@@ -517,8 +518,18 @@ struct StudioView: View {
     /// The whole parameter panel reduced to one legible line. This is the
     /// design's answer to a disclosure triangle: you can always read what the
     /// advanced values are without opening anything.
+    /// The disclosure for the parameters, and the summary of what they are
+    /// currently set to.
+    ///
+    /// It stays put in both modes rather than disappearing on the way in: it
+    /// is the header of the section it opens, so the way back out is where
+    /// the way in was, and the chevron says which of the two you are looking
+    /// at. Its summary line keeps earning its place while the panel is open —
+    /// the panel is a screenful of controls, and this stays one line of what
+    /// they add up to.
     private var advancedSummary: some View {
-        Button { mode = .full } label: {
+        let isOpen = mode == .full
+        return Button { mode = isOpen ? .simple : .full } label: {
             HStack(spacing: 14) {
                 Text(summaryText)
                     .font(Bench.Typo.mono(12))
@@ -527,7 +538,7 @@ struct StudioView: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
                     Text("Full control")
-                    Image(systemName: "chevron.down")
+                    Image(systemName: isOpen ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                 }
                 .font(Bench.Typo.secondaryEmphasis)
@@ -541,7 +552,8 @@ struct StudioView: View {
             .contentShape(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card))
         }
         .buttonStyle(.plain)
-        .help("Open the full parameter panel")
+        .help(isOpen ? "Hide the full parameter panel"
+                     : "Open the full parameter panel")
     }
 
     /// `SEED random · STEPS 8 · GUIDANCE 7` — built from whatever the model
