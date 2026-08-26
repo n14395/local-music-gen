@@ -672,7 +672,15 @@ struct MainWindow: View {
         case .models:
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,
                          telemetry: env.telemetry,
-                         requirement: $modelRequirement)
+                         requirement: $modelRequirement,
+                         // An action named in the properties rail opens on
+                         // the Actions shelf, with no source picked — the
+                         // errand was "show me this card", not "run it".
+                         onOpenAction: { recipe in
+                             actionsRoute = .action(recipeId: recipe.id,
+                                                    sourceId: nil)
+                             destination = .actions
+                         })
         }
     }
 

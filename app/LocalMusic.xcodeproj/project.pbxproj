@@ -50,6 +50,7 @@
 		2985BC5086FC7F5DCB316183 /* RecipeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E6DE1F20D909F8C29E1B2F /* RecipeCatalog.swift */; };
 		2A2763C809F6E7E23B100519 /* BatchTagActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFC8F678ACB77A431C11C6A8 /* BatchTagActionView.swift */; };
 		2A3F1519AF88A7C1FB3C2C7E /* WaveformRegionSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE3504128BDE7D3124B5EB5 /* WaveformRegionSelector.swift */; };
+		2A9A8BCCBCA9D18DF529C0E6 /* ModelInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB35DBA04731019904CB9C2 /* ModelInspector.swift */; };
 		2C6672D9F8CBE3B5AA017B4A /* EditModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87619ED8F62E2EBB008A4B68 /* EditModelTests.swift */; };
 		2C6C8083C0A3CE57F937D1C7 /* SongPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88B95821CE92BBB11A857EA8 /* SongPlan.swift */; };
 		2CF40F5771E1AF9A5B65B1E5 /* StudioModelPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACCC364569257E190D17568 /* StudioModelPolicyTests.swift */; };
@@ -430,6 +431,7 @@
 		8B310934EA1EAABC6E805EF8 /* SettingsRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRows.swift; sourceTree = "<group>"; };
 		8C21F3A0F54E7AFF37B0222F /* CatalogReadinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogReadinessTests.swift; sourceTree = "<group>"; };
 		8C6D2BB338442BBA6B0169F5 /* QueueRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueRail.swift; sourceTree = "<group>"; };
+		8EB35DBA04731019904CB9C2 /* ModelInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelInspector.swift; sourceTree = "<group>"; };
 		8F98D7DD87336216B842525C /* ModelTagFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelTagFilter.swift; sourceTree = "<group>"; };
 		9091C71C3928EF12DFE681FC /* AssistantActionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantActionView.swift; sourceTree = "<group>"; };
 		9331DDA9F4663C9A41422AE6 /* MashabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MashabilityTests.swift; sourceTree = "<group>"; };
@@ -814,6 +816,7 @@
 				1A260F3F596251D118ED4E49 /* AddModelSheet.swift */,
 				F5F3B6DAD1A39AE32F810C89 /* CatalogFormatting.swift */,
 				3A1D0146786B31CBCCEA8B35 /* ModelActions.swift */,
+				8EB35DBA04731019904CB9C2 /* ModelInspector.swift */,
 				AC9E3074FD13E635FBCE6079 /* ModelListLayout.swift */,
 				230CFED4A4EB25610A6E3EDF /* ModelRowView.swift */,
 				B93371C184140FEF67B3DE0B /* ModelSearch.swift */,
@@ -1220,6 +1223,7 @@
 				A62FD2150636737E5FDC3298 /* ModelBadges.swift in Sources */,
 				EF1C3B1C512B56277E608A1A /* ModelCatalogStore.swift in Sources */,
 				5E56290C1CDF27866114E66D /* ModelChooser.swift in Sources */,
+				2A9A8BCCBCA9D18DF529C0E6 /* ModelInspector.swift in Sources */,
 				F6C4BC87D31E8A7BD79DB8BE /* ModelLibraryCard.swift in Sources */,
 				9711DC10F07587FF6FB7C0B1 /* ModelLibraryStore.swift in Sources */,
 				41A9646A4515E3B3F898CF41 /* ModelListLayout.swift in Sources */,

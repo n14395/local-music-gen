@@ -198,7 +198,11 @@ extension Bench {
         /// room for label + slider + value, the queue does not.
         enum Inspector {
             static let takes: CGFloat = 392
-            static let parameters: CGFloat = 576
+            /// The model properties rail. Narrower than a parameters panel
+            /// because it is read rather than operated: label-and-value
+            /// facts and a list of action names, none of which needs the
+            /// width a row of sliders does.
+            static let modelProperties: CGFloat = 384
             static let queue: CGFloat = 408
             static let library: CGFloat = 404
             static let actionConfig: CGFloat = 352

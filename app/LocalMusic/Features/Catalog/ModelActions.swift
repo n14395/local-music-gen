@@ -19,7 +19,29 @@ import Foundation
 enum ModelActions {
     static func count(for model: ModelInfo,
                       in recipes: [Recipe] = RecipeCatalog.all) -> Int {
-        recipes.filter { enables(model, $0) }.count
+        list(for: model, in: recipes).count
+    }
+
+    /// The recipes themselves, for the inspector that names them rather than
+    /// counting them. Grouped by the same category the Actions gallery uses,
+    /// so "what can this model do" and "where do I find it" read as the same
+    /// list in the same order.
+    static func list(for model: ModelInfo,
+                     in recipes: [Recipe] = RecipeCatalog.all) -> [Recipe] {
+        recipes.filter { enables(model, $0) }
+    }
+
+    /// `list(for:)` in gallery order: category first, then the catalog's own
+    /// order within it — never alphabetical, which would scatter the
+    /// variations of one job across the panel.
+    static func grouped(for model: ModelInfo,
+                        in recipes: [Recipe] = RecipeCatalog.all)
+        -> [(category: RecipeCategory, recipes: [Recipe])] {
+        let enabled = list(for: model, in: recipes)
+        return RecipeCategory.allCases.compactMap { category in
+            let matching = enabled.filter { $0.category == category }
+            return matching.isEmpty ? nil : (category, matching)
+        }
     }
 
     static func enables(_ model: ModelInfo, _ recipe: Recipe) -> Bool {

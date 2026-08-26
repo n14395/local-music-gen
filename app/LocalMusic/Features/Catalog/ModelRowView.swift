@@ -36,6 +36,10 @@ struct ModelRowView: View {
     /// Library's Favourites, which is for music and parts.
     var isFavourite: Bool = false
     var onToggleFavourite: () -> Void = {}
+    /// Whether the properties rail is showing this model.
+    var isInspected: Bool = false
+    /// Clicking the row's body — not its buttons — opens the rail on it.
+    var onInspect: (() -> Void)?
 
     private var model: ModelInfo { row.model }
     private var isInstalled: Bool { model.installState == .installed }
@@ -78,11 +82,20 @@ struct ModelRowView: View {
             controls
         }
         .padding(.horizontal, 16).padding(.vertical, 15)
-        .benchCard(fill: isDownloading ? Bench.Palette.cardSelected : Bench.Palette.card,
-                   stroke: isDownloading ? Bench.Palette.accent.opacity(0.24)
-                                         : Bench.Palette.cardStroke)
+        .benchCard(fill: isDownloading || isInspected ? Bench.Palette.cardSelected
+                                                     : Bench.Palette.card,
+                   stroke: isInspected ? Bench.Palette.accent.opacity(0.45)
+                       : isDownloading ? Bench.Palette.accent.opacity(0.24)
+                                       : Bench.Palette.cardStroke)
         .opacity(isDimmed ? 0.72 : 1)
         .padding(.leading, row.isVariant ? 26 : 0)
+        // The whole card is the target, but it goes on last and at low
+        // priority so the Download, Pause and heart buttons inside it keep
+        // their own taps — a row-level gesture added above them would eat
+        // every click before they saw it.
+        .contentShape(Rectangle())
+        .onTapGesture { onInspect?() }
+        .help(onInspect == nil ? "" : "Show this model's properties")
     }
 
     // MARK: - Title

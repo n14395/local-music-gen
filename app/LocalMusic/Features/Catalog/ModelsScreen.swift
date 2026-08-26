@@ -20,9 +20,17 @@ struct ModelsScreen: View {
     /// models that would ungate it, and says so. A binding because dismissing
     /// the chip has to clear it for whoever routed you.
     @Binding var requirement: ModelRequirement?
+    /// Open an Actions card named in the properties rail. Absent where the
+    /// screen has no route to Actions — the rail then just lists them.
+    var onOpenAction: ((Recipe) -> Void)?
 
     @State private var licenseTarget: ModelInfo?
     @State private var deleteTarget: ModelInfo?
+    /// The row whose properties the rail is showing. By id rather than by
+    /// value: the catalog is refetched on every install-state change, and a
+    /// stored `ModelInfo` would go stale the moment the model it describes
+    /// finished downloading.
+    @State private var inspectedId: String?
     @State private var showAddModel = false
     @State private var filter = ""
     @State private var selectedTags: Set<String> = []
@@ -139,8 +147,19 @@ struct ModelsScreen: View {
         VStack(spacing: 0) {
             topBar
             if !catalog.models.isEmpty { filterBar }
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            HStack(spacing: 0) {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .top)
+                if let model = inspectedModel {
+                    BenchInspector(width: Bench.Metrics.Inspector.modelProperties) {
+                        ModelInspector(
+                            model: model,
+                            actionCount: ModelActions.count(for: model),
+                            onOpenAction: { onOpenAction?($0) })
+                    }
+                }
+            }
         }
         .background(Bench.Palette.windowBackground)
         .task { await catalog.refresh() }
@@ -393,7 +412,23 @@ struct ModelsScreen: View {
             },
             onDismissFailure: { downloads.clearFailure(forModel: listRow.model.id) },
             isFavourite: catalog.isFavourite(listRow.model.id),
-            onToggleFavourite: { catalog.toggleFavourite(listRow.model.id) })
+            onToggleFavourite: { catalog.toggleFavourite(listRow.model.id) },
+            isInspected: inspectedId == listRow.model.id,
+            // Clicking the row that is already open closes the rail: the same
+            // gesture both ways, and the list gets its width back without
+            // hunting for a close button.
+            onInspect: {
+                inspectedId = inspectedId == listRow.model.id
+                    ? nil : listRow.model.id
+            })
+    }
+
+    /// Looked up fresh on every read, so the rail follows a model through its
+    /// own install: the bytes land, the catalog refetches, and the panel says
+    /// "Installed: yes" without the user touching anything.
+    private var inspectedModel: ModelInfo? {
+        guard let inspectedId else { return nil }
+        return catalog.models.first { $0.id == inspectedId }
     }
 
     private func requestDownload(_ model: ModelInfo) {
