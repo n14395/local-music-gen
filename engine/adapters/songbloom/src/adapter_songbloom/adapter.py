@@ -7,10 +7,18 @@ rsxdalv fork (pinned tarball) and the weights on the user-owned HF mirror
 rtikw/SongBloom (unmodified copy of the last surviving host, ModelScope).
 Everything here treats the project as frozen.
 
-CPU-only and slow: 30 s of song took 657 s in triage. The catalog entry
-carries that estimate honestly. Shims (all proven): torch.load→CPU; `.cuda()`
-no-ops on Tensor, Module AND Lightning's own device mixin (their sampler line
-`.eval().cuda().to(dtype)` reaches all three); DISABLE_FLASH_ATTN=1.
+Device: settings.device = "mps" routes the whole pipeline to the GPU by
+retargeting the `.cuda()` shims — upstream's single device move is
+`.eval().cuda().to(dtype)` in build_from_trainer, and the sampler captures
+its device from the moved parameters AFTER that line, so `.cuda()`→
+`.to("mps")` carries everything (inputs included — their generate moves
+them to self.device itself). fp32 on either device; their cuda-autocast
+contexts already degrade to no-ops here, proven by the CPU runs. Without
+the setting: CPU, the proven triage configuration (30 s of song in 657 s;
+the catalog estimate carries that honestly). Shims common to both routes:
+torch.load→CPU; `.cuda()` patched on Tensor, Module AND Lightning's own
+device mixin (all three are reached); DISABLE_FLASH_ATTN=1 (its absence
+asserts CUDA).
 
 Lyrics use their structure-token format — `[intro] [verse] ... [chorus] ...`
 with `.`-separated lines and ` , ` between sections (see the entry's
@@ -30,6 +38,10 @@ import soundfile as sf
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb)
 
+# Read at torch import: lets any stray op the MPS backend lacks fall back
+# to CPU instead of aborting the render. Harmless on the CPU route.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 REPO_COMMIT = "712b35aac8893c5dc442dd299b5e998628d08ef8"
 REPO_TARBALL = (f"https://github.com/rsxdalv/SongBloom/archive/"
                 f"{REPO_COMMIT}.tar.gz")
@@ -41,6 +53,7 @@ class SongBloomAdapter(ModelAdapter):
         self.model = None
         self.variant = str(self.settings.get("variant")
                            or "songbloom_full_150s_dpo")
+        self.device = str(self.settings.get("device") or "cpu")
 
     def _cache_dir(self) -> str:
         hf_home = os.environ.get("HF_HOME")
@@ -64,6 +77,20 @@ class SongBloomAdapter(ModelAdapter):
 
         cache = self._cache_dir()
         repo = os.path.join(cache, f"SongBloom-{REPO_COMMIT}")
+
+        def adopt_extracted() -> None:
+            # GitHub names a tarball's top directory after the repository,
+            # and the pinned fork is called "tts-webui.SongBloom", not
+            # "SongBloom" — so claim whichever directory carries the commit.
+            if os.path.isdir(repo):
+                return
+            for entry in os.listdir(cache):
+                full = os.path.join(cache, entry)
+                if entry.endswith(f"-{REPO_COMMIT}") and os.path.isdir(full):
+                    os.rename(full, repo)
+                    return
+
+        adopt_extracted()
         if not os.path.isdir(repo):
             progress_cb(None, "fetching the SongBloom code (pinned fork "
                               "snapshot, first use only)")
@@ -78,18 +105,28 @@ class SongBloomAdapter(ModelAdapter):
             with tarfile.open(tar_path) as tar:
                 tar.extractall(cache, filter="data")
             os.unlink(tar_path)
+            adopt_extracted()
+        if not os.path.isdir(repo):
+            raise RuntimeError("the SongBloom code snapshot failed to "
+                               "extract — nothing in the cache carries "
+                               f"commit {REPO_COMMIT[:8]}")
         if repo not in sys.path:
             sys.path.insert(0, repo)
         os.environ["DISABLE_FLASH_ATTN"] = "1"
 
         # Their sampler: .eval().cuda().to(dtype) — unconditional. Lightning's
-        # mixin overrides Module.cuda, so all three need the no-op.
-        torch.Tensor.cuda = lambda self, *a, **kw: self
-        torch.nn.Module.cuda = lambda self, *a, **kw: self
+        # mixin overrides Module.cuda, so all three need the same patch. On
+        # the MPS route `.cuda()` becomes the move to the GPU; the sampler
+        # captures its device from the moved parameters right after.
+        if self.device == "mps":
+            _cuda = lambda self, *a, **kw: self.to("mps")  # noqa: E731
+        else:
+            _cuda = lambda self, *a, **kw: self  # noqa: E731
+        torch.Tensor.cuda = _cuda
+        torch.nn.Module.cuda = _cuda
         from lightning.fabric.utilities import device_dtype_mixin
 
-        device_dtype_mixin._DeviceDtypeModuleMixin.cuda = (
-            lambda self, *a, **kw: self)
+        device_dtype_mixin._DeviceDtypeModuleMixin.cuda = _cuda
         orig_load = torch.load
         torch.load = lambda *a, **kw: orig_load(
             *a, **{"map_location": "cpu", "weights_only": False, **kw})
@@ -105,7 +142,9 @@ class SongBloomAdapter(ModelAdapter):
         self.model = SongBloom_Sampler.build_from_trainer(
             cfg, strict=True, dtype=torch.float32)
         self.model.set_generation_params(**cfg.inference)
-        progress_cb(None, "SongBloom ready (CPU — renders take many minutes; "
+        progress_cb(None, "SongBloom ready on the GPU (MPS)"
+                          if self.device == "mps" else
+                          "SongBloom ready (CPU — renders take many minutes; "
                           "the estimate is honest)")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
@@ -139,7 +178,9 @@ class SongBloomAdapter(ModelAdapter):
         prompt_wav = torch.from_numpy(mono).unsqueeze(0)
 
         progress_cb(None, "writing the song (autoregressive sketch + "
-                          "diffusion; many minutes on CPU)")
+                          "diffusion"
+                          + ("; GPU)" if self.device == "mps"
+                             else "; many minutes on CPU)"))
         if cancel.cancelled:
             raise CancelledError()
         wav = self.model.generate(lyrics, prompt_wav)

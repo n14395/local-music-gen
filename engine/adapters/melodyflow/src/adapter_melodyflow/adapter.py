@@ -3,9 +3,11 @@ other family here has — text-guided EDITING of existing audio (regularized
 latent inversion: feed a song, describe the change).
 
 The inference code lives only in the vendored HF Space audiocraft tree (see
-pyproject); weights are the ordinary HF snapshot. Faster than realtime on CPU
-(10 s of audio in 6.4 s at 8 euler steps, measured); MPS deliberately not
-auto-selected until proven — settings.device overrides.
+pyproject); weights are the ordinary HF snapshot. The catalog entry ships
+settings.device = "mps" (proven 2026-08-26: 10 s of audio in 2.8 s
+steady-state at 8 euler steps, load 7 s, no NaN/artifacts; the machine's
+very first run pays a one-off ~2 min Metal shader warm-up). CPU remains the
+adapter default fallback and is itself faster than realtime (10 s in 7.2 s).
 
 xformers is stubbed FUNCTIONALLY before audiocraft imports: this tree calls
 `ops.memory_efficient_attention` even on the torch path, so the stub routes it

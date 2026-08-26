@@ -65,6 +65,18 @@ final class ParameterFormState {
     }
 }
 
+/// Everything the in-house material picker needs, bundled so any form that
+/// renders audio params can be handed one value and offer the library
+/// instead of the system file panel.
+struct MaterialPickerContext {
+    let catalog: ModelCatalogStore
+    let library: LibraryStore
+    let parts: PartsStore
+    let jobs: JobsStore
+    let playback: PlaybackController
+    let onOpenModels: () -> Void
+}
+
 /// Generic renderer over `[ParamSpec]` — the app has zero hardcoded per-model UI.
 ///
 /// The redesign changes three things about it. Parameters are sorted into named
@@ -79,26 +91,105 @@ struct ParameterFormView: View {
     /// group cards and only ever show a handful of params.
     var grouped = true
     var labelWidth: CGFloat = 112
+    /// Lay the group cards out two-across when the container is wide enough.
+    /// Only the inline form asks for it — a fixed-width inspector has room
+    /// for exactly one column, and says so by leaving this off.
+    var allowsTwoColumns = false
+    /// When present, audio and MIDI params pick from the library instead of
+    /// the filesystem — the user's material lives in the app, not in Finder.
+    /// `_file` params keep the system panel either way: they ride the audio
+    /// type for upload plumbing but carry non-library payloads (a .nam amp
+    /// capture), so the library has nothing to offer them.
+    var materialPicker: MaterialPickerContext?
+
+    /// The audio/MIDI param a library pick is currently open for.
+    private struct MaterialPick: Identifiable {
+        let key: String
+        let label: String
+        let isMidi: Bool
+        var id: String { key }
+    }
 
     @State private var audioPickerKey: String?
+    @State private var materialPick: MaterialPick?
 
     /// Internal params (e.g. mix_spec) are populated programmatically, never shown.
     private var visibleSpecs: [ParamSpec] {
         state.specs.filter { $0.isInternal != true }
     }
 
-    var body: some View {
-        if grouped {
+    /// The width one column of group cards needs before a second is worth
+    /// having: a card is a label column plus a slider plus its number, and
+    /// below this the help text under each control wraps to ribbons.
+    private static let columnMinWidth: CGFloat = 330
+
+    private func oneColumn(_ groups: [ParameterGroups.Group]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(groups) { groupCard($0) }
+        }
+    }
+
+    /// Cards dealt alternately into two columns rather than split down the
+    /// middle: group sizes vary a lot (a two-knob card beside an eight-knob
+    /// one), and alternating keeps the columns closer in height.
+    private func twoColumns(_ groups: [ParameterGroups.Group]) -> some View {
+        let left = groups.enumerated().filter { $0.offset.isMultiple(of: 2) }
+            .map(\.element)
+        let right = groups.enumerated().filter { !$0.offset.isMultiple(of: 2) }
+            .map(\.element)
+        return HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(ParameterGroups.groups(for: visibleSpecs)) { group in
-                    groupCard(group)
+                ForEach(left) { groupCard($0) }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(right) { groupCard($0) }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        // What ViewThatFits measures: two columns plus the gap. Narrower
+        // than this and it falls through to the stacked layout.
+        .frame(minWidth: Self.columnMinWidth * 2 + 14)
+    }
+
+    var body: some View {
+        Group {
+            if grouped {
+                let groups = ParameterGroups.groups(for: visibleSpecs)
+                if allowsTwoColumns, groups.count > 1 {
+                    // Two columns only where they genuinely fit: below the
+                    // pair's minimum the whole arrangement is rejected and
+                    // the cards stack, rather than squeezing two columns of
+                    // sliders into a width neither can use.
+                    ViewThatFits(in: .horizontal) {
+                        twoColumns(groups)
+                        oneColumn(groups)
+                    }
+                } else {
+                    oneColumn(groups)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(visibleSpecs) { spec in
+                        row(spec)
+                    }
                 }
             }
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(visibleSpecs) { spec in
-                    row(spec)
-                }
+        }
+        .sheet(item: $materialPick) { pick in
+            if let picker = materialPicker {
+                PartPickerSheet(
+                    slotLabel: pick.label,
+                    accepts: pick.isMidi
+                        ? [KindPattern(pattern: "notes.*")]
+                        : [KindPattern(pattern: "song.mix"),
+                           KindPattern(pattern: "stem.*"),
+                           KindPattern(pattern: "layer.*")],
+                    autoDerive: nil, catalog: picker.catalog,
+                    library: picker.library, parts: picker.parts,
+                    jobs: picker.jobs, playback: picker.playback,
+                    onOpenModels: picker.onOpenModels,
+                    onPick: { state.audioSelections[pick.key] = $0.fileURL })
             }
         }
     }
@@ -317,7 +408,15 @@ struct ParameterFormView: View {
                     .foregroundStyle(Bench.Palette.textFaintest)
             }
             Spacer(minLength: 4)
-            Button("Choose…") { audioPickerKey = spec.key }
+            Button("Choose…") {
+                if materialPicker != nil, !spec.key.hasSuffix("_file") {
+                    materialPick = MaterialPick(key: spec.key,
+                                                label: spec.label,
+                                                isMidi: spec.type == .midi)
+                } else {
+                    audioPickerKey = spec.key
+                }
+            }
                 .buttonStyle(.bench(.quiet))
                 .fileImporter(
                     isPresented: Binding(

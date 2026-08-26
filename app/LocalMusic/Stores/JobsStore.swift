@@ -1268,6 +1268,8 @@ final class JobsStore {
             active[jobId]?.preview = preview
         case .jobLog(let jobId, let line):
             appendLog(jobId: jobId, line: line)
+        case .jobTakeDone(let jobId, let take, let output):
+            ingestTake(jobId: jobId, take: take, output: output)
         case .jobCompleted(let jobId):
             // the engine drops a succeeded job's previews; keeping the path
             // would leave the card drawing from a file that is gone
@@ -1282,10 +1284,14 @@ final class JobsStore {
             active[jobId]?.status = .failed
             active[jobId]?.error = error
             canceling.remove(jobId)
+            // Takes that landed incrementally before the failure stay in the
+            // library — they are finished audio; only the bookkeeping goes.
+            finishTakeIngest(jobId)
         case .jobCanceled(let jobId):
             active[jobId]?.status = .canceled
             notifyOnLanding.remove(jobId)
             canceling.remove(jobId)
+            finishTakeIngest(jobId)
         case .queueState(let held, _):
             queueHeld = held
         default:
@@ -1334,85 +1340,152 @@ final class JobsStore {
             onPartsIngested(parts)
             return
         }
-        var songs: [SongRecord] = []
-        // Names are allocated up front, and the whole submission shares one
-        // base: four takes of one prompt are four attempts at the same thing,
-        // so they read as track042a…d — or "Warehouse jam (a)"…"(d)" under a
-        // typed name — rather than as four unrelated tracks. The DB is
-        // consulted once, and only when the name was left at its default.
         let outputs = result.outputs ?? []
         if let seed = outputs.first?.seedUsed { lastSeedUsed = seed }
+        // Takes may have landed one by one while the batch ran
+        // (`job.take_done`); this pass ingests only what is left, so a
+        // client that saw every event and one that saw none converge on the
+        // same library.
+        var state = takeIngests.removeValue(forKey: jobId)
+            ?? TakeIngest(names: allocateTakeNames(jobId: jobId,
+                                                   count: outputs.count))
+        var fresh: [SongRecord] = []
+        for (take, output) in outputs.enumerated()
+        where !state.ingested.contains(take) {
+            guard take < state.names.count else { continue }
+            let title = (try? repo.uniqueTitle(state.names[take],
+                                               reserved: state.usedTitles))
+                ?? state.names[take]
+            if let song = ingestOneTake(job: job, output: output,
+                                        title: title) {
+                state.usedTitles.insert(title)
+                fresh.append(song)
+                state.songs.append(song)
+            }
+        }
+        active[jobId]?.status = .succeeded
+        active[jobId]?.progress = nil
+        record(state.songs, for: jobId)
+        // Only the takes this pass created: the incremental ones were
+        // announced when they landed, and announcing a song twice makes
+        // anything counting arrivals count it twice.
+        onSongsIngested(fresh)
+    }
+
+    // MARK: Incremental takes
+
+    /// Bookkeeping for a batch whose takes land one at a time. `names` are
+    /// the batch's raw letter names (track042a…d); titles are made unique
+    /// per insert, so the set of already-used ones travels along.
+    private struct TakeIngest {
+        var names: [String]
+        var ingested: Set<Int> = []
+        var usedTitles: Set<String> = []
+        var songs: [SongRecord] = []
+    }
+
+    private var takeIngests: [String: TakeIngest] = [:]
+
+    /// A finished take of a still-running batch (`job.take_done`): land it in
+    /// the library now, so DONE fills while the next take renders. The
+    /// completion pass skips whatever landed here.
+    private func ingestTake(jobId: String, take: Int, output: JobOutput) {
+        guard let info = active[jobId]?.info, info.isGenerate else { return }
+        // Generative parts route through their own ingest at completion, and
+        // are single-take by construction — nothing to land early.
+        if case .generativePart? = pendingContext[jobId] { return }
+        var state = takeIngests[jobId]
+            ?? TakeIngest(names: allocateTakeNames(
+                jobId: jobId, count: max(info.count, take + 1)))
+        guard !state.ingested.contains(take),
+              take < state.names.count else { return }
+        if take == 0, let seed = output.seedUsed { lastSeedUsed = seed }
+        let title = (try? repo.uniqueTitle(state.names[take],
+                                           reserved: state.usedTitles))
+            ?? state.names[take]
+        if let song = ingestOneTake(job: info, output: output, title: title) {
+            state.ingested.insert(take)
+            state.usedTitles.insert(title)
+            state.songs.append(song)
+            takeIngests[jobId] = state
+            onSongsIngested([song])
+        }
+    }
+
+    /// Drop a batch's incremental bookkeeping without touching its songs —
+    /// takes that landed before a failure or cancel are finished audio and
+    /// stay in the library.
+    private func finishTakeIngest(_ jobId: String) {
+        if let state = takeIngests.removeValue(forKey: jobId),
+           !state.songs.isEmpty {
+            record(state.songs, for: jobId)
+        }
+    }
+
+    /// Names are allocated up front, and the whole submission shares one
+    /// base: four takes of one prompt are four attempts at the same thing,
+    /// so they read as track042a…d — or "Warehouse jam (a)"…"(d)" under a
+    /// typed name — rather than as four unrelated tracks. The DB is
+    /// consulted once, and only when the name was left at its default.
+    private func allocateTakeNames(jobId: String, count: Int) -> [String] {
         let chosen: String?
         if case .generate(let name)? = pendingContext[jobId] { chosen = name }
         else { chosen = nil }
         let base = chosen ?? SongRecord.trackName(
             number: ((try? repo.highestTrackNumber()) ?? 0) + 1)
-        // A name identifies one track — the rule the rename path enforces by
-        // refusing. Ingest cannot refuse (the audio exists), so a name that
-        // was taken while this rendered is made free instead.
-        var reserved: Set<String> = []
-        let names = SongRecord.takeNames(base: base, count: outputs.count)
-            .map { name -> String in
-                let unique = (try? repo.uniqueTitle(name, reserved: reserved))
-                    ?? name
-                reserved.insert(unique)
-                return unique
-            }
-        for (take, output) in outputs.enumerated() {
-            let songId = UUID().uuidString.lowercased()
-            let fileName = songId + ".wav"
-            let dest = StoragePaths.libraryAudio.appendingPathComponent(fileName)
-            do {
-                try FileManager.default.createDirectory(
-                    at: StoragePaths.libraryAudio, withIntermediateDirectories: true)
-                // same volume → atomic rename
-                try FileManager.default.moveItem(
-                    at: URL(fileURLWithPath: output.path), to: dest)
-            } catch {
-                lastError = "Could not move finished audio: \(error.localizedDescription)"
-                continue
-            }
-            // The take's own `meta` is stored alongside the params it was made
-            // with. For a model that plans before it renders, that is the plan
-            // — tempo, key, and the sketch the renderer worked from — and it
-            // is the only record of it: the engine keeps no history, so a plan
-            // not written down here is gone the moment the job ages out.
-            //
-            // It rides *inside* paramsJSON under "meta" rather than in a
-            // column of its own because that field is already the bag of
-            // everything-about-this-render, and only these cards read it.
-            var stored = job.params
-            if let meta = output.meta ?? job.result?.meta, !meta.isEmpty {
-                stored["meta"] = .object(meta)
-            }
-            let paramsJSON = (try? String(
-                decoding: BackendClient.encoder.encode(stored),
-                as: UTF8.self)) ?? "{}"
-            // Generated tracks are named trackNNN; the prompt identifies them
-            // in the UI, shown after the name rather than baked into it. The
-            // letter is keyed to the take's position, so a take whose file
-            // could not be moved leaves a gap rather than shifting every take
-            // after it onto the wrong letter.
-            let title = names[take]
-            let song = SongRecord(
-                id: songId, title: title, prompt: job.prompt,
-                lyrics: job.lyrics, modelId: job.modelId,
-                modelName: modelName(job.modelId), groupId: job.groupId,
-                paramsJSON: paramsJSON, durationS: output.durationS,
-                sampleRate: output.sampleRate, fileName: fileName,
-                seedUsed: output.seedUsed, createdAt: Date(), rating: 0,
-                notes: "", favorite: false)
-            do {
-                try repo.insert(song)
-                songs.append(song)
-            } catch {
-                lastError = "Could not save song: \(error.localizedDescription)"
-            }
+        return SongRecord.takeNames(base: base, count: count)
+    }
+
+    /// Move one finished take into the library and insert its record. The
+    /// letter is keyed to the take's position, so a take whose file could
+    /// not be moved leaves a gap rather than shifting every take after it
+    /// onto the wrong letter.
+    private func ingestOneTake(job: JobInfo, output: JobOutput,
+                               title: String) -> SongRecord? {
+        let songId = UUID().uuidString.lowercased()
+        let fileName = songId + ".wav"
+        let dest = StoragePaths.libraryAudio.appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(
+                at: StoragePaths.libraryAudio, withIntermediateDirectories: true)
+            // same volume → atomic rename
+            try FileManager.default.moveItem(
+                at: URL(fileURLWithPath: output.path), to: dest)
+        } catch {
+            lastError = "Could not move finished audio: \(error.localizedDescription)"
+            return nil
         }
-        active[jobId]?.status = .succeeded
-        active[jobId]?.progress = nil
-        record(songs, for: jobId)
-        onSongsIngested(songs)
+        // The take's own `meta` is stored alongside the params it was made
+        // with. For a model that plans before it renders, that is the plan
+        // — tempo, key, and the sketch the renderer worked from — and it
+        // is the only record of it: the engine keeps no history, so a plan
+        // not written down here is gone the moment the job ages out.
+        //
+        // It rides *inside* paramsJSON under "meta" rather than in a
+        // column of its own because that field is already the bag of
+        // everything-about-this-render, and only these cards read it.
+        var stored = job.params
+        if let meta = output.meta ?? job.result?.meta, !meta.isEmpty {
+            stored["meta"] = .object(meta)
+        }
+        let paramsJSON = (try? String(
+            decoding: BackendClient.encoder.encode(stored),
+            as: UTF8.self)) ?? "{}"
+        let song = SongRecord(
+            id: songId, title: title, prompt: job.prompt,
+            lyrics: job.lyrics, modelId: job.modelId,
+            modelName: modelName(job.modelId), groupId: job.groupId,
+            paramsJSON: paramsJSON, durationS: output.durationS,
+            sampleRate: output.sampleRate, fileName: fileName,
+            seedUsed: output.seedUsed, createdAt: Date(), rating: 0,
+            notes: "", favorite: false)
+        do {
+            try repo.insert(song)
+            return song
+        } catch {
+            lastError = "Could not save song: \(error.localizedDescription)"
+            return nil
+        }
     }
 
     /// Route a task job's typed artifacts: stems/notes → parts library,

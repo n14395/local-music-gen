@@ -337,10 +337,10 @@ struct JobRow: View {
 /// always supported and the UI has never offered.
 ///
 /// The throughput readout goes through the same `DownloadRate` EMA the Models
-/// screen uses. The engine samples speed by re-walking the model cache twice a
-/// second, so dividing a raw sample straight into the remaining bytes makes an
-/// ETA that swings between minutes and hours — and two rows showing the same
-/// download would disagree with each other.
+/// screen uses. The engine samples speed by re-walking the model cache once a
+/// second, so dividing a raw sample straight into the remaining bytes makes
+/// an ETA that swings between minutes and hours — and two rows showing the
+/// same download would disagree with each other.
 struct DownloadQueueRow: View {
     let info: DownloadInfo
     let title: String
@@ -386,6 +386,22 @@ struct DownloadQueueRow: View {
                                          ? Bench.Palette.accent
                                          : Bench.Palette.textMuted)
                 }
+            }
+            if let fraction {
+                BenchProgressBar(fraction: fraction, height: 5,
+                                 tint: info.state == .downloading
+                                     ? Bench.Palette.accent
+                                     : Bench.Palette.textMuted,
+                                 track: Color.white.opacity(0.09))
+            }
+            Text(metaLine)
+                .metaLine()
+            // The controls get a row of their own, centered: the top row
+            // belongs to the model's name (buttons there truncated it to a
+            // few characters), and the transfer line above is already full
+            // at panel width.
+            HStack(spacing: 9) {
+                Spacer(minLength: 6)
                 // Pause is accepted but does nothing over a runtime install or a
                 // download still waiting for its turn (contract §4.2). Offering
                 // a live button there would be an affordance that quietly
@@ -400,16 +416,8 @@ struct DownloadQueueRow: View {
                 .help(blocked ?? "")
                 Button("Cancel", action: onCancel)
                     .buttonStyle(.bench(.destructive))
+                Spacer(minLength: 6)
             }
-            if let fraction {
-                BenchProgressBar(fraction: fraction, height: 5,
-                                 tint: info.state == .downloading
-                                     ? Bench.Palette.accent
-                                     : Bench.Palette.textMuted,
-                                 track: Color.white.opacity(0.09))
-            }
-            Text(metaLine)
-                .metaLine()
         }
         .padding(13)
         // The selected-card treatment means "this is the one the machine is

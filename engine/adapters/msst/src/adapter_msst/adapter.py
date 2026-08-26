@@ -15,6 +15,15 @@ Two engines behind one venv (both live on the torch 2.7 pair):
 
 Both repos are research code with no package: pinned GitHub tarballs are
 fetched at first load and driven as subprocesses of this venv's python.
+
+Device: settings.device = "mps" routes both engines to the GPU. MSST's
+pinned inference.py already auto-picks MPS on its own — the CPU pin was
+only ever our `--force_cpu` flag, dropped on this route. BSRNN's device
+line knows only cuda-or-cpu (`eval.device=mps` would silently land on
+CPU), so load() teaches it "mps" with an idempotent text patch on the
+pinned snapshot. MPS subprocesses run with PYTORCH_ENABLE_MPS_FALLBACK=1
+so any op the backend lacks falls back instead of aborting. Without the
+setting: CPU, the triage-proven configuration.
 """
 
 from __future__ import annotations
@@ -64,6 +73,7 @@ class MSSTAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
+        self.device = str(self.settings.get("device") or "cpu")
 
     def _cache(self, name: str) -> str:
         hf_home = os.environ.get("HF_HOME")
@@ -99,7 +109,31 @@ class MSSTAdapter(ModelAdapter):
         else:
             self.repo = self._ensure_repo(
                 BSRNN_TARBALL, BSRNN_COMMIT, "bsrnn", progress_cb)
+            self._teach_bsrnn_mps(self.repo)
         progress_cb(None, "separation runtime ready")
+
+    @staticmethod
+    def _teach_bsrnn_mps(repo: str) -> None:
+        """BSRNN's separate.py resolves eval.device as cuda-or-cpu, so
+        `eval.device=mps` would silently land on CPU; teach it "mps" with a
+        text patch on the pinned snapshot (idempotent — the CLI behaves
+        identically unless mps is actually asked for and available)."""
+        path = os.path.join(repo, "separate.py")
+        with open(path) as f:
+            src = f.read()
+        if '"mps"' in src:
+            return
+        old = ('        "cuda" if (torch.cuda.is_available() and '
+               'args.eval.device == "cuda") else "cpu"\n')
+        if old not in src:
+            raise RuntimeError("the pinned separate.py no longer carries "
+                              "the expected device line — refusing to guess")
+        new = ('        "mps" if (args.eval.device == "mps" and '
+               'torch.backends.mps.is_available())\n'
+               '        else "cuda" if (torch.cuda.is_available() and '
+               'args.eval.device == "cuda") else "cpu"\n')
+        with open(path, "w") as f:
+            f.write(src.replace(old, new, 1))
 
     def generate(self, prompt, lyrics, params, out_path, progress_cb,
                  cancel) -> GenerateResult:
@@ -117,9 +151,13 @@ class MSSTAdapter(ModelAdapter):
         else:
             cmd, cleanup = self._bsrnn_cmd(src, out_dir, params, progress_cb)
 
-        progress_cb(None, "separating (this can take several minutes)")
+        progress_cb(None, "separating (on the GPU)" if self.device == "mps"
+                          else "separating (this can take several minutes)")
+        env = {**os.environ}
+        if self.device == "mps":
+            env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         try:
-            proc = subprocess.Popen(cmd, cwd=self.repo,
+            proc = subprocess.Popen(cmd, cwd=self.repo, env=env,
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, text=True)
             tail: list[str] = []
@@ -176,8 +214,10 @@ class MSSTAdapter(ModelAdapter):
                "--config_path", config,
                "--start_check_point", ckpt,
                "--input_folder", indir,
-               "--store_dir", out_dir,
-               "--force_cpu"]
+               "--store_dir", out_dir]
+        if self.device != "mps":
+            # Without the flag their CLI auto-picks MPS on its own.
+            cmd.append("--force_cpu")
         return cmd, lambda: shutil.rmtree(indir, ignore_errors=True)
 
     def _bsrnn_cmd(self, src: str, out_dir: str, params: dict,
@@ -212,7 +252,7 @@ class MSSTAdapter(ModelAdapter):
         cmd = [sys.executable, "separate.py",
                f"file={src}", f"model_dir={model_dir}",
                "targets=[" + ",".join(targets) + "]",
-               "eval.device=cpu", f"rec_dir={out_dir}"]
+               f"eval.device={self.device}", f"rec_dir={out_dir}"]
         return cmd, lambda: None
 
     def unload(self) -> None:

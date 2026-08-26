@@ -129,16 +129,16 @@ final class BenchDesignTests: XCTestCase {
     // MARK: download readout
 
     /// Throughput and ETA go through an EMA, because the engine samples speed
-    /// by re-walking the model cache twice a second and a raw sample swings
-    /// between zero and several times the true rate. Dividing one straight
-    /// into the remaining bytes prints "3 hours" and then "4 minutes".
+    /// by re-walking the model cache once a second and a raw sample swings
+    /// around the true rate. Dividing one straight into the remaining bytes
+    /// prints "3 hours" and then "4 minutes".
     func testRateSmoothsTowardsTheTrueSpeed() {
         var rate = DownloadRate()
         rate.ingest(12_000_000)
         XCTAssertEqual(rate.bytesPerSecond ?? 0, 12_000_000, accuracy: 1)
-        // A single zero sample must not collapse the reading.
+        // A single zero sample must not collapse the reading (half weight).
         rate.ingest(0)
-        XCTAssertEqual(rate.bytesPerSecond ?? 0, 9_000_000, accuracy: 1)
+        XCTAssertEqual(rate.bytesPerSecond ?? 0, 6_000_000, accuracy: 1)
     }
 
     /// A stalled download divided by ~0 bytes/s claims an ETA of several

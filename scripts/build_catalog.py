@@ -1930,7 +1930,8 @@ NEW_ENTRIES = [
     entry("songgen-mixed-pro", "songgen",
           ["LiuZH-19/SongGen_mixed_pro",
            {"repo_id": "ZhenYe234/xcodec", "gated": False,
-            "allow_patterns": ["xcodec_hubert_general_audio_v2.pth"]}],
+            "allow_patterns": ["xcodec_hubert_general_audio_v2.pth",
+                               "config_hubert_general.yaml"]}],
           "SongGen (text + lyrics → song)",
           "Single-stage autoregressive song generation (ICML 2025): text "
           "and lyrics in, a sung mixed track out — with optional "
@@ -1963,17 +1964,21 @@ NEW_ENTRIES = [
           {"name": "Apache-2.0 (code); research checkpoint",
            "commercial_use": False, "requires_hf_token": False,
            "url": "https://github.com/LiuZH-19/SongGen"},
+          settings={"device": "mps"},
           notes="The mixed-mode checkpoint (one combined track). A "
                 "dual-track variant (separate vocal + accompaniment) exists "
-                "upstream and is a natural follow-up. MPS untried — CPU "
-                "for now."),
+                "upstream and is a natural follow-up. The 2026-08-26 MPS "
+                "port is unmeasured — the est still carries the CPU "
+                "baseline, so the estimate is worst-case until a render "
+                "lands."),
     entry("diffrhythm2", "diffrhythm2",
           ["ASLP-lab/DiffRhythm2"],
           "DiffRhythm2 (full songs)",
           "Full-song lyrics-to-song via block-cache flow matching — "
           "structured songs up to 3½ minutes, style set by a text prompt "
-          "or a reference clip, lyrics as timestamped LRC lines. Slow on "
-          "CPU; the estimate is honest.",
+          "or a reference clip, lyrics as timestamped LRC lines. Runs on "
+          "the GPU (MPS) as of 2026-08-26; the estimate still shows the "
+          "measured CPU worst case.",
           {
               "supports_lyrics": True, "instrumental_only": False,
               "duration": {"min_s": 10, "max_s": 210, "default_s": 60},
@@ -2005,21 +2010,25 @@ NEW_ENTRIES = [
               ],
           },
           16, "slow", APACHE,
+          settings={"device": "mps"},
           notes="Needs espeak-ng (`brew install espeak-ng`) for the lyrics "
                 "front-end — the adapter says so if it is missing. Chinese "
-                "and English lyrics are strongest; Japanese supported."),
+                "and English lyrics are strongest; Japanese supported. The "
+                "2026-08-26 MPS port is unmeasured — the est still carries "
+                "the CPU baseline (11 s per song-second), so treat the "
+                "estimate as worst-case until a render lands."),
     entry("inspiremusic-15b-long", "inspiremusic",
           ["rtikw/InspireMusic-1.5B-Long"],
           "InspireMusic 1.5B Long",
           "Alibaba's long-form model: 3+ minutes of coherent instrumental "
-          "structure, and true CONTINUATION of existing audio. Very slow "
-          "on CPU — roughly half an hour per minute of audio — until an "
-          "MPS port lands; queue it and walk away.",
+          "structure, and true CONTINUATION of existing audio. Runs on "
+          "the GPU at about 3.5× the clip length — a coffee, not an "
+          "afternoon.",
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 10, "max_s": 180, "default_s": 30},
               "sample_rate": 48000, "outputs_per_job_max": 1,
-              "est_seconds_per_audio_second": 29.0,
+              "est_seconds_per_audio_second": 3.5,
               "params": [
                   {"key": "extend_audio", "type": "audio",
                    "label": "Continue source", "default": None,
@@ -2050,13 +2059,16 @@ NEW_ENTRIES = [
                            "place in the song"},
               ],
           },
-          16, "slow", APACHE,
+          16, "medium", APACHE,
+          settings={"device": "mps"},
           notes="Fast mode (no flow-matching refinement) — the proven "
                 "configuration. Upstream is effectively abandoned; the "
                 "code rides a pinned snapshot. Weights are an unmodified "
                 "mirror of Alibaba's ModelScope original (Apache-2.0; the "
-                "official HF repos were delisted). A device-unification "
-                "MPS port is the known path to usable speed."),
+                "official HF repos were delisted). The device-unification "
+                "MPS port landed 2026-08-26: 10 s in 33 s measured (8.6× "
+                "the CPU baseline); CPU remains the fallback when MPS is "
+                "absent."),
     entry("songbloom-150s-dpo", "songbloom",
           # Patterns keep the sibling non-DPO checkpoint (7.8 GB) out of the
           # download; the yaml resolves the rest of these by name.
@@ -2073,6 +2085,10 @@ NEW_ENTRIES = [
           "(about 22× the song's length); queue it and walk away.",
           {
               "supports_lyrics": True, "instrumental_only": False,
+              # Not merely supported: the adapter refuses without them, so
+              # the app must gate rather than let the engine load 8 GB and
+              # then say no.
+              "requires_lyrics": True,
               "duration": {"min_s": 10, "max_s": 150, "default_s": 60},
               "sample_rate": 48000, "outputs_per_job_max": 1,
               "est_seconds_per_audio_second": 22.0,
@@ -2092,12 +2108,16 @@ NEW_ENTRIES = [
               ],
           },
           32, "slow", APACHE,
+          settings={"device": "mps"},
           notes="Upstream deleted their repos; the code rides a pinned "
                 "fork snapshot and the weights are an unmodified mirror "
                 "of the last surviving host, ModelScope (Apache-2.0 — as "
                 "much archival as practical). ~24 GB peak memory. Listen "
                 "against YuE before reaching for it — it earns its place "
-                "on style-clip fidelity."),
+                "on style-clip fidelity. The 2026-08-26 MPS port is "
+                "unmeasured — the est still carries the CPU baseline "
+                "(22 s per song-second), so the estimate is worst-case "
+                "until a render lands."),
     entry("songbloom-150s", "songbloom",
           # Same mirror, the pre-DPO checkpoint set instead.
           [{"repo_id": "rtikw/SongBloom", "gated": False,
@@ -2113,6 +2133,10 @@ NEW_ENTRIES = [
           "varied for exactly that reason. Same inputs, same speed.",
           {
               "supports_lyrics": True, "instrumental_only": False,
+              # Not merely supported: the adapter refuses without them, so
+              # the app must gate rather than let the engine load 8 GB and
+              # then say no.
+              "requires_lyrics": True,
               "duration": {"min_s": 10, "max_s": 150, "default_s": 60},
               "sample_rate": 48000, "outputs_per_job_max": 1,
               "est_seconds_per_audio_second": 22.0,
@@ -2136,7 +2160,7 @@ NEW_ENTRIES = [
           notes="The DPO checkpoint is the better default; this one is "
                 "for A/B curiosity. Shares the autoencoder files with it, "
                 "so installing both costs only the second 7.8 GB .pt.",
-          settings={"variant": "songbloom_full_150s"}),
+          settings={"variant": "songbloom_full_150s", "device": "mps"}),
     # ---- VampNet (masked-token variation) --------------------------------
     entry("vampnet-vamp", "vampnet",
           [{"repo_id": "hugggof/vampnet", "gated": False,
@@ -2192,10 +2216,11 @@ NEW_ENTRIES = [
               ],
           },
           8, "medium", CC_NC_SA,
-          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). Runs "
-                "on CPU — a 6 s vamp takes ~18 s. The prompt box is unused: "
-                "the audio is the prompt.",
-          settings={}),
+          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). The "
+                "prompt box is unused: the audio is the prompt. On the GPU "
+                "(MPS) since 2026-08-26, unmeasured — the est carries the "
+                "CPU baseline (a 6 s vamp took ~18 s there).",
+          settings={"device": "mps"}),
 ] + [
     # VampNet finetunes: full coarse/c2f checkpoint pairs under loras/ in
     # the same repo, swapped in whole (they are not adapter deltas). The
@@ -2242,9 +2267,11 @@ NEW_ENTRIES = [
           },
           8, "medium", CC_NC_SA,
           variant_of="vampnet-vamp", format_=f"finetune · {name}",
-          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). Runs "
-                "on CPU. The prompt box is unused: the audio is the prompt.",
-          settings={"lora": name})
+          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). The "
+                "prompt box is unused: the audio is the prompt. On the GPU "
+                "(MPS) since 2026-08-26, unmeasured — the est carries the "
+                "CPU baseline.",
+          settings={"lora": name, "device": "mps"})
     for name, display, desc in [
         ("choir", "VampNet (choir)",
          "The vamp re-voiced by a model finetuned on choral singing — "
@@ -2268,12 +2295,13 @@ NEW_ENTRIES = [
           "has: text-guided EDITING. Drop in a clip, describe the change "
           "('make it orchestral', 'swap the drums for congas') and it "
           "rewrites the audio toward the words. Also a fast text-to-music "
-          "model in its own right — faster than realtime on the CPU.",
+          "model in its own right — about 3.5× faster than realtime on "
+          "the GPU.",
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
               "sample_rate": 48000, "outputs_per_job_max": 4,
-              "est_seconds_per_audio_second": 0.7,
+              "est_seconds_per_audio_second": 0.3,
               "params": [
                   {"key": "src_audio", "type": "audio",
                    "label": "Audio to edit", "default": None, "nullable": True,
@@ -2303,8 +2331,11 @@ NEW_ENTRIES = [
           8, "fast", CC_NC,
           notes="Code exists only in the Hugging Face Space's audiocraft "
                 "tree (pinned as this family's runtime); weights are "
-                "CC-BY-NC. 48 kHz stereo, up to 30 s per pass.",
-          settings={"device": "cpu"}),
+                "CC-BY-NC. 48 kHz stereo, up to 30 s per pass. Runs on "
+                "MPS (proven 2026-08-26: 10 s in 2.8 s steady-state, no "
+                "artifacts; the very first run on a machine pays a "
+                "one-off ~2 min Metal shader warm-up).",
+          settings={"device": "mps"}),
     # ---- diffusers audio pipelines ---------------------------------------
     entry("audioldm2-music", "diffusers", ["cvssp/audioldm2-music"],
           "AudioLDM 2 Music",
@@ -2556,7 +2587,7 @@ NEW_ENTRIES = [
               "may matter more than the last decibel. Weights are an "
               "unmodified per-file mirror of Inria's Zenodo record "
               "(CC BY 4.0, credit Magron et al.).",
-        settings={"engine": "bsrnn"}),
+        settings={"engine": "bsrnn", "device": "mps"}),
     task_entry(
         "separation-scnet", "msst", [],
         "SCNet 4-stem (research)",
@@ -2581,7 +2612,8 @@ NEW_ENTRIES = [
                   "ckpt_url": "https://github.com/ZFTurbo/"
                               "Music-Source-Separation-Training/releases/"
                               "download/v.1.0.6/"
-                              "scnet_checkpoint_musdb18.ckpt"}),
+                              "scnet_checkpoint_musdb18.ckpt",
+                  "device": "mps"}),
     task_entry(
         "separation-mdx23c-vocals", "msst", [],
         "MDX23C vocals (research)",
@@ -2606,7 +2638,8 @@ NEW_ENTRIES = [
                   "ckpt_url": "https://github.com/ZFTurbo/"
                               "Music-Source-Separation-Training/releases/"
                               "download/v1.0.0/"
-                              "model_vocals_mdx23c_sdr_10.17.ckpt"}),
+                              "model_vocals_mdx23c_sdr_10.17.ckpt",
+                  "device": "mps"}),
     task_entry(
         "separation-scnet-xl", "msst", [],
         "SCNet XL 4-stem (research)",
@@ -2632,7 +2665,8 @@ NEW_ENTRIES = [
                   "ckpt_url": "https://github.com/ZFTurbo/"
                               "Music-Source-Separation-Training/releases/"
                               "download/v1.0.15/"
-                              "model_scnet_ep_36_sdr_10.0891.ckpt"}),
+                              "model_scnet_ep_36_sdr_10.0891.ckpt",
+                  "device": "mps"}),
     task_entry(
         "separation-drumsep", "msst", [],
         "Drum-kit split (DrumSep)",
@@ -2658,7 +2692,8 @@ NEW_ENTRIES = [
                                 "config_mdx23c.yaml",
                   "ckpt_url": "https://github.com/jarredou/models/"
                               "releases/download/DrumSep/"
-                              "drumsep_5stems_mdx23c_jarredou.ckpt"}),
+                              "drumsep_5stems_mdx23c_jarredou.ckpt",
+                  "device": "mps"}),
     # ---- Split & Recombine: analysis -------------------------------------
     task_entry(
         "analysis-basic", "analysis",
@@ -2875,6 +2910,60 @@ NEW_ENTRIES = [
               "voice is supplied per job and never stored — this app ships "
               "no voice library, deliberately. Weights (~2 GB) auto-fetch "
               "on the first conversion."),
+    task_entry(
+        "convert-voice-seedvc-v2", "seedvc", [],
+        "Voice changer V2 (seed-vc)",
+        "The second-generation seed-vc: converts SPEECH into the timbre of "
+        "a short reference recording you supply, and can also carry the "
+        "reference's style over — emotion, accent, delivery — or strip a "
+        "voice's identity entirely (anonymize). Speech only: for singing, "
+        "use the original Voice changer's singing mode.",
+        task_caps(["convert-voice"], [
+            source_audio_param("The speech to convert — a clean, dry "
+                               "recording converts best"),
+            {"key": "reference_audio", "type": "audio",
+             "label": "Target voice", "default": None, "nullable": False,
+             "help": "A short recording of the voice this should become — "
+                     "your own, or one you have permission to use. Ten "
+                     "clean seconds is plenty"},
+            {"key": "diffusion_steps", "type": "int", "label": "Steps",
+             "default": 30, "nullable": False, "min": 4, "max": 100,
+             "help": "Diffusion passes. 30 is the upstream default; more "
+                     "refines the timbre and takes proportionally longer"},
+            {"key": "convert_style", "type": "bool", "label": "Copy style",
+             "default": False, "nullable": False,
+             "help": "Also carry the reference's emotion, accent and "
+                     "delivery — not just the timbre"},
+            {"key": "anonymize", "type": "bool", "label": "Anonymize only",
+             "default": False, "nullable": False,
+             "help": "Strip the speaker's identity instead of imitating "
+                     "the reference — the output is a neutral voice"},
+            {"key": "similarity_cfg_rate", "type": "float",
+             "label": "Voice similarity", "default": 0.7, "nullable": False,
+             "min": 0.0, "max": 1.0, "step": 0.05,
+             "help": "How hard the conversion is pushed toward the "
+                     "reference voice — higher is a closer imitation"},
+            {"key": "intelligibility_cfg_rate", "type": "float",
+             "label": "Clarity", "default": 0.7, "nullable": False,
+             "min": 0.0, "max": 1.0, "step": 0.05,
+             "help": "How hard the words are held onto — raise it if the "
+                     "conversion mumbles, lower it for a looser read"},
+            {"key": "length_adjust", "type": "float",
+             "label": "Length stretch", "default": 1.0, "nullable": False,
+             "min": 0.5, "max": 2.0, "step": 0.05,
+             "help": "Stretch factor of the converted performance — below "
+                     "1 speeds the delivery up, above 1 slows it down"},
+        ], est_realtime_factor=6.0),
+        8, "slow",
+        {"name": "GPL-3.0 (code); weights via Hugging Face",
+         "commercial_use": True, "requires_hf_token": False,
+         "url": "https://github.com/Plachtaa/seed-vc"},
+        size_hint_bytes=3_000_000_000,
+        settings={"version": 2},
+        notes="Runs on CPU, about 6× the clip length at 30 steps "
+              "(measured). The reference voice is supplied per job and "
+              "never stored. The V2 stack (AR + CFM, ~3 GB with its "
+              "content extractors) auto-fetches on the first conversion."),
     # ---- Voice: YingMusic zero-shot singing (task `sing`) -----------------
     task_entry(
         "sing-yingmusic", "yingmusic",
@@ -3224,6 +3313,35 @@ NEW_ENTRIES = [
         variant_of="caption-moss-music", format_="MOSS 8B · MLX 4-bit",
         notes="Same adapter and prompts as the 8-bit entry; quantisation "
               "quality difference is unmeasured here."),
+    task_entry(
+        "caption-moss-music-instruct", "mossmusic",
+        ["rtikw/MOSS-Music-8B-Instruct-4bit"],
+        "MOSS-Music 8B Instruct (4-bit)",
+        "The direct-answer edition of the music brain: the same 8B "
+        "audio-language model tuned to answer without the visible "
+        "reasoning pass — much faster to the first word of its reply, "
+        "and its captions read cleaner. The lyric transcriber and "
+        "library describer of choice when you don't need to watch it "
+        "think.",
+        task_caps(["caption", "lyrics"], [
+            source_audio_param("The audio to discuss"),
+            {"key": "question", "type": "string", "label": "Question",
+             "default": None, "nullable": True,
+             "placeholder": "What is the chord progression in the chorus?",
+             "help": "Ask something specific. Left blank it writes a full "
+                     "analysis: genre, instrumentation, tempo, key, "
+                     "structure"},
+        ], est_realtime_factor=1.0),
+        10, "medium", APACHE,
+        variant_of="caption-moss-music",
+        format_="MOSS 8B Instruct · MLX 4-bit",
+        notes="No public MLX quant of the Instruct weights exists, so this "
+              "is a first-party 4-bit conversion (moss_music_mlx "
+              "converter, group 64, audio encoder kept bf16) of "
+              "OpenMOSS-Team/MOSS-Music-8B-Instruct, hosted unmodified on "
+              "the user-owned mirror (Apache-2.0). Verified against the "
+              "Thinking entries' adapter — same prompts, same output "
+              "shape."),
     # ---- Music to words: notation composers ------------------------------
     #
     # ABC notation is text, so these are language models: a description (or a

@@ -174,3 +174,72 @@ clobbering it (the §1.1 fix).
   only the Thinking quants exist.
 - **magenta-rt2-base / SA3 small-sfx / anticipation-medium speeds are
   unmeasured** — their ests are scaled guesses and their notes say so.
+
+## The deferred-items wave (2026-08-26)
+
+Four of the deliberate skips above were revisited, all four resolved
+(catalog now **129 entries**):
+
+- **seed-vc V2 landed** (`convert-voice-seedvc-v2`, settings.version = 2,
+  same pinned tarball). The V2 CLI hardcodes fp16, which CPU linears
+  reject (Half×Float crash in `style_in`) — and a global
+  `torch.float16 = torch.float32` alias is NOT the fix (pickled dtype
+  references resolve through that attribute; it corrupts `torch.load` of
+  the hubert checkpoint). The adapter drives the wrapper directly in
+  float32: 12.5 s converted in 71.6 s on CPU at 30 steps (~6×). Speech
+  only (style copy / anonymize); V1 keeps singing. hydra-core + omegaconf
+  added to the family venv.
+- **MelodyFlow flipped to MPS** (settings.device = "mps"). The scare
+  number was warm-up: the machine's first MPS run pays ~2 min of Metal
+  shader compilation, after which load is 7 s and 10 s of audio renders
+  in 2.8 s (CPU: 12.7 s load, 7.2 s render). No NaNs — the tree's "T5
+  has no autocast" warning is moot in fp32. est 0.7 → 0.3.
+- **InspireMusic device-unification port landed** (settings.device =
+  "mps", est 29.0 → 3.5, tier slow → medium). Exactly two seams, both
+  patched in the adapter without touching the vendored tree:
+  `frontend.py`'s device ladder only knows cuda/cpu, and `llm_job`
+  forwards the chorus/time embeddings tuple unmoved AND in float64
+  (unsupported on MPS). 10 s of music in 33.4 s measured (CPU baseline
+  288.3 s). Bonus find: torchaudio ≥ 2.9 delegates I/O to torchcodec,
+  whose ffmpeg dylibs don't load in the worker — the save at the END of a
+  render was latently broken in the app venv on ANY device; the adapter
+  now shims torchaudio.save/load through soundfile.
+- **MOSS-Music Instruct landed** (`caption-moss-music-instruct`). The
+  triage's 401 was a wrong-org probe — the originals live under
+  **OpenMOSS-Team**/. No public MLX quant exists, so this is a
+  first-party 4-bit conversion (moss_music_mlx converter, group 64,
+  audio encoder bf16, 6.02 GB) mirrored with attribution at
+  rtikw/MOSS-Music-8B-Instruct-4bit (Apache-2.0). Verified end-to-end:
+  direct, clean captions with no thinking preamble.
+- **SongGen dual-track: rendered, awaiting the listen.** interleaving_A_V
+  (5.4 GB) renders vocal + accompaniment stems at the same token cost as
+  mixed_pro but yields half the audio per token (two streams share the
+  frames). A/B files in `~/build/local-music/listen-2026-08-26/`;
+  entry only if it wins on listening.
+
+Still genuinely blocked, unchanged: BS-Mamba2 (CUDA-only kernels), the
+arm64-dead five, and the superseded rejections.
+
+## Watch items (probed 2026-08-26)
+
+- **Qwen-Music** — tech report only (arXiv 2607.11699, July 2026): 25 Hz
+  single-codebook music-semantic tokenizer + AR LLM initialized from
+  Qwen3.5-Omni (melody-token chain-of-thought) + generative stereo
+  renderer; full songs with sung vocals, text-to-music and cover tasks,
+  5M-hours training claim. **No weights released anywhere as of
+  2026-08-26**: the HF paper page links zero models/spaces, the Qwen HF
+  org has no music repo, ModelScope 404s, and the QwenLM GitHub org has
+  no repo. Aggregator posts claiming "weights on Hugging Face" were
+  churn — their own links only reach the paper. Product surface appears
+  to be Qwen Studio (API). Re-probe occasionally; this would be a
+  headline entry if weights ever land.
+- **MuScriptor** (Mirelo × Kyutai) — multi-instrument audio→MIDI
+  transcription (AMT), the first credible fill for the recorded
+  drums/multi-instrument transcription gap (E-GMD line dead on arm64).
+  Three sizes on HF: small 0.41 GB / medium 1.23 GB / large 5.47 GB,
+  single safetensors each, `muscriptor` pip library, real traction
+  (large: 3.5k downloads). CC-BY-NC-4.0 behind an auto-approve
+  click-gate (rights-warranty + indemnification boilerplate) — the
+  USER must accept it on the repo page with their HF account before
+  anything can download (same stance as Stability gating; NC also
+  means no mirroring, per policy). Triage pending that acceptance.

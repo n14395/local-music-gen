@@ -11,6 +11,11 @@ HF into the engine cache on the first conversion) and runs `inference.py` in
 a subprocess of this venv's python — with MPS hidden, because their code
 autocasts on MPS and torch 2.4 rejects it (the proven triage configuration;
 a torch≥2.6 MPS port is known further work).
+
+`settings.version = 2` selects the same repo's `inference_v2.py` (AR +
+CFM stack): speech-only, but it can carry the reference's style/emotion
+over (`convert_style`) or anonymize a voice. V2 has no singing path —
+the V1 entry keeps that job.
 """
 
 from __future__ import annotations
@@ -86,32 +91,86 @@ class SeedVCAdapter(ModelAdapter):
         if not ref or not os.path.isfile(ref):
             raise RuntimeError("reference_audio missing — record a few "
                                "seconds of the voice this should become")
-        steps = max(4, min(50, int(params.get("diffusion_steps") or 10)))
-        sing = bool(params.get("sing_mode"))
-        shift = int(params.get("pitch_shift_st") or 0)
         length = min(2.0, max(0.5,
                               float(params.get("length_adjust") or 1.0)))
-        cfg = min(1.0, max(0.0, float(params.get("cfg_rate") or 0.7)))
+        v2 = int(self.settings.get("version") or 1) == 2
+        if v2:
+            steps = max(4, min(100, int(params.get("diffusion_steps") or 30)))
+            sing = False
+            sim = min(1.0, max(0.0,
+                               float(params.get("similarity_cfg_rate")
+                                     or 0.7)))
+            intel = min(1.0, max(0.0,
+                                 float(params.get("intelligibility_cfg_rate")
+                                       or 0.7)))
+            style = bool(params.get("convert_style"))
+            anon = bool(params.get("anonymize"))
+            # Not inference_v2.py: that CLI hardcodes fp16, which CPU
+            # linears reject (Half×Float mat1/mat2 crash, proven in the
+            # 2026-08-26 smoke). Drive the wrapper directly in float32 —
+            # same flow, safe dtype. `intelligebility` is upstream's own
+            # spelling of the kwarg.
+            bootstrap = (
+                "import os, sys\n"
+                "sys.path.insert(0, os.getcwd())\n"
+                "import torch\n"
+                "torch.backends.mps.is_available = (lambda: False)\n"
+                "import soundfile as sf\n"
+                "import yaml\n"
+                "from hydra.utils import instantiate\n"
+                "from omegaconf import DictConfig\n"
+                "device = torch.device('cpu')\n"
+                "dtype = torch.float32\n"
+                "cfg = DictConfig(yaml.safe_load("
+                "open('configs/v2/vc_wrapper.yaml')))\n"
+                "vc = instantiate(cfg)\n"
+                "vc.load_checkpoints(ar_checkpoint_path=None, "
+                "cfm_checkpoint_path=None)\n"
+                "vc.to(device)\n"
+                "vc.eval()\n"
+                "vc.setup_ar_caches(max_batch_size=1, max_seq_len=4096, "
+                "dtype=dtype, device=device)\n"
+                "gen = vc.convert_voice_with_streaming("
+                f"source_audio_path={src!r}, target_audio_path={ref!r}, "
+                f"diffusion_steps={steps}, length_adjust={length}, "
+                f"intelligebility_cfg_rate={intel}, "
+                f"similarity_cfg_rate={sim}, "
+                "top_p=0.9, temperature=1.0, repetition_penalty=1.0, "
+                f"convert_style={style}, anonymization_only={anon}, "
+                "device=device, dtype=dtype, stream_output=True)\n"
+                "full = None\n"
+                "for out in gen:\n"
+                "    _, full = out\n"
+                "sr, audio = full\n"
+                f"sf.write(os.path.join({out_dir!r}, 'converted_v2.wav'), "
+                "audio, sr)\n")
+        else:
+            steps = max(4, min(50, int(params.get("diffusion_steps") or 10)))
+            sing = bool(params.get("sing_mode"))
+            shift = int(params.get("pitch_shift_st") or 0)
+            cfg = min(1.0, max(0.0, float(params.get("cfg_rate") or 0.7)))
 
-        argv = ["inference.py",
-                "--source", src, "--target", ref, "--output", out_dir,
-                "--diffusion-steps", str(steps), "--fp16", "False",
-                "--length-adjust", str(length),
-                "--inference-cfg-rate", str(cfg),
-                "--f0-condition", str(sing),
-                "--auto-f0-adjust", str(sing and shift == 0),
-                "--semi-tone-shift", str(shift)]
-        # A -c bootstrap rather than the CLI directly: MPS must be hidden
-        # before their model code loads (torch-2.4 autocast crash), and only
-        # code inside the process can do that.
-        bootstrap = (
-            "import sys, runpy, torch;"
-            "torch.backends.mps.is_available = (lambda: False);"
-            f"sys.argv = {argv!r};"
-            "runpy.run_path('inference.py', run_name='__main__')")
+            argv = ["inference.py",
+                    "--source", src, "--target", ref, "--output", out_dir,
+                    "--diffusion-steps", str(steps), "--fp16", "False",
+                    "--length-adjust", str(length),
+                    "--inference-cfg-rate", str(cfg),
+                    "--f0-condition", str(sing),
+                    "--auto-f0-adjust", str(sing and shift == 0),
+                    "--semi-tone-shift", str(shift)]
+            # A -c bootstrap rather than the CLI directly: MPS must be
+            # hidden before their model code loads (torch-2.4 autocast
+            # crash), and only code inside the process can do that.
+            bootstrap = (
+                "import sys, runpy, torch;"
+                "torch.backends.mps.is_available = (lambda: False);"
+                f"sys.argv = {argv!r};"
+                "runpy.run_path(sys.argv[0], run_name='__main__')")
 
         progress_cb(None, "converting (weights download on the first run; "
-                          "the conversion itself takes about a minute)")
+                          "the conversion runs at about "
+                          + ("6" if v2 else "5")
+                          + "× the clip length)")
         proc = subprocess.Popen(
             [sys.executable, "-c", bootstrap], cwd=self.repo,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -143,8 +202,8 @@ class SeedVCAdapter(ModelAdapter):
                                 format="wav",
                                 sample_rate=int(info.samplerate),
                                 duration_s=round(info.duration, 3))],
-            meta={"engine": "seedvc", "sing_mode": sing,
-                  "diffusion_steps": steps})
+            meta={"engine": "seedvc", "version": 2 if v2 else 1,
+                  "sing_mode": sing, "diffusion_steps": steps})
 
     def unload(self) -> None:
         pass

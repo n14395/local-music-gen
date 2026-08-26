@@ -28,7 +28,7 @@ from . import envs
 from .events import EventBus
 from .registry import Registry
 
-SAMPLE_INTERVAL = 0.5
+SAMPLE_INTERVAL = 1.0
 MAX_RETRIES = 2
 
 # How many downloads may transfer at once. Overridable for a link fast enough

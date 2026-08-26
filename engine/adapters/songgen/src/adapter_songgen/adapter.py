@@ -8,9 +8,15 @@ the `songgen/xcodec_wrapper/xcodec_infer/` tree and
 `songgen/lyrics_utils/vocab.json`. The X-Codec checkpoint additionally comes
 from the ZhenYe234/xcodec snapshot into the path the wrapper hard-codes.
 
-CPU-only for now (their device handling is CUDA-else-CPU; the token rate is
-roughly realtime). torch.load is shimmed to CPU — the checkpoints are
-CUDA-pickled.
+Device: settings.device = "mps" puts the model, the processor (its demucs
+included — the same htdemucs the separation family already proves on MPS)
+and the xcodec decode on the GPU; the modeling code is device-agnostic
+transformers+SDPA, and its only CUDA references are training utilities the
+runtime never imports. Without the setting: CPU, the proven configuration
+(their own device handling is CUDA-else-CPU; the token rate is roughly
+realtime there). On the CPU route MPS is also hidden from torch — their
+code would otherwise scatter tensors across devices. torch.load is shimmed
+to CPU on both routes — the checkpoints are CUDA-pickled.
 """
 
 from __future__ import annotations
@@ -25,9 +31,16 @@ import soundfile as sf
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb)
 
+# Read at torch import: lets any stray op the MPS backend lacks fall back
+# to CPU instead of aborting the render. Harmless on the CPU route.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 REPO_COMMIT = "94d2d20ca882aa55c8e0abc6154a6ac52840c781"
 REPO_TARBALL = f"https://github.com/LiuZH-19/SongGen/archive/{REPO_COMMIT}.tar.gz"
 XCODEC_FILE = "xcodec_hubert_general_audio_v2.pth"
+XCODEC_CONFIG = "config_hubert_general.yaml"
+XCODEC_CONFIG_URL = ("https://huggingface.co/ZhenYe234/xcodec/resolve/main/"
+                     + XCODEC_CONFIG)
 # audio tokens per second of output (their frame rate); caps token budget
 TOKENS_PER_S = 50
 
@@ -74,20 +87,41 @@ def _stage_package_data(progress_cb: ProgressCb) -> None:
 
 
 def _stage_xcodec(snapshot: str) -> None:
-    """The wrapper hard-codes ckpts/general_more/<file> inside its own tree."""
+    """The wrapper hard-codes ckpts/general_more/<file> inside its own tree —
+    both the checkpoint AND its config yaml. The yaml lives in the same
+    ZhenYe234/xcodec repo; snapshots fetched before it joined the entry's
+    allow_patterns don't carry it, so it falls back to a direct fetch."""
     root = _site_packages_root()
-    dest = os.path.join(root, "songgen", "xcodec_wrapper", "xcodec_infer",
-                        "ckpts", "general_more", XCODEC_FILE)
-    if os.path.exists(dest):
-        return
-    src = os.path.join(snapshot, XCODEC_FILE)
-    if not os.path.exists(src):
-        raise RuntimeError(f"xcodec checkpoint missing from snapshot {snapshot}")
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    try:
-        os.symlink(src, dest)
-    except OSError:
-        shutil.copy(src, dest)
+    ckpts = os.path.join(root, "songgen", "xcodec_wrapper", "xcodec_infer",
+                         "ckpts", "general_more")
+    os.makedirs(ckpts, exist_ok=True)
+
+    dest = os.path.join(ckpts, XCODEC_FILE)
+    if not os.path.exists(dest):
+        src = os.path.join(snapshot, XCODEC_FILE)
+        if not os.path.exists(src):
+            raise RuntimeError(
+                f"xcodec checkpoint missing from snapshot {snapshot}")
+        try:
+            os.symlink(src, dest)
+        except OSError:
+            shutil.copy(src, dest)
+
+    config_dest = os.path.join(ckpts, XCODEC_CONFIG)
+    if not os.path.exists(config_dest):
+        config_src = os.path.join(snapshot, XCODEC_CONFIG)
+        if os.path.exists(config_src):
+            try:
+                os.symlink(config_src, config_dest)
+            except OSError:
+                shutil.copy(config_src, config_dest)
+        else:
+            part = config_dest + ".part"
+            with urllib.request.urlopen(XCODEC_CONFIG_URL,
+                                        timeout=120) as resp, \
+                    open(part, "wb") as f:
+                f.write(resp.read())
+            os.replace(part, config_dest)
 
 
 class SongGenAdapter(ModelAdapter):
@@ -95,6 +129,7 @@ class SongGenAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.model = None
         self.processor = None
+        self.device = str(self.settings.get("device") or "cpu")
 
     def _snapshot(self, needle: str) -> str:
         for repo, path in self.model_paths.items():
@@ -105,8 +140,10 @@ class SongGenAdapter(ModelAdapter):
     def load(self, progress_cb: ProgressCb) -> None:
         import torch
 
-        # CUDA-pickled checkpoints + CUDA-else-CPU device handling.
-        torch.backends.mps.is_available = lambda: False
+        # CUDA-pickled checkpoints; on the CPU route MPS is also hidden so
+        # their CUDA-else-CPU device handling cannot scatter tensors.
+        if self.device != "mps":
+            torch.backends.mps.is_available = lambda: False
         orig_load = torch.load
         torch.load = lambda *a, **kw: orig_load(
             *a, **{"map_location": "cpu", "weights_only": False, **kw})
@@ -120,9 +157,10 @@ class SongGenAdapter(ModelAdapter):
 
         ckpt = self._snapshot("songgen")
         self.model = SongGenMixedForConditionalGeneration.from_pretrained(
-            ckpt, attn_implementation="sdpa").to("cpu").eval()
-        self.processor = SongGenProcessor(ckpt, "cpu")
-        progress_cb(None, "SongGen ready (CPU)")
+            ckpt, attn_implementation="sdpa").to(self.device).eval()
+        self.processor = SongGenProcessor(ckpt, self.device)
+        progress_cb(None, "SongGen ready on the GPU (MPS)"
+                          if self.device == "mps" else "SongGen ready (CPU)")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,

@@ -673,7 +673,12 @@ struct StyleTransferScreen: View {
                 }
                 if showAdvanced {
                     ParameterFormView(state: formState, grouped: false,
-                                      labelWidth: 130)
+                                      labelWidth: 130,
+                                      materialPicker: MaterialPickerContext(
+                                          catalog: catalog, library: library,
+                                          parts: parts, jobs: jobs,
+                                          playback: playback,
+                                          onOpenModels: { onOpenModels(nil) }))
                         .onChange(of: formState.values) { captureOverrides() }
                 }
             }

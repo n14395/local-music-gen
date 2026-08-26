@@ -153,7 +153,12 @@ struct SplitActionView: View {
         ActionOptionsCard {
             if let model, !visibleParams(model).isEmpty {
                 ParameterFormView(state: formState, grouped: false,
-                                  labelWidth: 130)
+                                  labelWidth: 130,
+                                  materialPicker: MaterialPickerContext(
+                                      catalog: catalog, library: library,
+                                      parts: parts, jobs: jobs,
+                                      playback: playback,
+                                      onOpenModels: onOpenModels))
             }
             // The re-amp card's capture slot can be filled from TONE3000
             // in place — the sheet downloads the .nam into the same

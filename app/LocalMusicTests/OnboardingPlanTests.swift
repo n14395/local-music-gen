@@ -58,6 +58,17 @@ final class OnboardingPlanTests: XCTestCase {
         XCTAssertTrue(OnboardingPlan.essentialIds.contains("render-soundfont"))
         XCTAssertTrue(OnboardingPlan.essentialIds
             .contains { $0.hasPrefix("transcribe-") })
+        // The near-free enrichers: without these the chords, quality and
+        // tagging cards sit dimmed on a fresh install.
+        XCTAssertTrue(OnboardingPlan.essentialIds.contains("analysis-chords-btc"))
+        XCTAssertTrue(OnboardingPlan.essentialIds.contains("analysis-squim"))
+        XCTAssertTrue(OnboardingPlan.essentialIds.contains("tag-essentia-discogs"))
+    }
+
+    func testTheEditCapableGeneratorIsOffered() {
+        // MelodyFlow is the one model that edits existing audio toward a
+        // prompt — the "Edit with words" card is dimmed without it.
+        XCTAssertTrue(OnboardingPlan.generatorIds.contains("melodyflow-t24"))
     }
 
     func testTheSetsDoNotOverlap() {

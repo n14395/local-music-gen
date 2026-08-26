@@ -111,8 +111,8 @@ class MossMusicAdapter(ModelAdapter):
                                   "instrumentation, tempo, key, structure, "
                                   "production character.")
 
-        progress_cb(None, "listening and thinking (the reasoning trace is "
-                          "most of the tokens)")
+        progress_cb(None, "listening and thinking (a Thinking model spends "
+                          "most of its tokens reasoning first)")
         if cancel.cancelled:
             raise CancelledError()
         reply = str(self._generate(self.model, self.processor, prompt,

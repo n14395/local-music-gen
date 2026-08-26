@@ -10,6 +10,15 @@ mac-port shims applied by a bootstrap before their code loads:
   - PHONEMIZER_ESPEAK_LIBRARY pointed at Homebrew's espeak-ng (phonemizer
     cannot find the dylib on its own).
 
+Device: upstream's CLI picks CUDA-or-CPU and never considers MPS, so load()
+retargets its one device line at LOCALMUSIC_DEVICE (idempotent text patch on
+the pinned snapshot) and generate() sets that from settings.device. The MPS
+route stays fp32 — the coercion shim applies on every device, which is the
+proven-safe numerics; true fp16 there is known further work. The compute
+path is MPS-clean (SDPA attention — their flex-attention flag is forced off
+upstream — euler flow matching, pure-torch BigVGAN); the MuQ style encoder
+is the one unvouched piece, so MPS runs set PYTORCH_ENABLE_MPS_FALLBACK=1.
+
 Weights resolve via `--repo-id` through the HF cache the supervisor already
 filled; the MuQ style encoder auto-fetches on the first run (route B).
 """
@@ -58,6 +67,7 @@ class DiffRhythm2Adapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
+        self.device = str(self.settings.get("device") or "cpu")
 
     def _cache_dir(self) -> str:
         hf_home = os.environ.get("HF_HOME")
@@ -88,9 +98,31 @@ class DiffRhythm2Adapter(ModelAdapter):
             with tarfile.open(tar_path) as tar:
                 tar.extractall(cache, filter="data")
             os.unlink(tar_path)
+        self._retarget_device(repo)
         self.repo = repo
         progress_cb(None, "DiffRhythm2 ready (the MuQ style encoder fetches "
                           "on the first render)")
+
+    @staticmethod
+    def _retarget_device(repo: str) -> None:
+        """Point the CLI's cuda-else-cpu device line at LOCALMUSIC_DEVICE.
+        A text patch on the pinned snapshot, not a torch monkeypatch:
+        transformers isinstance-checks torch.device, so wrapping the class
+        breaks it. Idempotent; unset env keeps upstream behavior exactly."""
+        path = os.path.join(repo, "inference.py")
+        with open(path) as f:
+            src = f.read()
+        if "LOCALMUSIC_DEVICE" in src:
+            return
+        old = ("device = torch.device('cuda' if torch.cuda.is_available() "
+               "else 'cpu')")
+        if old not in src:
+            raise RuntimeError("the pinned inference.py no longer carries "
+                              "the expected device line — refusing to guess")
+        new = ("device = torch.device(os.environ.get('LOCALMUSIC_DEVICE') "
+               "or ('cuda' if torch.cuda.is_available() else 'cpu'))")
+        with open(path, "w") as f:
+            f.write(src.replace(old, new, 1))
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
@@ -124,10 +156,15 @@ class DiffRhythm2Adapter(ModelAdapter):
             # Their argparse uses type=bool, where every non-empty string is
             # truthy — the empty string is the only spelling of False.
             argv += ["--fake-stereo", ""]
-        env = {**os.environ, "PHONEMIZER_ESPEAK_LIBRARY": ESPEAK_DYLIB}
+        env = {**os.environ, "PHONEMIZER_ESPEAK_LIBRARY": ESPEAK_DYLIB,
+               "LOCALMUSIC_DEVICE": self.device}
+        if self.device == "mps":
+            env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         code = BOOTSTRAP.replace("ARGV", repr(argv))
 
-        progress_cb(None, "rendering (CPU flow matching — minutes, not "
+        progress_cb(None, "rendering (GPU flow matching — MPS, fp32)"
+                          if self.device == "mps" else
+                          "rendering (CPU flow matching — minutes, not "
                           "seconds; ~11 s of compute per second of song)")
         proc = subprocess.Popen([sys.executable, "-c", code], cwd=self.repo,
                                 env=env, stdout=subprocess.DEVNULL,

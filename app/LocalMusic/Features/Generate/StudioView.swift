@@ -14,6 +14,7 @@ struct StudioView: View {
     let catalog: ModelCatalogStore
     let jobs: JobsStore
     let library: LibraryStore
+    let parts: PartsStore
     let playback: PlaybackController
     let telemetry: TelemetryStore
     let timings: RenderTimingStore
@@ -52,13 +53,15 @@ struct StudioView: View {
     /// `clampToModel`) exactly as before.
     @MainActor
     init(catalog: ModelCatalogStore, jobs: JobsStore, library: LibraryStore,
-         playback: PlaybackController, telemetry: TelemetryStore,
+         parts: PartsStore, playback: PlaybackController,
+         telemetry: TelemetryStore,
          timings: RenderTimingStore, notifications: NotificationService,
          prefill: PrefillBox, actions: SongActions, settings: AppSettings,
          onOpenModels: @escaping () -> Void) {
         self.catalog = catalog
         self.jobs = jobs
         self.library = library
+        self.parts = parts
         self.playback = playback
         self.telemetry = telemetry
         self.timings = timings
@@ -188,6 +191,22 @@ struct StudioView: View {
                         nameCard
                         lengthAndTakes(model)
                         if mode == .simple { advancedSummary }
+                        // Full control's parameters belong in the reading
+                        // order they are used in: after the settings they
+                        // refine, before the button that spends them. They
+                        // were a second rail, which cost the takes column
+                        // its place and put the knobs furthest from the
+                        // control they modify.
+                        if mode == .full {
+                            StudioParameterPanel(
+                                state: formState, model: model,
+                                onApplyPreset: applyPreset, layout: .inline,
+                                materialPicker: MaterialPickerContext(
+                                    catalog: catalog, library: library,
+                                    parts: parts, jobs: jobs,
+                                    playback: playback,
+                                    onOpenModels: onOpenModels))
+                        }
                         generateRow(model)
                     }
                     if let error = jobs.lastError {
@@ -204,24 +223,20 @@ struct StudioView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if mode == .simple {
-                BenchInspector(width: Bench.Metrics.Inspector.takes) {
-                    StudioTakesRail(library: library, playback: playback,
-                                    catalog: catalog, actions: actions,
-                                    onReusePrompt: { song in
-                                        prompt = song.prompt
-                                        lyrics = song.lyrics ?? ""
-                                        if installed.contains(where: { $0.id == song.modelId }) {
-                                            selectedModelId = song.modelId
-                                        }
-                                    },
-                                    onSplit: { actions.split($0) })
-                }
-            } else {
-                BenchInspector(width: Bench.Metrics.Inspector.parameters) {
-                    StudioParameterPanel(state: formState, model: model,
-                                         onApplyPreset: applyPreset)
-                }
+            // Takes stay put in both modes: what you made last is context for
+            // what you are making now, and switching to full control was
+            // never a request to stop showing it.
+            BenchInspector(width: Bench.Metrics.Inspector.takes) {
+                StudioTakesRail(library: library, playback: playback,
+                                catalog: catalog, actions: actions,
+                                onReusePrompt: { song in
+                                    prompt = song.prompt
+                                    lyrics = song.lyrics ?? ""
+                                    if installed.contains(where: { $0.id == song.modelId }) {
+                                        selectedModelId = song.modelId
+                                    }
+                                },
+                                onSplit: { actions.split($0) })
             }
         }
         .frame(maxHeight: .infinity)
@@ -555,7 +570,12 @@ struct StudioView: View {
     // MARK: generate
 
     private func generateRow(_ model: ModelInfo) -> some View {
-        HStack(spacing: 16) {
+        let missing = missingRequiredAudio(model)
+        let needsWords = model.capabilities.needsLyrics
+            && lyrics.trimmingCharacters(in: .whitespaces).isEmpty
+        let emptyPrompt = prompt.trimmingCharacters(in: .whitespaces).isEmpty
+        let blocked = emptyPrompt || missing != nil || needsWords
+        return HStack(spacing: 16) {
             Button {
                 submit(model)
             } label: {
@@ -565,19 +585,46 @@ struct StudioView: View {
                 }
             }
             .buttonStyle(.benchPrimary)
-            .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty)
-            .opacity(prompt.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
+            .disabled(blocked)
+            .opacity(blocked ? 0.5 : 1)
             .keyboardShortcut(.return, modifiers: .command)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(estimateText(model))
                     .font(Bench.Typo.mono(12))
                     .foregroundStyle(Bench.Palette.textQuaternary)
-                Text("⌘↩ TO RUN")
-                    .font(Bench.Typo.mono(12))
-                    .foregroundStyle(Bench.Palette.textFaintest)
+                if let missing {
+                    // Said here rather than by the engine twenty seconds in:
+                    // this model transforms audio it is given, and the form
+                    // has not been given any.
+                    Text("NEEDS \(missing.label.uppercased()) — PICK IT "
+                         + "UNDER FULL CONTROL")
+                        .font(Bench.Typo.mono(12))
+                        .foregroundStyle(Bench.Palette.warn)
+                } else if needsWords {
+                    Text("NEEDS LYRICS — THIS MODEL SINGS, IT HAS NOTHING "
+                         + "TO DO WITHOUT WORDS")
+                        .font(Bench.Typo.mono(12))
+                        .foregroundStyle(Bench.Palette.warn)
+                } else {
+                    Text("⌘↩ TO RUN")
+                        .font(Bench.Typo.mono(12))
+                        .foregroundStyle(Bench.Palette.textFaintest)
+                }
             }
             Spacer()
+        }
+    }
+
+    /// Audio the model cannot run without and the form has not been given —
+    /// VampNet's source loop, vocals2music's vocal take. The engine would
+    /// only refuse after loading the model; the button refuses first, and
+    /// says why.
+    private func missingRequiredAudio(_ model: ModelInfo) -> ParamSpec? {
+        model.capabilities.params.first {
+            ($0.type == .audio || $0.type == .midi) && !$0.nullable
+                && $0.isInternal != true
+                && formState.audioSelections[$0.key] == nil
         }
     }
 

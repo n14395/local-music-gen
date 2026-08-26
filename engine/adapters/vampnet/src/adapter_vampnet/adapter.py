@@ -12,11 +12,20 @@ Packaging notes, learned in triage: the package reads a DEFAULT_HF_MODEL_REPO
 file beside site-packages at import (setup.py forgets to install it — created
 here before the import); the steps kwarg is `_sampling_steps`; decoding is
 `interface.decode(z)`, not the documented `to_signal`.
+
+Device: settings.device = "mps" hands the whole Interface (coarse, c2f,
+codec, wavebeat) to the GPU — it is fully device-parameterized upstream.
+Its cuda-autocast contexts already degrade to plain fp32 on this machine,
+proven by the CPU runs. Default without the setting: CPU.
 """
 
 from __future__ import annotations
 
 import os
+
+# Read at torch import: lets any stray op the MPS backend lacks fall back
+# to CPU instead of aborting the render. Harmless on the CPU route.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb)
@@ -42,6 +51,7 @@ class VampNetAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.interface = None
+        self.device = str(self.settings.get("device") or "cpu")
 
     def _snapshot(self) -> str:
         if not self.model_paths:
@@ -64,8 +74,9 @@ class VampNetAdapter(ModelAdapter):
             coarse2fine_ckpt=os.path.join(pair_dir, "c2f.pth"),
             codec_ckpt=os.path.join(snap, "codec.pth"),
             wavebeat_ckpt=os.path.join(snap, "wavebeat.pth"),
-            device="cpu")
-        progress_cb(None, "VampNet ready")
+            device=self.device)
+        progress_cb(None, "VampNet ready on the GPU (MPS)"
+                          if self.device == "mps" else "VampNet ready")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
@@ -119,7 +130,10 @@ class VampNetAdapter(ModelAdapter):
 
         progress_cb(0.9, "decoding", phase="master")
         out = self.interface.decode(zv)
-        tmp = out_path + ".part"
+        # `.part.wav`, not `.part`: audiotools writes through soundfile,
+        # which infers the container from the extension and refuses a name
+        # it does not recognise. The rename to out_path is still atomic.
+        tmp = out_path + ".part.wav"
         out.write(tmp)
         os.replace(tmp, out_path)
         sample_rate = int(out.sample_rate)

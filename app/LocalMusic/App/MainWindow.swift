@@ -585,7 +585,8 @@ struct MainWindow: View {
         switch destination {
         case .generate:
             StudioView(catalog: env.catalog, jobs: env.jobsStore,
-                       library: env.library, playback: env.playback,
+                       library: env.library, parts: env.partsStore,
+                       playback: env.playback,
                        telemetry: env.telemetry, timings: env.renderTimings,
                        notifications: env.notifications,
                        prefill: env.prefill, actions: songActions,

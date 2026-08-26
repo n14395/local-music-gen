@@ -27,10 +27,20 @@ struct StudioPreset: Codable, Identifiable, Hashable {
 
 /// The parameters rail: presets across the top, then the model's params sorted
 /// into named group cards.
+///
+/// Two layouts, same content. `.inspector` is the fixed-width rail down the
+/// side of a screen and scrolls itself. `.inline` sits in the composer's own
+/// column, between the settings it belongs to and the button that spends
+/// them — so it carries no scroller of its own (the composer already has
+/// one) and spreads its cards across two columns when the window is wide.
 struct StudioParameterPanel: View {
+    enum Layout { case inspector, inline }
+
     @Bindable var state: ParameterFormState
     let model: ModelInfo?
     let onApplyPreset: (StudioPreset) -> Void
+    var layout: Layout = .inspector
+    var materialPicker: MaterialPickerContext?
 
     @AppStorage("studio.presets") private var storedPresetsJSON = "[]"
     @State private var naming = false
@@ -38,6 +48,24 @@ struct StudioParameterPanel: View {
     @State private var appliedPreset: String?
 
     var body: some View {
+        Group {
+            switch layout {
+            case .inspector: inspectorBody
+            case .inline: inlineBody
+            }
+        }
+        .alert("Save preset", isPresented: $naming) {
+            TextField("Name", text: $draftName)
+            Button("Save") { savePreset() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Saves the \(state.changedCount) parameter"
+                 + (state.changedCount == 1 ? "" : "s")
+                 + " you changed, for this model.")
+        }
+    }
+
+    private var inspectorBody: some View {
         VStack(spacing: 0) {
             BenchPanelHeader {
                 Text("Parameters")
@@ -52,19 +80,28 @@ struct StudioParameterPanel: View {
                 presetRow
             }
             ScrollView {
-                ParameterFormView(state: state)
+                ParameterFormView(state: state, materialPicker: materialPicker)
                     .padding(.horizontal, 18).padding(.vertical, 16)
             }
         }
-        .alert("Save preset", isPresented: $naming) {
-            TextField("Name", text: $draftName)
-            Button("Save") { savePreset() }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Saves the \(state.changedCount) parameter"
-                 + (state.changedCount == 1 ? "" : "s")
-                 + " you changed, for this model.")
+    }
+
+    private var inlineBody: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Text("PARAMETERS").eyebrow()
+                if state.changedCount > 0 {
+                    Text("\(state.changedCount) CHANGED")
+                        .font(Bench.Typo.mono(10))
+                        .foregroundStyle(Bench.Palette.textFaintest)
+                }
+                Spacer(minLength: 8)
+                presetRow
+            }
+            ParameterFormView(state: state, allowsTwoColumns: true,
+                              materialPicker: materialPicker)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var presetRow: some View {

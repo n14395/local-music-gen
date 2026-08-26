@@ -376,21 +376,40 @@ private struct DownloadProgressLine: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             } else {
-                let moving = download.state == .downloading
-                BenchProgressBar(fraction: fraction, height: 5,
-                                 tint: moving ? Bench.Palette.accent
-                                              : Bench.Palette.textMuted,
-                                 track: Bench.Palette.windowStroke)
-                Text(line)
-                    .font(Bench.Typo.mono(11, .semibold))
-                    .foregroundStyle(Bench.Palette.textSecondary)
-                    .fixedSize()
+                // The bar is flexible and the stats are not, so on a narrow
+                // card the bar was the thing that vanished. Side by side only
+                // while the bar keeps a readable width; below that it takes a
+                // full line of its own with the stats underneath.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 11) {
+                        bar.frame(minWidth: 120)
+                        lineText.fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 7) {
+                        bar
+                        lineText.lineLimit(1)
+                    }
+                }
             }
         }
         .onAppear { rate.ingest(download.speedBps) }
         // The sampled quantity is the speed, so that is what is fed to the
         // smoother — one ingest per engine sample, no double counting.
         .onChange(of: download.speedBps) { _, sample in rate.ingest(sample) }
+    }
+
+    private var bar: some View {
+        let moving = download.state == .downloading
+        return BenchProgressBar(fraction: fraction, height: 5,
+                                tint: moving ? Bench.Palette.accent
+                                             : Bench.Palette.textMuted,
+                                track: Bench.Palette.windowStroke)
+    }
+
+    private var lineText: some View {
+        Text(line)
+            .font(Bench.Typo.mono(11, .semibold))
+            .foregroundStyle(Bench.Palette.textSecondary)
     }
 
     private var line: String {

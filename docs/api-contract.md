@@ -256,6 +256,12 @@ ModelInfo = {
 
 Capabilities = {
   "supports_lyrics": false,
+  // optional; the model REFUSES a job with no lyrics (SongBloom sings a
+  // structured lyric sheet and has nothing to do without one). Distinct
+  // from supports_lyrics, which the instrumental-capable singers also set.
+  // Absent ⇒ lyrics are optional. A client must gate on this rather than
+  // let the adapter load gigabytes and then say no.
+  "requires_lyrics": true,
   "instrumental_only": true,
   "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
   "sample_rate": 32000,
@@ -438,7 +444,7 @@ JSON-encoded **string** (the params dict itself stays flat scalars on the wire).
   progress of its own, so there is nothing to count and none is invented. Draw a
   spinner and `message`, not a bar; the event that first says `provisioning`
   already carries a message, so that spinner is never captionless. `speed_bps` is a raw sample over the last
-  ~0.5 s and is spiky by nature; smoothing and any ETA belong to the client.
+  ~1 s and is spiky by nature; smoothing and any ETA belong to the client.
 
   **Downloads transfer one at a time.** Queueing five models starts one and
   leaves four in `state: "queued"` until their turn. They share a link, and —
@@ -709,7 +715,15 @@ skip the LM.
 
 Output files are written complete (`.part` + rename) under `--output-dir/<job_id>/`
 **before** `job.completed` fires. The app moves them into its library (same volume →
-atomic rename). The engine garbage-collects `Outputs/<job_id>/` directories left
+atomic rename). As each take of a `count > 1` generate job finishes, the engine
+also emits **`job.take_done`** — `{"job_id", "take", "output"}`, where `output`
+is the same object that will appear at that index in the completed job's
+`outputs` — so a client can land finished takes while later ones still render.
+It is an optimization, not a delivery guarantee: `job.completed` re-lists every
+output and remains the source of truth, so a client that saw `job.take_done`
+dedups by take index, and one that missed it (ring-buffer replay is
+best-effort) loses nothing. A take announced this way is final; the engine
+never rewrites it. The engine garbage-collects `Outputs/<job_id>/` directories left
 untouched for `LOCALMUSIC_OUTPUTS_RETENTION_DAYS` days (default 14; `0` keeps
 everything) — swept at startup and daily, never touching a non-terminal job's
 directory. Terminal jobs are also evicted from the in-memory history past

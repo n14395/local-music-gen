@@ -901,6 +901,14 @@ class JobQueue:
                     output["meta"] = take_meta
                     meta.update(take_meta)
                 outputs.append(output)
+                # The finished take is on disk and final, so the app can land
+                # it in the library NOW instead of when the whole batch ends.
+                # job.completed stays the source of truth: a client that
+                # missed this event ingests everything there, one that saw it
+                # dedups by take index (contract §5.5).
+                self.bus.emit_threadsafe(
+                    "job.take_done",
+                    {"job_id": job.id, "take": i, "output": output})
 
             self._set_status(job, "encoding")
             # Still the last take: every one is rendered by now, and dropping

@@ -60,6 +60,17 @@ def _head_files(name: str) -> tuple[str, str, str]:
             f"{stem}.pb", f"{stem}.json")
 
 
+def _head_nodes(name: str) -> tuple[str, str]:
+    """Input/output node names differ by how UPF exported each graph:
+    genre_discogs400 is a TF2 saved-model export (serving_default /
+    PartitionedCall), every other classification head is a TF1 frozen
+    graph (model/Placeholder → model/Softmax). Configuring a TF1 head
+    with the TF2 names is the 'not a valid node name' crash."""
+    if HEADS[name][0].startswith("genre_discogs400"):
+        return ("serving_default_model_Placeholder", "PartitionedCall:0")
+    return ("model/Placeholder", "model/Softmax")
+
+
 class EssentiaAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -112,10 +123,10 @@ class EssentiaAdapter(ModelAdapter):
             output="PartitionedCall:1")
         for name in self._wanted_heads():
             _url, pb_name, meta_name = _head_files(name)
+            node_in, node_out = _head_nodes(name)
             head = es.TensorflowPredict2D(
                 graphFilename=os.path.join(cache, pb_name),
-                input="serving_default_model_Placeholder",
-                output="PartitionedCall:0")
+                input=node_in, output=node_out)
             with open(os.path.join(cache, meta_name)) as f:
                 classes = json.load(f)["classes"]
             self.heads[name] = (head, classes)

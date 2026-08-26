@@ -34,6 +34,12 @@ override-dependencies = [
     "av==12.3.0",
     "torch==2.1.0",
     "torchaudio==2.1.0",
+    # Era-match the rest of the torch family by hand: with only torch
+    # pinned, uv resolved torchvision 0.28 (a torch-2.8 build) whose
+    # `torch.library.register_fake` registrations crash the transformers
+    # import on torch 2.1. 0.16.0 is the 2.1.0 pair the triage proved.
+    "torchvision==0.16.0",
+    "torchtext==0.16.0",
 ]
 # transformers 5.x refuses torch 2.1; 4.46.3 is the proven pair. numpy 2
 # breaks torch 2.1-era code.

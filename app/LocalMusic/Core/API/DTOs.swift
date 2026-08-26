@@ -250,6 +250,11 @@ struct Capabilities: Codable, Sendable {
     let estSecondsPerAudioSecond: Double
     let lyricsTags: [String]?
     let lyricsHint: String?
+    /// Whether the model REFUSES a bare prompt with no lyrics — SongBloom
+    /// sings a structured lyric sheet and has nothing to do without one.
+    /// Distinct from `supportsLyrics`, which the instrumental-capable
+    /// singers (ACE-Step, YuE) also set. Absent ⇒ lyrics are optional.
+    let requiresLyrics: Bool?
     /// Job tasks the model accepts; absent ⇒ ["generate"] (contract §5.4).
     let tasks: [String]?
     /// Rough processing-time / input-duration ratio for task models (estimates only).
@@ -279,6 +284,10 @@ struct Capabilities: Codable, Sendable {
         params.contains { $0.type == .audio && !$0.nullable }
     }
 
+    /// True when the model cannot run from a prompt alone, for any reason —
+    /// the roster gate anything auto-running a bare prompt should consult.
+    var needsLyrics: Bool { requiresLyrics ?? false }
+
     /// Defaults for every optional field, for the same reason `ParamSpec` has
     /// one: the contract grows by adding optional capabilities, and a
     /// memberwise initialiser turns each addition into a breaking change for
@@ -286,6 +295,7 @@ struct Capabilities: Codable, Sendable {
     init(supportsLyrics: Bool, instrumentalOnly: Bool, duration: DurationSpec,
          sampleRate: Int, outputsPerJobMax: Int, estSecondsPerAudioSecond: Double,
          lyricsTags: [String]? = nil, lyricsHint: String? = nil,
+         requiresLyrics: Bool? = nil,
          tasks: [String]? = nil, estRealtimeFactor: Double? = nil,
          supportsPreview: Bool? = nil,
          pipeline: [PipelineStage]? = nil, params: [ParamSpec]) {
@@ -297,6 +307,7 @@ struct Capabilities: Codable, Sendable {
         self.estSecondsPerAudioSecond = estSecondsPerAudioSecond
         self.lyricsTags = lyricsTags
         self.lyricsHint = lyricsHint
+        self.requiresLyrics = requiresLyrics
         self.tasks = tasks
         self.estRealtimeFactor = estRealtimeFactor
         self.supportsPreview = supportsPreview
@@ -781,6 +792,11 @@ enum EngineEvent: Sendable {
     /// replaces the last for that take.
     case jobPreview(jobId: String, preview: JobPreview)
     case jobLog(jobId: String, line: String)
+    /// One take of a multi-take generate job finished and its file is final
+    /// (contract §5.5). The library can land it now; `job.completed` remains
+    /// the source of truth and re-lists every output, so a listener dedups
+    /// by take index — and one that never saw this event loses nothing.
+    case jobTakeDone(jobId: String, take: Int, output: JobOutput)
     case jobCompleted(jobId: String)
     case jobFailed(jobId: String, error: APIErrorBody)
     case jobCanceled(jobId: String)
@@ -831,6 +847,15 @@ enum EngineEvent: Sendable {
             case "job.log":
                 let j = try decoder.decode(J.self, from: data)
                 return .jobLog(jobId: j.jobId, line: j.line ?? "")
+            case "job.take_done":
+                struct TD: Codable {
+                    let jobId: String
+                    let take: Int
+                    let output: JobOutput
+                }
+                let d = try decoder.decode(TD.self, from: data)
+                return .jobTakeDone(jobId: d.jobId, take: d.take,
+                                    output: d.output)
             case "job.completed":
                 return .jobCompleted(jobId: try decoder.decode(J.self, from: data).jobId)
             case "job.failed":

@@ -249,9 +249,11 @@ struct OnboardingView: View {
                         .foregroundStyle(Bench.Palette.textPrimary)
                     BenchBadge(sizeBadge(plan.essentialBytes), tone: .ok)
                 }
-                Text("Tempo, key and beat detection · stem separation · note "
-                     + "transcription · note rendering · beat-aligned mixing. "
-                     + "Without these, most of Split & Recombine can't run.")
+                Text("Tempo, key and beat detection · chords · quality "
+                     + "scores · genre and mood tags · stem separation · "
+                     + "note transcription · note rendering · beat-aligned "
+                     + "mixing. Without these, most of Split & Recombine "
+                     + "can't run.")
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(Bench.Palette.textMuted)
                     .fixedSize(horizontal: false, vertical: true)

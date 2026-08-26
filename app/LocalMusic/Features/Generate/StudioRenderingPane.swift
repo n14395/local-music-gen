@@ -324,9 +324,7 @@ struct StudioRenderingPane: View {
         return HStack(spacing: 16) {
             BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
                             isCurrent: isCurrent, size: 36) {
-                playback.play(url: song.fileURL, songId: song.id, title: song.title,
-                              duration: song.durationS,
-                              subtitle: "\(song.modelName) · \(Int(song.durationS.rounded())) s")
+                load(song)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(song.title)
@@ -341,7 +339,15 @@ struct StudioRenderingPane: View {
             BenchWaveformLoader(audioURL: song.fileURL, cacheURL: song.waveformURL,
                                 playedFraction: isCurrent ? playback.playedFraction : 0,
                                 tint: isCurrent ? Bench.Palette.accent
-                                                : Bench.Palette.textQuaternary)
+                                                : Bench.Palette.textQuaternary,
+                                // Every other waveform in the app seeks on
+                                // click; these did not, so the one place you
+                                // are looking at a take you just made was the
+                                // one place you could not jump into it.
+                                onSeek: { fraction in
+                                    if !isCurrent { load(song) }
+                                    playback.seek(to: fraction * song.durationS)
+                                })
                 .frame(height: 44)
                 .frame(maxWidth: .infinity)
             RatingStars(rating: song.rating, size: 13) { rating in
@@ -352,5 +358,15 @@ struct StudioRenderingPane: View {
         }
         .padding(16)
         .benchCard()
+    }
+
+    /// Make this take the transport's current item. Shared by the play
+    /// button and the waveform, so a click into a take that is not loaded
+    /// yet lands on the same subtitle the play button would have given it.
+    private func load(_ song: SongRecord) {
+        playback.play(url: song.fileURL, songId: song.id, title: song.title,
+                      duration: song.durationS,
+                      subtitle: "\(song.modelName) · "
+                                + "\(Int(song.durationS.rounded())) s")
     }
 }

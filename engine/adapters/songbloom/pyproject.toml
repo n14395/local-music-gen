@@ -12,6 +12,14 @@ dependencies = [
     "lightning",
     "transformers",
     "einops",
+    # Its VAE frontend is stable-audio-tools-shaped and imports these
+    # directly (`SongBloom/models/vae_frontend/bottleneck.py` →
+    # `from vector_quantize_pytorch import ResidualVQ, FSQ`). They appear in
+    # neither the fork's install_requires nor its requirements.txt, so
+    # nothing pulls them in — the triage env only had them because the
+    # harness installed the upstream requirement set by hand.
+    "vector-quantize-pytorch==1.31.1",
+    "alias-free-torch==0.0.6",
     "descript-audio-codec",
     "omegaconf",
     "huggingface-hub",

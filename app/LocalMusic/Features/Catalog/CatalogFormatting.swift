@@ -110,21 +110,21 @@ enum ModelDeletion {
 
 /// Exponentially-smoothed download throughput, and the ETA derived from it.
 ///
-/// The engine measures speed by re-walking the model cache every 0.5 s, so a
-/// raw `speedBps` sample swings between zero and several times the true rate
-/// from one event to the next. Printed straight through, the `MB/S` readout
-/// strobes and an ETA built on it jumps between "4 min" and "3 hours" twice a
-/// second. Every sample folds into an EMA instead, and the ETA is computed
-/// here because the wire carries none.
+/// The engine measures speed by re-walking the model cache once a second, so
+/// a raw `speedBps` sample still swings around the true rate from one event
+/// to the next. Printed straight through, the `MB/S` readout strobes and an
+/// ETA built on it jumps between "4 min" and "3 hours" with every sample.
+/// Every sample folds into an EMA instead, and the ETA is computed here
+/// because the wire carries none.
 struct DownloadRate: Equatable {
-    /// One-quarter weight on the newest sample: at two samples a second that
-    /// is roughly a two-second window — long enough to swallow the cache-walk
-    /// jitter, short enough that a throttled connection shows up while you are
-    /// still looking at the row.
+    /// Half weight on the newest sample: at one sample a second that is
+    /// roughly a two-second window — long enough to swallow the cache-walk
+    /// jitter (each sample is already a 1 s average), short enough that a
+    /// throttled connection shows up while you are still looking at the row.
     let smoothing: Double
     private(set) var bytesPerSecond: Double?
 
-    init(smoothing: Double = 0.25) {
+    init(smoothing: Double = 0.5) {
         self.smoothing = smoothing
     }
 

@@ -11,32 +11,45 @@ struct OnboardingPlan: Equatable {
 
     // MARK: - The set
 
-    /// The models the app's non-generation half is dead without.
+    /// The models the app's non-generation half is dead without, plus three
+    /// near-free enrichers that otherwise leave whole surfaces dimmed.
     ///
-    /// Together these cost about 200 MB — three of them are literally zero
+    /// Together these cost about 275 MB — three of them are literally zero
     /// bytes, their weights riding along inside the adapter's Python package —
-    /// against 9.4 GB for a single song model. Without them Split & Recombine,
-    /// tempo and key badges, note transcription, beat-aligned mixing and note
-    /// rendering are all either invisible or silently inert: `autoAnalyze`
-    /// gives up without a word when no analyzer is installed, and a mix with
-    /// no analysis behind it still renders, just never aligned.
+    /// against 9.4 GB for a single song model. Without the core, Split &
+    /// Recombine, tempo and key badges, note transcription, beat-aligned
+    /// mixing and note rendering are all either invisible or silently inert:
+    /// `autoAnalyze` gives up without a word when no analyzer is installed,
+    /// and a mix with no analysis behind it still renders, just never aligned.
+    ///
+    /// The last three are enrichers rather than load-bearing — chords (BTC),
+    /// quality scores (SQUIM) and tags (Essentia) — but they earn the row the
+    /// same way: without them the "Read the chords", "Rate the quality" and
+    /// "Tag my library" cards sit dimmed on a fresh install with nothing
+    /// explaining why, the section map has no chord chips, and the song
+    /// digest has no progression to speak of. All three together are ~75 MB
+    /// with 4 GB floors.
     ///
     /// Ordered as the essentials row reads them out.
     static let essentialIds = [
         "analysis-basic",        // tempo, key, beats, sections — the auto-analyze
+        "analysis-chords-btc",   // chord chips, chord-bed part, digest progression
+        "analysis-squim",        // quality scores for any part
         "separation-htdemucs",   // split into stems, karaoke
         "transcribe-basicpitch", // notes, general case
         "transcribe-swiftf0",    // notes, melody line
         "transcribe-transkun",   // notes, piano
         "render-soundfont",      // hear a notes part back
         "dsp-mixdown",           // every beat-aligned mix and recombine
+        "tag-essentia-discogs",  // genre/mood tags, batch tagging, tag search
     ]
 
     /// The generators a new user starts with: two full-song models so the
     /// app's whole premise — running one prompt through more than one model —
     /// works before they have downloaded anything themselves, one small
-    /// instrumental model that runs on the smallest Apple Silicon Mac, and the
-    /// Base DiT that Style Transfer's stem modes need.
+    /// instrumental model that runs on the smallest Apple Silicon Mac, the
+    /// Base DiT that Style Transfer's stem modes need, and the one model in
+    /// the catalog that EDITS existing audio toward a prompt.
     ///
     /// `minimax-music3-mlx-small` is deliberately the MLX build and not the
     /// catalog's featured `minimax-music3`: same model, 8.3 GB against 53 GB
@@ -44,14 +57,21 @@ struct OnboardingPlan: Equatable {
     /// fine here — installs are by id — and once installed it draws nested
     /// under its base in the Models list without any further help.
     ///
+    /// `melodyflow-t24` earns the fifth slot on capability, not size: nothing
+    /// else here rewrites a clip from a description ("make it orchestral"),
+    /// so the "Edit with words" card is dimmed without it — and at 4.1 GB
+    /// with an 8 GB floor and MPS rendering (10 s in ~3 s) it is the
+    /// smallest and fastest real generator on the sheet.
+    ///
     /// No gated model appears here on purpose. All three Stability entries
     /// need a Hugging Face token in the Keychain, and demanding one in the
-    /// first minute of the app is the wrong trade for a fourth generator.
+    /// first minute of the app is the wrong trade for a fifth generator.
     static let generatorIds = [
         "acestep-base",              // songs with vocals, up to 5 minutes
         "acestep-15-dit-base",       // unlocks extract / layer / complete
         "minimax-music3-mlx-small",  // a second, different full-song model
         "musicgen-small",            // instrumental, runs on an 8 GB Mac
+        "melodyflow-t24",            // fast instrumental + edits audio with words
     ]
 
     /// What a generator buys that its description does not already say.
