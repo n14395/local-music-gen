@@ -56,6 +56,13 @@ enum SongDigest {
         if let sections = payload?.sections, sections.count > 1 {
             lines.append("Structure: \(structure(sections))")
         }
+        if let chords = payload?.chords,
+           let line = progression(chords) {
+            lines.append("Chords: \(line)")
+        }
+        if let quality = payload?.quality {
+            lines.append("Recording quality: \(qualityLine(quality))")
+        }
         if let bands = payload?.bandEnergy, !bands.isEmpty {
             lines.append("Balance: \(balance(bands))")
         }
@@ -99,6 +106,48 @@ enum SongDigest {
         }
         return "\(sections.count) sections in the shape \(shape), "
             + "\(distinct) distinct kinds"
+    }
+
+    /// The chord track reduced to what a musician would name: the loop the
+    /// song leans on (most frequent four-chord window) and how much colour
+    /// sits around it. Nil when nothing but N/X was recognised.
+    static func progression(
+        _ segments: [AnalysisPayload.ChordSegment]) -> String? {
+        // Collapse repeats first — "Am Am Am F" is one chord held, not three.
+        var run: [String] = []
+        for seg in segments where seg.chord != "N" && seg.chord != "X" {
+            if run.last != seg.chord { run.append(seg.chord) }
+        }
+        guard !run.isEmpty else { return nil }
+        let distinct = Set(run).count
+        if run.count < 4 {
+            return run.joined(separator: " → ")
+        }
+        var counts: [String: Int] = [:]
+        for i in 0...(run.count - 4) {
+            counts[run[i..<(i + 4)].joined(separator: " → "),
+                   default: 0] += 1
+        }
+        let loop = counts.max { $0.value < $1.value }!.key
+        return "mostly \(loop), \(distinct) distinct chords overall"
+    }
+
+    /// SQUIM's three scores in words, with the caveat the payload itself
+    /// carries: speech-trained numbers rank takes, they do not grade music.
+    static func qualityLine(_ quality: AnalysisPayload.Quality) -> String {
+        var parts: [String] = []
+        if let stoi = quality.stoi {
+            parts.append("intelligibility \(String(format: "%.2f", stoi)) of 1")
+        }
+        if let pesq = quality.pesq {
+            parts.append("perceptual score \(String(format: "%.1f", pesq)) of 4.5")
+        }
+        if let siSdr = quality.siSdr {
+            parts.append("signal-to-distortion \(String(format: "%.1f", siSdr)) dB")
+        }
+        guard !parts.isEmpty else { return "measured, but empty" }
+        return parts.joined(separator: ", ")
+            + " (speech-trained estimates — good for comparing takes)"
     }
 
     /// Eight octave bands, summing to 1, reduced to where the weight sits.

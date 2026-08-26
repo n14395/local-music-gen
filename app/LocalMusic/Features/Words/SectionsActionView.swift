@@ -67,6 +67,9 @@ struct SectionsActionView: View {
             if !sections.isEmpty {
                 sectionsCard
             }
+            if !chordRun.isEmpty {
+                chordsCard
+            }
         } commit: {
             ActionCommitRow(title: commitTitle,
                             costLine: costLine,
@@ -136,18 +139,59 @@ struct SectionsActionView: View {
         }
     }
 
+    /// The chord track with held repeats collapsed: one entry per change,
+    /// N (no chord) and X (unclear) hidden. Present only after a chords
+    /// recognition run has been merged into the analysis.
+    private var chordRun: [(chord: String, startS: Double)] {
+        guard let chords = payload?.chords else { return [] }
+        var run: [(chord: String, startS: Double)] = []
+        for seg in chords where seg.chord != "N" && seg.chord != "X" {
+            if run.last?.chord != seg.chord {
+                run.append((seg.chord, seg.startS))
+            }
+        }
+        return run
+    }
+
+    private var chordsCard: some View {
+        ActionOptionsCard(eyebrow: "THE CHORDS") {
+            FlowLayout(spacing: 6, rowSpacing: 6) {
+                ForEach(Array(chordRun.enumerated()),
+                        id: \.offset) { _, entry in
+                    Button {
+                        seek(to: entry.startS)
+                    } label: {
+                        BenchTag(text: entry.chord,
+                                 color: Bench.Palette.accent,
+                                 fill: Bench.Palette.accent.opacity(0.12))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play from \(TextDocsSection.stamp(entry.startS))")
+                }
+            }
+            ActionFootnote(
+                text: "From the chord recognition run — click a chord to "
+                    + "hear the track from there. Stretches it could not "
+                    + "name are left out.")
+        }
+    }
+
+    private func seek(to seconds: Double) {
+        if playback.currentSongId == source?.id {
+            playback.seek(to: seconds)
+        } else if let source {
+            let url = source.auditionURL ?? source.fileURL
+            playback.play(url: url, songId: source.id,
+                          title: source.sourceTitle,
+                          duration: source.durationS ?? 0)
+            playback.seek(to: seconds)
+        }
+    }
+
     private func sectionRow(index: Int,
                             section: AnalysisPayload.Section) -> some View {
         Button {
-            if playback.currentSongId == source?.id {
-                playback.seek(to: section.startS)
-            } else if let source {
-                let url = source.auditionURL ?? source.fileURL
-                playback.play(url: url, songId: source.id,
-                              title: source.sourceTitle,
-                              duration: source.durationS ?? 0)
-                playback.seek(to: section.startS)
-            }
+            seek(to: section.startS)
         } label: {
             HStack(spacing: 10) {
                 Text(label(section, index: index))

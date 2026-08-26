@@ -24,6 +24,8 @@ struct SettingsView: View {
     @FocusState private var searchFocused: Bool
     @State private var hfToken = ""
     @State private var tokenSaved = false
+    @State private var t3kKey = ""
+    @State private var t3kSaved = false
     @State private var confirmingReset = false
     @State private var confirmingSectionReset = false
     /// How many songs the library holds, for the rail's trailing count. Read
@@ -63,6 +65,10 @@ struct SettingsView: View {
             if let token = Keychain.get(account: "hf-token") {
                 hfToken = token
                 tokenSaved = true
+            }
+            if let key = Keychain.get(account: "tone3000-key") {
+                t3kKey = key
+                t3kSaved = true
             }
             refreshSongCount()
         }
@@ -206,6 +212,7 @@ struct SettingsView: View {
             if libraryNeedsRestart { libraryRestartBanner }
             ModelLibraryCard(env: env)
             huggingFaceGroup
+            tone3000Group
             licencesGroup
         case .engine:
             if needsEngineRestart { restartBanner }
@@ -942,6 +949,59 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var tone3000Group: some View {
+        SettingsGroup("TONE3000") {
+            SettingsWideRow(
+                title: "API key",
+                detail: "Lets the re-amp card browse tone3000.com's amp "
+                    + "captures in place. Use the SECRET key (t3k_cs_…) "
+                    + "from tone3000.com/settings — the public t3k_pub_ "
+                    + "key is an OAuth id and will not work. Stored only "
+                    + "in your Keychain; downloads go straight from "
+                    + "TONE3000 to this Mac.") {
+                VStack(alignment: .leading, spacing: 9) {
+                    SecureField("t3k_cs_…", text: $t3kKey)
+                        .textFieldStyle(.plain)
+                        .tint(Bench.Palette.accent)
+                        .font(Bench.Typo.mono(12))
+                        .foregroundStyle(Bench.Palette.textPrimary)
+                        .padding(.horizontal, 11).padding(.vertical, 8)
+                        .background(RoundedRectangle(
+                            cornerRadius: Bench.Metrics.Radius.control,
+                            style: .continuous)
+                            .fill(Bench.Palette.windowBackground))
+                        .overlay(RoundedRectangle(
+                            cornerRadius: Bench.Metrics.Radius.control,
+                            style: .continuous)
+                            .strokeBorder(Bench.Palette.cardStroke, lineWidth: 1))
+                    HStack(spacing: 8) {
+                        Button("Save key", action: saveT3KKey)
+                            .buttonStyle(.benchSecondary)
+                        Button("Remove", action: removeT3KKey)
+                            .buttonStyle(.bench(.quiet))
+                        if t3kSaved {
+                            SettingsChip(text: "SAVED TO KEYCHAIN")
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private func saveT3KKey() {
+        let trimmed = t3kKey.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        Keychain.set(trimmed, account: "tone3000-key")
+        t3kSaved = true
+    }
+
+    private func removeT3KKey() {
+        Keychain.delete(account: "tone3000-key")
+        t3kKey = ""
+        t3kSaved = false
     }
 
     private func saveToken() {

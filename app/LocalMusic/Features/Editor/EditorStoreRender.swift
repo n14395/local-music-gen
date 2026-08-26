@@ -87,6 +87,11 @@ extension EditorStore {
         for index in submitted.tracks.indices {
             submitted.tracks[index].source = sourceId
         }
+        guard await resolveIRUploads(&submitted) else {
+            applyStage = .failed(jobs.lastError ?? "IR upload failed")
+            applyOwnerId = nil
+            return
+        }
         guard let created = await jobs.submitEditorRender(
             modelId: model.id, spec: submitted, normalize: plan.normalize,
             limiter: plan.limiter, targetLufs: plan.targetLufs,
@@ -309,6 +314,10 @@ extension EditorStore {
         for index in plan.spec.tracks.indices {
             plan.spec.tracks[index].source = sourceId
         }
+        guard await resolveIRUploads(&plan.spec) else {
+            exportStage = .failed(jobs.lastError ?? "IR upload failed")
+            return
+        }
         guard let created = await jobs.submitEditorRender(
             modelId: model.id, spec: plan.spec,
             normalize: choice.applyEdits && plan.normalize,
@@ -376,6 +385,10 @@ extension EditorStore {
         }
         for index in plan.spec.tracks.indices {
             plan.spec.tracks[index].source = sourceId
+        }
+        guard await resolveIRUploads(&plan.spec) else {
+            exportStage = .failed(jobs.lastError ?? "IR upload failed")
+            return
         }
         let title = "\(material.title) "
             + "(\(EditorClock.short(selection.start))–"
@@ -591,6 +604,30 @@ extension EditorStore {
         let id = await jobs.uploadAudio(fileURL: sourceURL)
         uploadedSourceId = id
         return id
+    }
+
+    /// Swap each convolve effect's local IR path for an upload id — the
+    /// spec is built with the path so planning stays synchronous, and no
+    /// local path may ever reach the wire. False = an upload failed
+    /// (jobs.lastError has the words).
+    private func resolveIRUploads(_ spec: inout MixSpec) async -> Bool {
+        var uploaded: [String: String] = [:]   // path → upload id, once each
+        for t in spec.tracks.indices {
+            guard var effects = spec.tracks[t].effects else { continue }
+            for e in effects.indices where effects[e].type == "convolve" {
+                guard let path = effects[e].ir else { continue }
+                if uploaded[path] == nil {
+                    guard let id = await jobs.uploadAudio(
+                        fileURL: URL(fileURLWithPath: path)) else {
+                        return false
+                    }
+                    uploaded[path] = id
+                }
+                effects[e].ir = uploaded[path]
+            }
+            spec.tracks[t].effects = effects
+        }
+        return true
     }
 
     enum WatchKind { case apply, export }

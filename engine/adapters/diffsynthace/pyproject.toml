@@ -1,0 +1,36 @@
+[project]
+name = "adapter-diffsynthace"
+version = "0.1.0"
+description = "ACE-Step 1.5 XL LoRA pack (vocals2music + instrument LoRAs) via DiffSynth-Studio, for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "diffsynth",
+    "torch>=2.4",
+    # diffsynth imports torchaudio; all actual audio I/O in this adapter goes
+    # through soundfile/soxr, so no torchcodec (whose ffmpeg dylibs need a
+    # DYLD path the app cannot reliably inject) is required.
+    "torchaudio>=2.4",
+    "soundfile>=0.12",
+    "soxr",
+    "numpy",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+diffsynthace = "adapter_diffsynthace.adapter:DiffSynthAceAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+# Not on PyPI at a usable rev; pinned to the commit the triage proved
+# (vocals2music + instrument LoRAs on MPS bf16, 2026-08-25).
+diffsynth = { git = "https://github.com/modelscope/DiffSynth-Studio", rev = "3f3df523ed6273ee4c9dae245de2c7abd8fd4b5f" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_diffsynthace"]

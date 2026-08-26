@@ -267,6 +267,20 @@ def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
                                       release_ms=need(fx, "release_ms")))
         elif kind == "gate":
             plugins.append(NoiseGate(threshold_db=need(fx, "threshold_db")))
+        elif kind == "convolve":
+            # Impulse-response convolution (rooms, cabinets — IRs are .wav
+            # files; TONE3000 serves thousands). The `ir` value arrives as
+            # a file path: the supervisor's resolve_uploads pass has already
+            # swapped the upload id for it.
+            from pedalboard import Convolution
+
+            ir = fx.get("ir")
+            if not ir or not os.path.isfile(str(ir)):
+                raise ValueError("effect 'convolve' needs an 'ir' audio file")
+            mix = _maybe_float(fx.get("mix"))
+            plugins.append(Convolution(str(ir),
+                                       mix=1.0 if mix is None
+                                       else min(1.0, max(0.0, mix))))
         else:
             raise ValueError(f"unknown effect type '{kind}'")
     if not plugins:

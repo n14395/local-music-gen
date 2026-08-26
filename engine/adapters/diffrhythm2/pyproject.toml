@@ -1,0 +1,50 @@
+[project]
+name = "adapter-diffrhythm2"
+version = "0.1.0"
+description = "DiffRhythm2 full-song lyrics-to-song (block-cache flow matching) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # The proven triage stack (2026-08-25) — the worst dependency gauntlet of
+    # the survey, six rounds deep; change nothing casually.
+    "torch==2.7.0",
+    "torchaudio==2.7.0",
+    "torchdiffeq",
+    "transformers==4.47.1",
+    "cn2an",
+    "einops",
+    "huggingface-hub",
+    "jieba",
+    "librosa==0.9.2",
+    "muq",
+    "numpy==1.26.0",
+    "onnx",
+    "onnxruntime",
+    "pyopenjtalk",
+    "inflect",
+    "pykakasi",
+    "pypinyin",
+    "unidecode",
+    "phonemizer",
+    "py3langid",
+    "pedalboard",
+    "soundfile>=0.12",
+    "tqdm",
+    "setuptools<81",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+diffrhythm2 = "adapter_diffrhythm2.adapter:DiffRhythm2Adapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_diffrhythm2"]

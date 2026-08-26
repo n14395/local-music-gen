@@ -12,8 +12,11 @@ from engine_protocol.adapter import CancelledError
 
 from .abc_convert import looks_like_abc
 
-# The instruct format the checkpoint was tuned on.
-TEMPLATE = ("Human: {instruction}\n\nAssistant: ")
+# The instruct format the checkpoint was tuned on, verbatim from the model
+# card: the `</s>` between turns is load-bearing. With a blank line instead,
+# and with the tokenizer's default special tokens, the model answers a
+# notation prompt with nothing at all.
+TEMPLATE = "Human: {instruction} </s> Assistant: "
 
 CONTINUE = ("Below is an ABC notation tune. Write a new piece in the same "
             "style — same key and metre — and reply with ABC notation only, "
@@ -55,7 +58,10 @@ def compose(bundle: dict, prompt: str, max_tokens: int, temperature: float,
     instruction = (CONTINUE.format(abc=prompt) if looks_like_abc(prompt)
                    else COMPOSE.format(text=prompt))
     text = TEMPLATE.format(instruction=instruction)
-    inputs = tokenizer(text, return_tensors="pt")
+    # `add_special_tokens=False`, per the model card: the template already
+    # carries its own turn markers, and letting the tokenizer add a second
+    # BOS is half of why an empty reply comes back.
+    inputs = tokenizer(text, return_tensors="pt", add_special_tokens=False)
     inputs = {k: v.to(device) for k, v in inputs.items()}
     prompt_length = inputs["input_ids"].shape[-1]
 
@@ -75,8 +81,14 @@ def compose(bundle: dict, prompt: str, max_tokens: int, temperature: float,
     with torch.no_grad():
         output = model.generate(
             **inputs, max_new_tokens=max_tokens,
+            # A floor on the reply, from the model card. Without it the
+            # model is free to emit EOS immediately — which is exactly what
+            # it did when handed a tune to continue.
+            min_new_tokens=10,
             do_sample=temperature > 0, temperature=max(0.05, temperature),
-            top_p=0.9, pad_token_id=tokenizer.eos_token_id,
+            top_p=0.9, top_k=40, repetition_penalty=1.1,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.eos_token_id,
             stopping_criteria=StoppingCriteriaList([Tick()]))
     if state["cancelled"] or cancel.cancelled:
         raise CancelledError()

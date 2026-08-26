@@ -174,7 +174,8 @@ ModelInfo = {
                                       // "Instrumental & loops", "Melody-guided",
                                       // "Remix & restyle", "Stem separation",
                                       // "Notes & MIDI", "Musical analysis",
-                                      // "Mixing & recombining", "Writing help".
+                                      // "Mixing & recombining", "Writing help",
+                                      // "Hears & describes", "Voice & singing".
                                       // `plan` deliberately adds no tag: planning
                                       // is a step of a generate on a model
                                       // installed for generating, never a reason
@@ -191,6 +192,23 @@ ModelInfo = {
                                       // helper repos (t5-base); every pattern
                                       // must match ≥1 file or the entry stays
                                       // uninstalled.
+  "ms_repos": [{"repo_id": "iic/InspireMusic-1.5B-Long"}],
+                                      // optional; ModelScope-hosted weights,
+                                      // fetched anonymously over HTTPS by the
+                                      // engine's own worker into its ms-cache.
+                                      // Same download/install/delete lifecycle
+                                      // as hf_repos (shared-repo refcounting
+                                      // included); may carry "allow_patterns"
+                                      // with the same semantics. As of
+                                      // 2026-08-25 no shipped entry uses it —
+                                      // the formerly ModelScope-only weights
+                                      // (InspireMusic, SongBloom, the
+                                      // ACE-Step XL LoRA pack) are mirrored
+                                      // on the user-owned HF account (see
+                                      // models-uploaded-to-my-HF.md) — but
+                                      // the route stays supported for future
+                                      // ModelScope-only releases. size_bytes
+                                      // includes these files.
   "size_bytes": 2420000000,
   "install_state": "not_installed" | "downloading" | "partial" | "installed",
                                       // "partial" means a download of THIS model was
@@ -710,7 +728,7 @@ a preview is a file the client was already handed and told the duration of, so
 "keep the partial" is a client-side decision about a file it already has, never
 something inferred from a cancel. See 5.6.
 
-### 5.4 Task jobs (separate / transcribe / analyze / render / mix / assist / plan / caption / lyrics / tag / compose)
+### 5.4 Task jobs (separate / transcribe / analyze / render / mix / assist / plan / caption / lyrics / tag / compose / timbre / reamp / convert-voice / sing)
 
 `task` selects the pipeline. `"generate"` (the default) is the classic
 prompt→audio flow above and is also how audio-conditioned generation works
@@ -731,6 +749,10 @@ other tasks are promptless transformations whose model must list them in
 | `lyrics`     | mlxstt        | `source_audio` | `text` (json, with timed segments) |
 | `tag`        | analysis, captioning, mlxstt | `source_audio` | `text` (json, tags array) |
 | `compose`    | notation      | `prompt` (string param — see the note below) | `text` (json, ABC) + `midi` |
+| `timbre`     | rave          | `source_audio` | `stem` (the re-voiced audio) |
+| `reamp`      | nam           | `source_audio` + `nam_file` (audio param carrying an uploaded .nam capture) | `stem` (the re-amped audio) |
+| `convert-voice` | seedvc     | `source_audio` + `reference_audio` (the target voice, user-supplied) | `stem` (the converted vocal) |
+| `sing`       | yingmusic     | `melody_midi` (midi param) or `melody_audio`, + `lyrics_text` (string) + `reference_audio` (timbre) | `stem` (the sung vocal) |
 
 Validation for non-generate tasks: `prompt` optional (ignored unless the model
 declares a param for it); `lyrics` present → `422 VALIDATION`; `duration_s`
@@ -875,6 +897,14 @@ plus a short summary an app can put on a job row without parsing:
   is real even when it does not parse.
 - `transcribe` with `emit_abc: true` additionally emits one `text` artifact
   per note track, labeled `abc:<track>`, payload kind `"abc"`.
+- The audio-transformation tasks (`timbre` / `reamp` / `convert-voice` /
+  `sing`) return their result as **`stem` artifacts** on purpose: the split
+  ingest path already files stems as parts of the source song, so a client
+  needs no routing of its own for them. Labels name what the audio *is*
+  (`timbre:<model>`, `reamped`, `converted`, `sung`). `reamp`'s `nam_file`
+  is an ordinary upload-resolved param declared with type `audio` even
+  though the payload is a .nam JSON capture — the type governs upload
+  resolution, and the engine never inspects the bytes.
 - `analyze` on a CLAP-equipped analyzer accepts an optional `prompt_text`
   string param: the analysis payload and `result.meta` gain
   `clap_prompt_score` (cosine of CLAP text vs audio embeddings, −1…1) and
@@ -945,7 +975,7 @@ reversed material exactly as it would forward material.
 
 `effects` (optional) is an **ordered** per-track processor chain, applied after
 stretching and before fades and `gain_db` — a fade shapes the *processed*
-signal, and a gate applied after a fade-out would chop its tail. Five
+signal, and a gate applied after a fade-out would chop its tail. Six
 processor types exist; every field shown above is required for its type, and
 an unknown `type` (or a malformed processor object) fails the job rather than
 silently skipping a stage of the sound the caller asked for:
@@ -957,6 +987,7 @@ silently skipping a stage of the sound the caller asked for:
 | `eq3` | `low_db`, `mid_db`, `high_db` | three fixed bands: low shelf at 120 Hz, peak at 1.2 kHz, high shelf at 8 kHz |
 | `compressor` | `threshold_db`, `ratio`, `attack_ms`, `release_ms` | feed-forward compressor |
 | `gate` | `threshold_db` | noise gate |
+| `convolve` | `ir` (upload id → path, required), `mix` (0–1, optional, default 1) | impulse-response convolution — rooms, halls, cabinets; the IR is a .wav that rides the spec as an upload and is path-resolved by the same pass that resolves track sources |
 
 Every filter frequency is **bounded below Nyquist** by the worker
 (`min(f, 0.98 × sample_rate/2)`), including `eq3`'s three fixed band centres.

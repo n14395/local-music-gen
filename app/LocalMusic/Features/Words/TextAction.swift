@@ -41,4 +41,28 @@ enum TextAction: String, Equatable, Sendable, CaseIterable {
         case .freeCaption, .ask: false
         }
     }
+
+    /// A param the model must *declare* to be offered for this action.
+    ///
+    /// Declaring the task is not always enough. Both LP-MusicCaps and
+    /// Qwen2-Audio answer `caption`, but only one of them can be asked a
+    /// question — the other is a captioner with no instruction channel at
+    /// all. The engine drops params a model does not declare (contract
+    /// §5.1), so a question sent to the wrong model is not refused, it is
+    /// silently ignored and the user gets a general description with no sign
+    /// that their question went nowhere. The declared param is the honest
+    /// test, exactly as `mix_spec` distinguishes a mixdown from a splicer.
+    var requiredParam: String? {
+        self == .ask ? "question" : nil
+    }
+
+    /// Whether this model can serve this action — task plus, where it
+    /// matters, the param that makes the task mean what the card says.
+    func canRun(_ model: ModelInfo) -> Bool {
+        guard model.capabilities.supportedTasks.contains(task) else {
+            return false
+        }
+        guard let requiredParam else { return true }
+        return model.capabilities.params.contains { $0.key == requiredParam }
+    }
 }

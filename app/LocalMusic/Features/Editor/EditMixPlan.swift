@@ -344,19 +344,30 @@ enum EditMixPlan {
     }
 
     private static func wireEffects(_ settings: [EffectSetting]) -> [MixSpec.Effect] {
-        settings.map { fx in
+        settings.compactMap { fx in
             switch fx.kind {
             case .highpass, .lowpass:
-                MixSpec.Effect(type: fx.kind.rawValue, cutoffHz: fx.cutoffHz)
+                return MixSpec.Effect(type: fx.kind.rawValue,
+                                      cutoffHz: fx.cutoffHz)
             case .eq3:
-                MixSpec.Effect(type: "eq3", lowDb: fx.lowDb, midDb: fx.midDb,
-                               highDb: fx.highDb)
+                return MixSpec.Effect(type: "eq3", lowDb: fx.lowDb,
+                                      midDb: fx.midDb, highDb: fx.highDb)
             case .compressor:
-                MixSpec.Effect(type: "compressor",
-                               thresholdDb: fx.thresholdDb, ratio: fx.ratio,
-                               attackMs: fx.attackMs, releaseMs: fx.releaseMs)
+                return MixSpec.Effect(type: "compressor",
+                                      thresholdDb: fx.thresholdDb,
+                                      ratio: fx.ratio,
+                                      attackMs: fx.attackMs,
+                                      releaseMs: fx.releaseMs)
             case .gate:
-                MixSpec.Effect(type: "gate", thresholdDb: fx.thresholdDb)
+                return MixSpec.Effect(type: "gate",
+                                      thresholdDb: fx.thresholdDb)
+            case .convolve:
+                // No IR picked yet = not in the chain — failing the render
+                // over an empty picker would punish adding the card before
+                // the file. The LOCAL path travels here; the submit paths
+                // swap it for an upload id before the spec goes anywhere.
+                guard let ir = fx.irPath else { return nil }
+                return MixSpec.Effect(type: "convolve", ir: ir, mix: fx.mix)
             }
         }
     }

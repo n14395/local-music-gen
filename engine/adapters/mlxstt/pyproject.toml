@@ -5,6 +5,10 @@ description = "MLX speech/audio-to-text adapter (Whisper lyrics, Qwen2-Audio cap
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "mlx-audio",
+    # transformers' `apply_chat_template` needs Jinja, and Qwen2-Audio's
+    # processor goes through it. mlx-audio does not declare the dependency,
+    # so without this the model loads and then dies on its first prompt.
+    "jinja2",
     "soundfile>=0.12",
     "soxr",
     "numpy",

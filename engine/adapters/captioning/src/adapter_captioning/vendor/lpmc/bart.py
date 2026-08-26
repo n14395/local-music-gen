@@ -7,9 +7,13 @@ flag and this header records where the term actually comes from).
 
 Vendored rather than pip-installed because the checkpoints are bare
 `.pth` state dicts with no `transformers` class behind them, and the app
-refuses `trust_remote_code`. Unmodified except for this header and the
-tokenizer/config paths, which are read from a local snapshot so a job never
-reaches for the network.
+refuses `trust_remote_code`.
+
+Changes from upstream, each marked `MODIFIED (LocalMusic)` at its site:
+  * the tokenizer/config path may be a local snapshot, so a job never
+    reaches for the network;
+  * the two `generate()` calls no longer pass explicit `None` kwargs, which
+    current transformers reads as "provided" and then subscripts.
 """
 
 import torch
@@ -135,9 +139,14 @@ class BartCaptionModel(nn.Module):
         input_ids[:, 0] = self.bart.config.decoder_start_token_id
         decoder_attention_mask = torch.ones((encoder_outputs['last_hidden_state'].size(0), 1)).long().to(self.device)
         if use_nucleus_sampling:
+            # MODIFIED (LocalMusic): the explicit `None` kwargs this call
+            # used to carry are gone. transformers >= 4.4x tests for a key's
+            # *presence* in model_kwargs and then subscripts it, so passing
+            # `decoder_inputs_embeds=None` now raises
+            # "'NoneType' object is not subscriptable" inside
+            # `_get_initial_cache_position`. Omitting them is the same
+            # request, expressed the way the current API reads it.
             outputs = self.bart.generate(
-                input_ids=None,
-                attention_mask=None,
                 decoder_input_ids=input_ids,
                 decoder_attention_mask=decoder_attention_mask,
                 encoder_outputs=encoder_outputs,
@@ -148,18 +157,11 @@ class BartCaptionModel(nn.Module):
                 num_return_sequences=1,
                 repetition_penalty=1.1)
         else:
-            outputs = self.bart.generate(input_ids=None,
-                                            attention_mask=None,
-                                            decoder_input_ids=input_ids,
+            # MODIFIED (LocalMusic): explicit `None` kwargs removed — see
+            # the note in the sampling branch above.
+            outputs = self.bart.generate(decoder_input_ids=input_ids,
                                             decoder_attention_mask=decoder_attention_mask,
                                             encoder_outputs=encoder_outputs,
-                                            head_mask=None,
-                                            decoder_head_mask=None,
-                                            inputs_embeds=None,
-                                            decoder_inputs_embeds=None,
-                                            use_cache=None,
-                                            output_attentions=None,
-                                            output_hidden_states=None,
                                             max_length=max_length,
                                             min_length=min_length,
                                             num_beams=num_beams,

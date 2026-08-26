@@ -1,0 +1,32 @@
+[project]
+name = "adapter-magentart"
+version = "0.1.0"
+description = "Magenta RealTime 2 (MLX) adapter for the LocalMusic engine"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "magenta-rt[mlx]>=2.0.3,<3",
+    # The shipped .mlxfn export deserialises only on mlx 0.30.x–0.31.x:
+    # 0.32 fails with "Invalid string size", ≤0.29 with other errors
+    # (bisected 2026-08-25). Do not float this pin without re-testing.
+    "mlx>=0.30,<0.32",
+    "soundfile>=0.12",
+    "soxr",
+    "numpy",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+magentart = "adapter_magentart.adapter:MagentaRTAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_magentart"]

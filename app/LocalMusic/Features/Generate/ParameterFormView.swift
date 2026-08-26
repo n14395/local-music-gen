@@ -323,7 +323,11 @@ struct ParameterFormView: View {
                     isPresented: Binding(
                         get: { audioPickerKey == spec.key },
                         set: { if !$0 { audioPickerKey = nil } }),
-                    allowedContentTypes: spec.type == .midi ? [.midi] : [.audio]) { result in
+                    // `_file` params ride the audio type for upload plumbing
+                    // but carry non-audio payloads (a .nam amp capture is
+                    // JSON), so the picker must not filter them out.
+                    allowedContentTypes: spec.type == .midi ? [.midi]
+                        : spec.key.hasSuffix("_file") ? [.item] : [.audio]) { result in
                     if case .success(let url) = result {
                         state.audioSelections[spec.key] = url
                     }

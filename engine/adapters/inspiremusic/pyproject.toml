@@ -1,0 +1,54 @@
+[project]
+name = "adapter-inspiremusic"
+version = "0.1.0"
+description = "InspireMusic long-form text-to-music / continuation (ModelScope-only weights) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # Their requirements minus deepspeed / flash-attn / WeTextProcessing /
+    # onnxruntime-gpu (CUDA/Linux-only). The proven triage stack, 2026-08-25.
+    "torch",
+    "torchaudio",
+    "transformers==4.46.3",
+    "accelerate",
+    "peft==0.13.2",
+    "hyperpyyaml",
+    "omegaconf==2.3.0",
+    "hydra-core==1.3.2",
+    "conformer",
+    "diffusers",
+    "librosa",
+    "lightning",
+    "inflect",
+    "onnx",
+    "onnxruntime",
+    "protobuf",
+    "rich",
+    "soundfile>=0.12",
+    "gdown",
+    "wget",
+    "pystoi",
+    "einops",
+    "scipy",
+    "tqdm",
+    "pyarrow",
+    "antlr4-python3-runtime",
+    "huggingface-hub",
+    "matplotlib",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+inspiremusic = "adapter_inspiremusic.adapter:InspireMusicAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_inspiremusic"]

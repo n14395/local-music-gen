@@ -42,7 +42,7 @@ struct StudioView: View {
     @State private var count: Int
     @State private var formState = ParameterFormState(specs: [])
     /// Reference audio waiting to land in the (possibly not-yet-rebuilt) form.
-    @State private var pendingMelody: URL?
+    @State private var pendingAudio: [String: URL] = [:]
     /// Set when the user asks to go back to composing while a render runs.
     @State private var showingComposer = false
     @State private var showingModelChooser = false
@@ -644,7 +644,7 @@ struct StudioView: View {
     //
     // The ordering of these four hooks is load-bearing: setting
     // `selectedModelId` triggers `rebuildForm()`, which RECREATES `formState` —
-    // which is why `pendingMelody` exists as a deferred slot, and why
+    // which is why `pendingAudio` exists as a deferred slot, and why
     // `prefill.pending = nil` happens after the branch and not inside it.
 
     private func syncSelection() {
@@ -687,7 +687,7 @@ struct StudioView: View {
         guard let request = prefill.pending else { return }
         prompt = request.prompt
         lyrics = request.lyrics ?? ""
-        pendingMelody = request.melodyAudio
+        pendingAudio = request.audioParams
         notice = request.notice
         // Asked for, not imposed: `clampToModel` below reduces both to what
         // the chosen model actually allows, so a card wanting two minutes
@@ -701,7 +701,7 @@ struct StudioView: View {
             selectedModelId = modelId   // onChange rebuilds the form
         } else {
             clampToModel()
-            consumePendingMelody()
+            consumePendingAudio()
         }
         prefill.pending = nil
     }
@@ -710,7 +710,7 @@ struct StudioView: View {
         guard let model else { return }
         formState = ParameterFormState(specs: model.capabilities.params)
         clampToModel()
-        consumePendingMelody()
+        consumePendingAudio()
     }
 
     /// Length and take count are the user's until the model disagrees.
@@ -721,12 +721,17 @@ struct StudioView: View {
         count = min(max(1, count), model.capabilities.outputsPerJobMax)
     }
 
-    private func consumePendingMelody() {
-        guard let url = pendingMelody, let model else { return }
-        if let spec = model.capabilities.params.first(
-            where: { $0.type == .audio && $0.key == "melody_audio" }) {
-            formState.audioSelections[spec.key] = url
-            pendingMelody = nil
+    /// Apply whichever prefilled audio params the current model declares.
+    /// Unmatched keys stay pending — switching to a model that has the param
+    /// still lands the file, exactly as the melody slot always behaved.
+    private func consumePendingAudio() {
+        guard !pendingAudio.isEmpty, let model else { return }
+        for (key, url) in pendingAudio {
+            if let spec = model.capabilities.params.first(
+                where: { $0.type == .audio && $0.key == key }) {
+                formState.audioSelections[spec.key] = url
+                pendingAudio.removeValue(forKey: key)
+            }
         }
     }
 

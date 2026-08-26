@@ -1,0 +1,50 @@
+[project]
+name = "adapter-melodyflow"
+version = "0.1.0"
+description = "MelodyFlow adapter (flow-matching text-to-music + text-guided editing) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "audiocraft",
+    "soundfile>=0.12",
+    "soxr",
+    "numpy",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+melodyflow = "adapter_melodyflow.adapter:MelodyFlowAdapter"
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+# MelodyFlow's inference code exists ONLY in the Hugging Face Space's vendored
+# audiocraft tree — never merged to audiocraft main, no pip release. The Space
+# is an ordinary git remote; pinned to the commit the triage proved
+# (2026-08-25: 10 s of audio in 6.4 s on CPU at 8 euler steps).
+audiocraft = { git = "https://huggingface.co/spaces/facebook/MelodyFlow", rev = "19da0cf4e7a8a33cb2f59cbc2f3c946ee60dc04e" }
+
+[tool.uv]
+# xformers has no macOS wheels; this tree calls it even on the torch path, so
+# the adapter installs a FUNCTIONAL stub (SDPA-backed) before importing
+# audiocraft — see adapter.py. The Space pins torch==2.8.0 for its CUDA host;
+# the proven mac stack is the 2.1.0 pair (with torchtext/torchvision 0.16,
+# resolved automatically). gradio is demo-only dead weight.
+override-dependencies = [
+    "xformers; sys_platform == 'never'",
+    "gradio; sys_platform == 'never'",
+    "av==12.3.0",
+    "torch==2.1.0",
+    "torchaudio==2.1.0",
+]
+# transformers 5.x refuses torch 2.1; 4.46.3 is the proven pair. numpy 2
+# breaks torch 2.1-era code.
+constraint-dependencies = [
+    "transformers>=4.46,<4.47",
+    "numpy<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_melodyflow"]

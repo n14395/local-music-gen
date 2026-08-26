@@ -32,7 +32,12 @@ export LOCALMUSIC_UV="$UV"
 
 SRC="$DATA_DIR/engine-src"
 mkdir -p "$SRC"
-# --delete keeps upgrades clean; venvs/vendor live inside SRC and are excluded.
+# --delete keeps upgrades clean; venvs live inside SRC and are excluded.
+#
+# No blanket `vendor` exclude — see the note in build.sh's bundle_engine. A
+# directory called `vendor` under an adapter's `src/` is Python the adapter
+# imports, and excluding it here made a bundled model fail at load with
+# "No module named 'adapter_captioning.vendor'".
 #
 # So is `build-src` — the vendored acestep.cpp clone. build.sh already keeps it
 # out of the bundle, and it is excluded again here so an app built before that
@@ -46,7 +51,7 @@ mkdir -p "$SRC"
 # forever. Costs a stat once it is gone.
 rm -rf "$SRC/adapters/acestepcpp/build-src"
 rsync -a --delete \
-    --exclude '.venv' --exclude 'vendor' --exclude 'build-src' \
+    --exclude '.venv' --exclude 'build-src' \
     --exclude '__pycache__' \
     "$RESOURCES/engine/" "$SRC/"
 export LOCALMUSIC_ADAPTERS_DIR="$SRC/adapters"

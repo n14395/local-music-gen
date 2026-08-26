@@ -5,10 +5,15 @@ description = "Musical analysis adapter (beat_this beats/downbeats, key, structu
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "beat-this==1.1.0",
+    # SQUIM quality scores (analysis-squim mode) ride torchaudio.pipelines;
+    # audio I/O stays on soundfile, so no torchcodec is needed here.
+    "torchaudio>=2.2",
     "librosa>=0.10,<1.0",
     "soundfile>=0.12",
     "soxr",
     "pyloudnorm>=0.1",
+    # chord-bed MIDI rendering (the BTC entry's transcribe route)
+    "pretty_midi>=0.2.10",
     "numpy",
     # CLAP timbre embeddings (analysis-clap variant); native ClapModel, no
     # remote code

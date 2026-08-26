@@ -54,8 +54,7 @@ struct TextActionView: View {
 
     private var eligibleModels: [ModelInfo] {
         catalog.models.filter {
-            $0.installState == .installed
-                && $0.capabilities.supportedTasks.contains(action.task)
+            $0.installState == .installed && action.canRun($0)
         }
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // The Editor's right rail: Selection / Adjust / Effects / Edits, with the
@@ -608,6 +609,9 @@ private struct EffectCard: View {
         case .compressor: String(format: "%.0f:%.0f", -effect.thresholdDb,
                                  effect.ratio)
         case .gate: String(format: "%.0f dB", effect.thresholdDb)
+        case .convolve: effect.irPath == nil
+            ? "NO IR"
+            : String(format: "%.0f%%", effect.mix * 100)
         }
     }
 
@@ -641,6 +645,38 @@ private struct EffectCard: View {
         case .gate:
             slider("Thresh", value: \.thresholdDb, range: -80...0, step: 1,
                    format: { String(format: "%.0f dB", $0) })
+        case .convolve:
+            HStack(spacing: 8) {
+                Button(effect.irPath == nil ? "Pick impulse response…"
+                                            : "Change IR…") {
+                    pickIR()
+                }
+                .buttonStyle(.bench(.quiet))
+                if let path = effect.irPath {
+                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                        .font(Bench.Typo.mono(10))
+                        .foregroundStyle(Bench.Palette.textFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            slider("Mix", value: \.mix, range: 0...1, step: 0.05,
+                   format: { String(format: "%.0f%%", $0 * 100) })
+            note("A room, hall or cab as a .wav — until an IR is picked "
+                 + "this card does nothing")
+        }
+    }
+
+    private func pickIR() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose an impulse response (.wav)"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            var updated = effect
+            updated.irPath = url.path
+            store.updateEffect(updated)
         }
     }
 

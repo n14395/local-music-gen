@@ -271,6 +271,14 @@ struct Capabilities: Codable, Sendable {
     var supportedTasks: [String] { tasks ?? ["generate"] }
     var canPreview: Bool { supportsPreview ?? false }
 
+    /// True when the model cannot run from a bare prompt: it requires an
+    /// audio input (a non-nullable audio param). Anything that auto-runs a
+    /// roster with only a prompt must skip these — the job would only fail
+    /// at the adapter.
+    var needsSourceAudio: Bool {
+        params.contains { $0.type == .audio && !$0.nullable }
+    }
+
     /// Defaults for every optional field, for the same reason `ParamSpec` has
     /// one: the contract grows by adding optional capabilities, and a
     /// memberwise initialiser turns each addition into a breaking change for

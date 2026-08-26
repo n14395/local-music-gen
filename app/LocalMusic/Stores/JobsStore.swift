@@ -194,6 +194,12 @@ struct MixSpec: Codable, Sendable, Equatable {
         var ratio: Double?
         var attackMs: Double?
         var releaseMs: Double?
+        /// "convolve" only: the impulse response. Built with a local file
+        /// path; the submit paths swap it for an upload id before the spec
+        /// goes on the wire.
+        var ir: String?
+        /// "convolve" only: dry/wet, 0–1.
+        var mix: Double?
     }
 
     var target: Target
@@ -435,6 +441,19 @@ final class JobsStore {
             context: .split(songId: songId, sourceTitle: sourceTitle))
     }
 
+    /// One of the audio-transformation tasks (timbre / reamp / convert-voice /
+    /// sing): audio in, one transformed `stem` artifact out, filed as a part
+    /// of the source song through the same `.split` routing a separation
+    /// uses — which is why these need no ingest arm of their own.
+    @discardableResult
+    func submitAudioTransform(task: String, modelId: String, songId: String,
+                              sourceTitle: String, sourceURL: URL,
+                              params: [String: JSONValue]) async -> JobsCreated? {
+        await submitTask(
+            task, modelId: modelId, sourceURL: sourceURL, params: params,
+            context: .split(songId: songId, sourceTitle: sourceTitle))
+    }
+
     /// Analyze a song or part (task "analyze"): tempo/key/beats/structure.
     @discardableResult
     func submitAnalyze(modelId: String, ownerId: String, ownerType: String,
@@ -497,6 +516,22 @@ final class JobsStore {
             context: .text(TextJobContext(
                 ownerId: ownerId, ownerType: ownerType, title: title,
                 kind: .tags, applyTags: ownerType == "song")))
+    }
+
+    /// Compose against an existing notes part (task "compose"): the part's
+    /// MIDI file rides `inputKey` ("melody_midi" for the anticipation
+    /// family), and the composed MIDI files back as a notes part of the
+    /// same song through the `.split` routing every transcription uses.
+    @discardableResult
+    func submitComposeFromNotes(modelId: String, songId: String,
+                                sourceTitle: String, sourceURL: URL,
+                                inputKey: String,
+                                params: [String: JSONValue]) async
+        -> JobsCreated? {
+        await submitTask(
+            "compose", modelId: modelId, sourceURL: sourceURL, params: params,
+            inputKey: inputKey,
+            context: .split(songId: songId, sourceTitle: sourceTitle))
     }
 
     /// Compose from notation (task "compose"): ABC text in, ABC + midi out.
@@ -1412,7 +1447,7 @@ final class JobsStore {
                                    ?? nil),
                let songParts = try? partsRepo.allParts(forSong: ownerId) {
                 for part in songParts where part.format == "wav" {
-                    var copy = songAnalysis
+                    var copy = propagatedCopy(songAnalysis)
                     copy.ownerId = part.id
                     copy.ownerType = "part"
                     try? partsRepo.upsertAnalysis(copy)
@@ -1557,7 +1592,7 @@ final class JobsStore {
         // A split-time analysis describes the source; stems share its grid.
         if let songAnalysis = try? partsRepo.analysis(ownerId: songId) {
             for part in parts where part.format == "wav" {
-                var copy = songAnalysis
+                var copy = propagatedCopy(songAnalysis)
                 copy.ownerId = part.id
                 copy.ownerType = "part"
                 try? partsRepo.upsertAnalysis(copy)
@@ -1771,6 +1806,19 @@ final class JobsStore {
         for artifact in artifacts where artifact.kind == "analysis" {
             let url = URL(fileURLWithPath: artifact.path)
             guard let data = try? Data(contentsOf: url) else { continue }
+            // Specialist analyzers (chords, quality) describe one facet;
+            // their payload merges into the owner's stored analysis so the
+            // beat grid and key the workbench reads survive the run.
+            if let raw = (try? JSONSerialization.jsonObject(with: data))
+                as? [String: Any],
+               raw["analysis_version"] == nil,
+               raw["chords_version"] != nil || raw["quality_version"] != nil {
+                mergeSpecialistAnalysis(raw, ownerId: ownerId,
+                                        ownerType: ownerType,
+                                        modelId: modelId, repo: repo)
+                try? FileManager.default.removeItem(at: url)
+                continue
+            }
             let payload = try? BackendClient.decoder.decode(
                 AnalysisPayload.self, from: data)
             let record = AnalysisRecord(
@@ -1782,6 +1830,60 @@ final class JobsStore {
                 modelId: modelId, createdAt: Date())
             try? repo.upsertAnalysis(record)
             try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// A part inherits its song's grid, key, and chords — but not its
+    /// quality scores: SQUIM measured the mix, not the stem.
+    private func propagatedCopy(_ record: AnalysisRecord) -> AnalysisRecord {
+        guard record.analysisJSON.contains("\"quality\"") else { return record }
+        guard var obj = (try? JSONSerialization.jsonObject(
+                  with: Data(record.analysisJSON.utf8))) as? [String: Any],
+              obj["quality"] != nil
+        else { return record }
+        obj.removeValue(forKey: "quality")
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
+              let json = String(data: data, encoding: .utf8)
+        else { return record }
+        var copy = record
+        copy.analysisJSON = json
+        return copy
+    }
+
+    /// Fold a chords or quality payload into the owner's analysis record
+    /// under top-level "chords" / "quality" keys, preserving everything the
+    /// musical analyzer wrote. A fresh record (bpm/key nil) is only created
+    /// when the owner has never been analyzed.
+    private func mergeSpecialistAnalysis(_ raw: [String: Any], ownerId: String,
+                                         ownerType: String, modelId: String,
+                                         repo: PartsRepository) {
+        let existing = (try? repo.analysis(ownerId: ownerId)) ?? nil
+        var merged: [String: Any] = [:]
+        if let existing,
+           let stored = (try? JSONSerialization.jsonObject(
+               with: Data(existing.analysisJSON.utf8))) as? [String: Any] {
+            merged = stored
+        }
+        if raw["chords_version"] != nil {
+            merged["chords"] = raw["segments"] ?? []
+        }
+        if raw["quality_version"] != nil {
+            var quality: [String: Any] = [:]
+            for key in ["stoi", "pesq", "si_sdr", "caveat"] {
+                if let value = raw[key] { quality[key] = value }
+            }
+            merged["quality"] = quality
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: merged),
+              let json = String(data: data, encoding: .utf8) else { return }
+        if var record = existing {
+            record.analysisJSON = json
+            try? repo.upsertAnalysis(record)
+        } else {
+            try? repo.upsertAnalysis(AnalysisRecord(
+                ownerId: ownerId, ownerType: ownerType,
+                bpm: nil, keyName: nil, camelot: nil,
+                analysisJSON: json, modelId: modelId, createdAt: Date()))
         }
     }
 

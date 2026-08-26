@@ -291,6 +291,8 @@ struct ActionsScreen: View {
             return .needsMixModel
         case .batchSplit where !installed(task: "separate"):
             return .needsTaskModel("separate")
+        case .batchTag where !installed(task: "tag"):
+            return .needsTaskModel("tag")
         case .compareModels where generativeInstalled.count < 2:
             // Two is the least that can be compared. One installed model
             // makes this card a slower way to press Generate.
@@ -312,7 +314,12 @@ struct ActionsScreen: View {
                 hint: PlanModels.candidates(catalog.models).first
                     .map { "Get \($0.displayName)" }
                     ?? "No model here plans before it renders")
-        case .textAction(let action) where !installed(task: action.task):
+        case .textAction(let action)
+            where !catalog.models.contains(where: {
+                $0.installState == .installed && action.canRun($0)
+            }):
+            // Not merely "declares the task": Ask needs a model that also
+            // declares a `question` param — see `TextAction.canRun`.
             return .needsTaskModel(action.task)
         case .textCompare where installedCount(task: "caption") < 2:
             // Two is the least that can be compared, as with .compareModels.
@@ -361,6 +368,7 @@ struct ActionsScreen: View {
         case .styleTransfer(let preset): .style(preset.mode)
         case .transform: .mixdown
         case .batchSplit: .task("separate")
+        case .batchTag: .task("tag")
         // A door into a screen that needs no model to open.
         case .editor: nil
         case .generate(let preset): .generate(preset.need)
@@ -520,6 +528,12 @@ struct ActionsScreen: View {
                                  playback: playback,
                                  onOpenModels: { onOpenModels(requirement(for: recipe)) },
                                  onBack: back)
+        case .batchTag:
+            BatchTagActionView(recipe: recipe, catalog: catalog,
+                               library: library, parts: parts, jobs: jobs,
+                               playback: playback,
+                               onOpenModels: { onOpenModels(requirement(for: recipe)) },
+                               onBack: back)
         case .editor:
             // `open(_:)` never routes here; the shell switches destination.
             gallery

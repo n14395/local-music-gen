@@ -331,6 +331,22 @@ def main() -> int:
                         check(f"preview non-silent: {a['label']}",
                               rms is None or rms > 100)
                     print(f"  → {a['path']}")
+                if (body.get("params") or {}).get("emit_abc"):
+                    # Asked for notation, so its absence is a failure rather
+                    # than a quiet degradation — without this the whole ABC
+                    # path can pass while writing nothing at all.
+                    texts = [a for a in arts if a["kind"] == "text"]
+                    meta = (job.get("result") or {}).get("meta") or {}
+                    check("emit_abc: one text artifact per notated track",
+                          len(texts) >= 1,
+                          f"none written; meta says: {meta.get('abc_error')}")
+                    for a in texts:
+                        payload = json.load(open(a["path"]))
+                        abc = str(payload.get("text") or "")
+                        check(f"ABC parses as a tune: {a['label']}",
+                              payload.get("kind") == "abc"
+                              and abc.lstrip().startswith("X:"), abc[:60])
+                        print(f"  → {a['label']}: {len(abc)} chars")
             elif args.task == "render":
                 audio_arts = [a for a in arts if a["kind"] == "audio"]
                 check("one audio artifact", len(audio_arts) == 1)

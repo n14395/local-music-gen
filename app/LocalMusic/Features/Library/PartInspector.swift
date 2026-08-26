@@ -337,6 +337,14 @@ struct PartInspector: View {
             BenchInfoRow("Beat grid", grid.text,
                          color: grid.detected ? Bench.Palette.ok
                                               : Bench.Palette.textMuted)
+            if let chords = LibraryFormat.chordSummary(analysis) {
+                BenchInfoRow("Chords", chords, mono: true)
+            }
+            if let quality = LibraryFormat.qualitySummary(analysis) {
+                // Speech-trained scores: they rank takes of the same
+                // material; they do not grade music.
+                BenchInfoRow("Quality", quality, mono: true)
+            }
             if let seconds = part.durationS {
                 BenchInfoRow("Length", part.sampleRate.map {
                     "\(LibraryFormat.seconds(seconds)) s · "

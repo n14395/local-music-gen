@@ -32,6 +32,7 @@ struct SplitActionView: View {
     @State private var alsoAnalyse = false
     @State private var alsoTranscribe = false
     @State private var submitting = false
+    @State private var browsingT3K = false
     @AppStorage("analysisToolsCardDismissed")
     private var analysisCardDismissed = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
@@ -39,9 +40,13 @@ struct SplitActionView: View {
     // MARK: models
 
     private var eligibleModels: [ModelInfo] {
-        catalog.models.filter {
-            $0.installState == .installed
-                && $0.capabilities.supportedTasks.contains(task)
+        catalog.models.filter { model in
+            model.installState == .installed
+                && model.capabilities.supportedTasks.contains(task)
+                && (recipe.sourceParamKey == nil
+                    || model.capabilities.params.contains {
+                        $0.key == recipe.sourceParamKey
+                    })
         }
     }
 
@@ -134,6 +139,11 @@ struct SplitActionView: View {
                 }
             }
         }
+        .sheet(isPresented: $browsingT3K) {
+            Tone3000BrowseSheet(
+                onPick: { url in formState.audioSelections["nam_file"] = url },
+                onOpenSettings: nil)
+        }
     }
 
     // MARK: - Options
@@ -145,8 +155,22 @@ struct SplitActionView: View {
                 ParameterFormView(state: formState, grouped: false,
                                   labelWidth: 130)
             }
+            // The re-amp card's capture slot can be filled from TONE3000
+            // in place — the sheet downloads the .nam into the same
+            // `nam_file` selection the file picker sets.
+            if task == "reamp" {
+                Button("Browse TONE3000…") { browsingT3K = true }
+                    .buttonStyle(.benchSecondary)
+                    .help(Tone3000Store.hasKey
+                          ? "Search tone3000.com's captures and drop one "
+                            + "straight into the capture slot"
+                          : "Add your TONE3000 API key in Settings › "
+                            + "Models to browse captures here")
+            }
             ActionFootnote(text: note)
-            if task != "analyze" {
+            // Compose reads a MIDI file — the "also" jobs would hand an
+            // audio analyzer notes it cannot open.
+            if task != "analyze", task != "compose" {
                 Divider().overlay(Bench.Palette.hairline)
                 HStack(alignment: .top, spacing: 12) {
                     Text("Also analyse")
@@ -180,6 +204,7 @@ struct SplitActionView: View {
     private func visibleParams(_ model: ModelInfo) -> [ParamSpec] {
         model.capabilities.params.filter {
             $0.key != "source_audio" && $0.isInternal != true
+                && $0.key != recipe.sourceParamKey
         }
     }
 
@@ -189,6 +214,17 @@ struct SplitActionView: View {
             return
         }
         formState = ParameterFormState(specs: visibleParams(model))
+        for (key, value) in recipe.paramPresets {
+            guard let spec = formState.specs.first(where: { $0.key == key })
+            else { continue }
+            switch value {
+            case .int(let v): formState.setDouble(spec, Double(v))
+            case .double(let v): formState.setDouble(spec, v)
+            case .bool(let v): formState.setBool(spec, v)
+            case .string(let v): formState.setString(spec, v)
+            default: break
+            }
+        }
     }
 
     // MARK: - Copy
@@ -197,6 +233,11 @@ struct SplitActionView: View {
         switch task {
         case "transcribe": "transcription"
         case "analyze": "analysis"
+        case "timbre": "timbre-transfer"
+        case "reamp": "amp-modelling"
+        case "convert-voice": "voice-conversion"
+        case "sing": "singing"
+        case "compose": "composition"
         default: "separation"
         }
     }
@@ -205,6 +246,11 @@ struct SplitActionView: View {
         switch task {
         case "transcribe": "TRANSCRIPTION MODEL"
         case "analyze": "ANALYSIS MODEL"
+        case "timbre": "TIMBRE MODEL"
+        case "reamp": "AMP MODEL"
+        case "convert-voice": "VOICE MODEL"
+        case "sing": "SINGING MODEL"
+        case "compose": "COMPOSER MODEL"
         default: "SEPARATOR MODEL"
         }
     }
@@ -272,10 +318,11 @@ struct SplitActionView: View {
                                  meta: "ATTACHED TO THE SONG")]
         }
         guard !priorKinds.isEmpty else {
-            let name = task == "transcribe" ? "Note parts" : "Parts"
-            return [ActionOutput(id: "parts", name: name,
-                                 meta: task == "transcribe" ? "MIDI" : "WAV",
-                                 kind: task == "transcribe" ? "notes" : nil)]
+            let makesNotes = task == "transcribe" || task == "compose"
+            return [ActionOutput(id: "parts",
+                                 name: makesNotes ? "Note parts" : "Parts",
+                                 meta: makesNotes ? "MIDI" : "WAV",
+                                 kind: makesNotes ? "notes" : nil)]
         }
         return priorKinds.map { kind in
             ActionOutput(id: kind, name: ActionCopy.kindLabel(kind),
@@ -335,11 +382,20 @@ struct SplitActionView: View {
     private func submit(returningToGallery: Bool) {
         guard let source, let model else { return }
         submitting = true
-        let params = formState.params
         let analyseToo = alsoAnalyse ? installedModel(task: "analyze") : nil
         let transcribeToo = alsoTranscribe && task != "transcribe"
             ? installedModel(task: "transcribe") : nil
         Task {
+            var params = formState.params
+            // Extra audio/file params (a reference voice, a .nam capture)
+            // travel as uploads — same loop the Studio submit runs.
+            for (key, url) in formState.audioSelections {
+                guard let uploadId = await jobs.uploadAudio(fileURL: url) else {
+                    submitting = false
+                    return  // uploadAudio surfaced the error
+                }
+                params[key] = .string(uploadId)
+            }
             let created: JobsCreated?
             switch task {
             // `songId` for the two that make parts, because parts belong to
@@ -359,9 +415,25 @@ struct SplitActionView: View {
                     modelId: model.id, ownerId: source.analysisOwner.id,
                     ownerType: source.analysisOwner.type, title: source.name,
                     sourceURL: source.fileURL, params: params)
-            default:
+            case "separate":
                 created = await jobs.submitSplit(
                     modelId: model.id, songId: source.songId,
+                    sourceTitle: source.name, sourceURL: source.fileURL,
+                    params: params)
+            case "compose":
+                // The picked notes part rides the card's own param key
+                // ("melody_midi"), not source_audio — compose models read
+                // notes, not audio.
+                created = await jobs.submitComposeFromNotes(
+                    modelId: model.id, songId: source.songId,
+                    sourceTitle: source.name, sourceURL: source.fileURL,
+                    inputKey: recipe.sourceParamKey ?? "melody_midi",
+                    params: params)
+            default:
+                // The audio-transformation tasks (timbre / reamp /
+                // convert-voice / sing): one stem back, filed as a part.
+                created = await jobs.submitAudioTransform(
+                    task: task, modelId: model.id, songId: source.songId,
                     sourceTitle: source.name, sourceURL: source.fileURL,
                     params: params)
             }

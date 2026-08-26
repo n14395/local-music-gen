@@ -73,6 +73,11 @@ def _stage_yourmt3(progress_cb: ProgressCb) -> None:
 
 
 class TranscriptionAdapter(ModelAdapter):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # ByteDance piano transcriber, kept loaded across jobs (warm worker)
+        self._piano = None
+
     def load(self, progress_cb: ProgressCb) -> None:
         hf_home = os.environ.get("HF_HOME")
         base = (os.path.dirname(hf_home) if hf_home
@@ -102,6 +107,8 @@ class TranscriptionAdapter(ModelAdapter):
             midis = self._mt3(src, out_dir, progress_cb, cancel)
         elif engine == "transkun":
             midis = self._transkun(src, out_dir, progress_cb)
+        elif engine == "bytedance_piano":
+            midis = self._bytedance_piano(src, out_dir, progress_cb)
         elif engine == "swiftf0":
             midis = self._swiftf0(src, out_dir, progress_cb)
         else:
@@ -239,6 +246,65 @@ class TranscriptionAdapter(ModelAdapter):
             out.append((label, path, len(inst.notes)))
         os.unlink(full)
         return out
+
+    def _bytedance_piano(self, src: str, out_dir: str,
+                         progress_cb: ProgressCb) -> list:
+        """ByteDance high-resolution piano transcription — the only
+        pedal-aware transcriber here (sustain lands in the MIDI as CC64).
+
+        The checkpoint (172 MB, CC-BY) comes from the paper's Zenodo record at
+        first use; the package's own `load_audio` uses a librosa API removed
+        in 2023, so audio is loaded here and handed over as a mono array.
+        """
+        import pretty_midi
+        import soxr as _soxr
+        import urllib.request
+        from piano_transcription_inference import (PianoTranscription,
+                                                   sample_rate)
+
+        # The catalog entry ships the checkpoint as an HF snapshot
+        # (rtikw/piano-transcription-crnn, an unmodified mirror of the
+        # Zenodo file) — prefer it; Zenodo stays as the fallback.
+        checkpoint = next(
+            (os.path.join(snap, "note_pedal.pth")
+             for snap in self.model_paths.values()
+             if os.path.exists(os.path.join(snap, "note_pedal.pth"))), None)
+        if checkpoint is None:
+            hf_home = os.environ.get("HF_HOME")
+            base = (os.path.dirname(hf_home) if hf_home
+                    else os.path.expanduser("~/.cache"))
+            cache = os.path.join(base, "bytedance-piano")
+            os.makedirs(cache, exist_ok=True)
+            checkpoint = os.path.join(cache, "note_pedal.pth")
+        if not os.path.exists(checkpoint):
+            progress_cb(0.05, "fetching the piano model (172 MB, Zenodo — "
+                              "first use only)")
+            url = ("https://zenodo.org/record/4034264/files/"
+                   "CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1")
+            part = checkpoint + ".part"
+            with urllib.request.urlopen(url, timeout=300) as resp, \
+                    open(part, "wb") as f:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            os.replace(part, checkpoint)
+
+        audio, in_sr = sf.read(src, dtype="float32", always_2d=True)
+        mono = audio.mean(axis=1)
+        if in_sr != sample_rate:
+            mono = _soxr.resample(mono, in_sr, sample_rate)
+        if self._piano is None:
+            progress_cb(0.15, "loading the piano transcriber")
+            self._piano = PianoTranscription(device="cpu",
+                                             checkpoint_path=checkpoint)
+        progress_cb(0.2, "transcribing (notes + sustain pedal)")
+        path = os.path.join(out_dir, "piano.mid")
+        self._piano.transcribe(mono, path)
+        notes = sum(len(i.notes)
+                    for i in pretty_midi.PrettyMIDI(path).instruments)
+        return [("piano", path, notes)] if notes else []
 
     def _transkun(self, src: str, out_dir: str,
                   progress_cb: ProgressCb) -> list:

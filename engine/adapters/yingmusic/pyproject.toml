@@ -1,0 +1,62 @@
+[project]
+name = "adapter-yingmusic"
+version = "0.1.0"
+description = "YingMusic-Singer zero-shot singing voice synthesis (task sing) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch",
+    "torchaudio",
+    # torchaudio ≥2.9 audio I/O; the supervisor exports the ffmpeg DYLD
+    # fallback path for it.
+    "torchcodec",
+    "numpy",
+    "descript-audio-codec",
+    "hydra-core",
+    "scipy",
+    "librosa",
+    "soundfile>=0.12",
+    "soxr",
+    "pretty_midi",
+    "mido",
+    "alias-free-torch",
+    "transformers",
+    "x-transformers",
+    "vector-quantize-pytorch",
+    "local-attention",
+    "einops",
+    "pandas",
+    "tqdm",
+    # the multilingual g2p chain their front-end imports unconditionally
+    "langsegment==0.2.0",
+    "pyopenjtalk",
+    "pykakasi",
+    "pypinyin",
+    "jieba",
+    "jieba-fast",
+    "onnxruntime",
+    "g2p-en",
+    "cn2an",
+    "eng-to-ipa",
+    "phonemizer",
+    "py3langid",
+    "inflect",
+    "jaconv",
+    "setuptools<81",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+yingmusic = "adapter_yingmusic.adapter:YingMusicAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_yingmusic"]

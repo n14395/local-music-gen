@@ -259,12 +259,30 @@ struct AnalysisPayload: Codable, Sendable {
     /// The text that score was measured against — the idempotence key for
     /// batch scoring: same prompt, no re-run.
     var clapPrompt: String?
+    /// Chord segments merged in from a specialist chords run (BTC); the
+    /// ingest folds them beside the musical analysis, never instead of it.
+    var chords: [ChordSegment]?
+    /// Reference-free quality scores merged in from a SQUIM run.
+    var quality: Quality?
 
     struct Section: Codable, Sendable, Equatable {
         var startS: Double
         var endS: Double
         var group: String?
         var label: String?
+    }
+
+    struct ChordSegment: Codable, Sendable, Equatable {
+        var startS: Double
+        var endS: Double
+        var chord: String     // "N" = no chord, "X" = unclear
+    }
+
+    struct Quality: Codable, Sendable, Equatable {
+        var stoi: Double?     // intelligibility, 0–1
+        var pesq: Double?     // perceptual quality, 1–4.5
+        var siSdr: Double?    // scale-invariant SDR, dB
+        var caveat: String?   // "speech-trained; compare takes…"
     }
 }
 

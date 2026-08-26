@@ -63,12 +63,14 @@ enum ModelActions {
                 && capabilities.params.contains { $0.key == "mix_spec" }
         case .batchSplit:
             return tasks.contains("separate")
+        case .batchTag:
+            return tasks.contains("tag")
         case .assistant:
             return tasks.contains("assist")
         case .songPlan:
             return tasks.contains("plan")
         case .textAction(let action):
-            return tasks.contains(action.task)
+            return action.canRun(model)
         case .textCompare:
             // Any describer is a candidate for a comparison; needing two of
             // them is a fact about the machine, as with `.compareModels`.

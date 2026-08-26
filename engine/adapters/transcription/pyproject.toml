@@ -12,6 +12,10 @@ dependencies = [
     "transformers>=4.35,<4.50",
     "transkun==2.0.1",
     "swift-f0==0.1.2",
+    # ByteDance high-res piano (pedal-aware). Its bundled load_audio is
+    # bypassed in the adapter (removed-librosa-API rot), so only the model
+    # code is exercised.
+    "piano-transcription-inference==0.0.6",
     "pretty-midi>=0.2.10",
     "soundfile>=0.12",
     "soxr>=0.4",

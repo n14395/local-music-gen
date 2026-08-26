@@ -27,6 +27,12 @@ struct GenerateNeed: Equatable, Hashable, Sendable {
     /// Families that do this particular job well, best first. Preference
     /// only — see above.
     var prefers: [String] = []
+    /// Must declare a param with this key. This is a *gate*, for cards whose
+    /// whole point is one capability (`accompany_audio`, `edit_strength`) —
+    /// it lands the card on the right member of a family that shares one
+    /// adapter. Setting it also says "this card knows what it is feeding the
+    /// model", which lifts the bare-prompt exclusion below.
+    var requiresParam: String?
 
     /// Stable id, for `ModelRequirement` and for keying the Models filter.
     var key: String {
@@ -34,6 +40,7 @@ struct GenerateNeed: Equatable, Hashable, Sendable {
         if lyrics { parts.append("lyrics") }
         if let reaches { parts.append("min\(Int(reaches))") }
         if let goesAsShortAs { parts.append("max\(Int(goesAsShortAs))") }
+        if let requiresParam { parts.append("param-\(requiresParam)") }
         return parts.isEmpty ? "any" : parts.joined(separator: "-")
     }
 
@@ -52,6 +59,14 @@ struct GenerateNeed: Equatable, Hashable, Sendable {
         if lyrics && !caps.supportsLyrics { return false }
         if let reaches, caps.duration.maxS + 0.001 < reaches { return false }
         if let goesAsShortAs, caps.duration.minS - 0.001 > goesAsShortAs {
+            return false
+        }
+        if let requiresParam {
+            guard caps.params.contains(where: { $0.key == requiresParam })
+            else { return false }
+        } else if caps.needsSourceAudio {
+            // A bare prompt cannot feed a model that requires audio in —
+            // the job would only fail at the adapter.
             return false
         }
         return true
@@ -100,6 +115,11 @@ struct GeneratePreset: Equatable, Identifiable, Sendable {
     var takes: Int?
     /// Read the tempo and key of a track the user picks, and carry them in.
     var readsSource = false
+    /// Feed the picked track's *audio* into this param of the arriving model
+    /// (implies `readsSource` for the picker; the tempo-and-key prompt line
+    /// is skipped — the model hears the track itself). This is the door for
+    /// cards like vocals2music, whose whole point is a specific audio input.
+    var sourceParamKey: String?
     /// One line above the composer explaining what arriving here changed.
     var notice: String?
 }
@@ -190,5 +210,63 @@ extension GeneratePreset {
             takes: 4,
             notice: "One prompt, four takes, four seeds — the cheapest way to "
                 + "find out whether an idea is worth pursuing."),
+
+        // MARK: doors that feed the picked track INTO the model
+        //
+        // These presets name a `sourceParamKey`: the track the card asks for
+        // is uploaded into that param, not described in the prompt. Their
+        // `requiresParam` lands each card on the right member of a family
+        // that shares one adapter — and marks the preset as knowing what it
+        // feeds the model, which lifts the bare-prompt exclusion in `canRun`.
+        GeneratePreset(
+            id: "vocals2music",
+            need: GenerateNeed(lyrics: true, prefers: ["diffsynthace"],
+                               requiresParam: "accompany_audio"),
+            lyricsSeed: "[verse]\n",
+            readsSource: true,
+            sourceParamKey: "accompany_audio",
+            notice: "Your vocal is kept exactly as sung; the model composes "
+                + "the band around it. Pasting the sung words as lyrics "
+                + "helps it follow. (\"Back this vocal\" adds a layer over "
+                + "the vocal instead of replacing the arrangement.)"),
+        GeneratePreset(
+            id: "edit-with-words",
+            need: GenerateNeed(prefers: ["melodyflow"],
+                               requiresParam: "edit_strength"),
+            readsSource: true,
+            sourceParamKey: "src_audio",
+            notice: "Describe the change; the model rewrites the audio "
+                + "toward the words. Structure and tempo survive in "
+                + "proportion to the strength dial."),
+        GeneratePreset(
+            id: "vamp-loop",
+            need: GenerateNeed(prefers: ["vampnet"],
+                               requiresParam: "periodic_prompt"),
+            readsSource: true,
+            sourceParamKey: "src_audio",
+            notice: "Vamping keeps the loop's identity token by token and "
+                + "re-plays the material between the beats it pins. "
+                + "(\"Reimagine a loop\" repaints the texture instead.)"),
+        GeneratePreset(
+            id: "gen-my-voice",
+            need: GenerateNeed(lyrics: true, prefers: ["songgen"],
+                               requiresParam: "ref_voice"),
+            lyricsSeed: "",
+            readsSource: true,
+            sourceParamKey: "ref_voice",
+            notice: "The track you picked is the VOICE reference — a few "
+                + "clean seconds are enough. Use your own recording, or "
+                + "one you have permission to use; nothing is stored. "
+                + "Write the words on the right."),
+        GeneratePreset(
+            id: "style-morph",
+            need: GenerateNeed(prefers: ["magentart"],
+                               requiresParam: "style_audio_b"),
+            readsSource: true,
+            sourceParamKey: "style_audio",
+            notice: "The track you picked is where the stream STARTS. "
+                + "Set the morph target below — a second clip or a "
+                + "description — and the music travels from one to the "
+                + "other over the take."),
     ]
 }

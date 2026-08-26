@@ -43,11 +43,17 @@ extension StyleTransferModel {
         // Uploads are made fresh at submit rather than cached: an upload id
         // does not survive an engine restart, because `uploads/` is purged at
         // startup. The workspace persists file URLs for exactly this reason.
+        // A model with no input for the source in this mode gets no upload:
+        // the param would be filtered out below anyway, and the screen has
+        // already told the user the track is ignored — spending a round-trip
+        // shipping megabytes the job cannot read helps nobody.
+        let sourceReaches = model.capabilities.params
+            .contains { $0.key == mode.sourceAudioKey }
         var sourceUpload: String?
-        if self.source != nil,
+        if self.source != nil, sourceReaches,
            let uploaded = await context.jobs.uploadAudio(fileURL: source.fileURL) {
             sourceUpload = uploaded
-        } else if self.source != nil {
+        } else if self.source != nil, sourceReaches {
             return nil          // uploadAudio has already set jobs.lastError
         }
         var referenceUpload: String?

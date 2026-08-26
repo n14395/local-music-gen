@@ -56,6 +56,10 @@ enum ModelRequirement: Equatable, Hashable, Identifiable {
         case .task("lyrics"): "Transcribe lyrics"
         case .task("tag"): "Tag genre & mood"
         case .task("compose"): "Compose from notation"
+        case .task("timbre"): "Repaint a sound (timbre)"
+        case .task("reamp"): "Re-amp through gear"
+        case .task("convert-voice"): "Convert a voice"
+        case .task("sing"): "Sing typed lyrics"
         case .task(let task): task.capitalized
         case .mixdown: "Create a mix"
         case .splicer: "Token splice"

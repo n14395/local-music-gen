@@ -114,7 +114,7 @@ struct EditSegment: Codable, Equatable {
 /// unused fields for a kind are simply never shown or sent.
 struct EffectSetting: Codable, Equatable, Identifiable {
     enum Kind: String, Codable, CaseIterable {
-        case highpass, lowpass, eq3, compressor, gate
+        case highpass, lowpass, eq3, compressor, gate, convolve
 
         var label: String {
             switch self {
@@ -123,6 +123,7 @@ struct EffectSetting: Codable, Equatable, Identifiable {
             case .eq3: "EQ"
             case .compressor: "Compressor"
             case .gate: "Noise gate"
+            case .convolve: "Convolution (IR)"
             }
         }
     }
@@ -138,11 +139,17 @@ struct EffectSetting: Codable, Equatable, Identifiable {
     var ratio: Double
     var attackMs: Double
     var releaseMs: Double
+    /// Convolution only: the impulse-response .wav the user picked (a room,
+    /// a cabinet — TONE3000 serves thousands as plain audio files).
+    var irPath: String?
+    /// Convolution only: dry/wet.
+    var mix: Double
 
     init(id: UUID = UUID(), kind: Kind, enabled: Bool = true,
          cutoffHz: Double = 0, lowDb: Double = 0, midDb: Double = 0,
          highDb: Double = 0, thresholdDb: Double = 0, ratio: Double = 3,
-         attackMs: Double = 8, releaseMs: Double = 120) {
+         attackMs: Double = 8, releaseMs: Double = 120,
+         irPath: String? = nil, mix: Double = 1.0) {
         self.id = id
         self.kind = kind
         self.enabled = enabled
@@ -154,6 +161,29 @@ struct EffectSetting: Codable, Equatable, Identifiable {
         self.ratio = ratio
         self.attackMs = attackMs
         self.releaseMs = releaseMs
+        self.irPath = irPath
+        self.mix = mix
+    }
+
+    /// Lenient by hand, like `EditDocument`: fields added after a document
+    /// was written must not fail the whole chain out of existence.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try c.decode(Kind.self, forKey: .kind)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        cutoffHz = try c.decodeIfPresent(Double.self, forKey: .cutoffHz) ?? 0
+        lowDb = try c.decodeIfPresent(Double.self, forKey: .lowDb) ?? 0
+        midDb = try c.decodeIfPresent(Double.self, forKey: .midDb) ?? 0
+        highDb = try c.decodeIfPresent(Double.self, forKey: .highDb) ?? 0
+        thresholdDb = try c.decodeIfPresent(Double.self,
+                                            forKey: .thresholdDb) ?? 0
+        ratio = try c.decodeIfPresent(Double.self, forKey: .ratio) ?? 3
+        attackMs = try c.decodeIfPresent(Double.self, forKey: .attackMs) ?? 8
+        releaseMs = try c.decodeIfPresent(Double.self,
+                                          forKey: .releaseMs) ?? 120
+        irPath = try c.decodeIfPresent(String.self, forKey: .irPath)
+        mix = try c.decodeIfPresent(Double.self, forKey: .mix) ?? 1.0
     }
 
     /// A freshly added processor, at the values the design's cards show.
@@ -169,6 +199,8 @@ struct EffectSetting: Codable, Equatable, Identifiable {
             EffectSetting(kind: .compressor, thresholdDb: -18)
         case .gate:
             EffectSetting(kind: .gate, thresholdDb: -54)
+        case .convolve:
+            EffectSetting(kind: .convolve)
         }
     }
 }

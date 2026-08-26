@@ -82,7 +82,17 @@ class Worker:
         env = {**os.environ,
                "HF_HOME": settings.hf_cache_dir,
                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
-               "TOKENIZERS_PARALLELISM": "false"}
+               "TOKENIZERS_PARALLELISM": "false",
+               # torchcodec (torchaudio ≥2.9's audio I/O) dlopens Homebrew's
+               # ffmpeg; dyld honors this because the worker python is not a
+               # SIP-protected binary. A fallback path is only consulted when
+               # the lib is not found normally, so this is inert for every
+               # family that never imports torchcodec.
+               "DYLD_FALLBACK_LIBRARY_PATH": ":".join(
+                   p for p in ("/opt/homebrew/opt/ffmpeg-full/lib",
+                               "/opt/homebrew/opt/ffmpeg/lib",
+                               os.environ.get("DYLD_FALLBACK_LIBRARY_PATH"))
+                   if p)}
         # The transient slot passes a suffix: two workers of the same family
         # can be alive at once (a small mix model beside a big generator in
         # mlxaudio), and they must not share one log handle — kill() closes it.

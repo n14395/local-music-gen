@@ -39,7 +39,8 @@ STARTED_AT = time.monotonic()
 
 # Mirrors the engine's closed task set (jobqueue.TASKS)
 TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
-         "assist", "plan", "caption", "lyrics", "tag", "compose")
+         "assist", "plan", "caption", "lyrics", "tag", "compose",
+         "timbre", "reamp", "convert-voice", "sing")
 
 # Mirrors the assistant family's closed helper set — the `kind` enum on its
 # assist task, one value per thing the app can ask the little LLM for.
@@ -329,6 +330,43 @@ def _catalog() -> dict[str, dict[str, Any]]:
                         "requires_hf_token": False,
                         "url": "https://github.com/adefossez/demucs"},
             "notes": "Task model: split & analyze.",
+        },
+        {
+            # Audio-transformation fixture: the timbre/reamp quartet's wire
+            # shape (audio in → one stem out) behind one model. Declares all
+            # four tasks so every new card can run against the stub without
+            # four more fixtures; the real catalog gives each its own family.
+            "id": "transform-stub",
+            "family": "rave",
+            "display_name": "Audio transformer (stub)",
+            "description": "Re-voices / re-amps / converts / sings audio",
+            "hf_repos": [],
+            "size_bytes": 70_000_000,
+            "capabilities": {
+                "supports_lyrics": False,
+                "instrumental_only": True,
+                "duration": {"min_s": 1, "max_s": 1, "default_s": 1},
+                "sample_rate": 44100,
+                "outputs_per_job_max": 1,
+                "est_seconds_per_audio_second": 0,
+                "tasks": ["timbre", "reamp", "convert-voice", "sing"],
+                "est_realtime_factor": 0.1,
+                "params": [
+                    spec("source_audio", "audio", "Source audio", None,
+                         nullable=False),
+                    spec("nam_file", "audio", "Amp capture (.nam)", None,
+                         nullable=True),
+                    spec("reference_audio", "audio", "Reference voice", None,
+                         nullable=True),
+                    spec("lyrics_text", "string", "Lyrics", None,
+                         nullable=True),
+                ],
+            },
+            "requirements": {"min_ram_bytes": 4 << 30,
+                             "disk_bytes": 70_000_000, "speed_tier": "fast"},
+            "license": {"name": "MIT", "commercial_use": True,
+                        "requires_hf_token": False, "url": None},
+            "notes": "Task model: audio transformations.",
         },
         {
             # Weightless task fixture (hf_repos empty → venv-only install)
@@ -656,6 +694,12 @@ def _derive_tags(entry: dict) -> list[str]:
         tags.append("Writing help")
     if tasks & {"caption", "lyrics", "tag"}:
         tags.append("Hears & describes")
+    # The audio-transformation quartet, mirroring build_catalog: timbre and
+    # re-amp rework existing audio; the voice tasks get their own word.
+    if tasks & {"timbre", "reamp"}:
+        tags.append("Remix & restyle")
+    if tasks & {"convert-voice", "sing"}:
+        tags.append("Voice & singing")
     # "plan" adds no tag, deliberately: planning is a step of a generate on a
     # model installed for generating, never a reason to install one.
     return tags
@@ -1392,6 +1436,16 @@ async def make_task_artifacts(job: Job, out_dir: str,
                               "format": "wav", "sample_rate": sr,
                               "duration_s": dur})
         return artifacts, {}
+    if job.task in ("timbre", "reamp", "convert-voice", "sing"):
+        # Contract 5.4: the audio-transformation quartet returns ONE stem
+        # artifact — the transformed audio — which the app's split ingest
+        # files as a part of the source song.
+        label = {"timbre": "timbre", "reamp": "reamped",
+                 "convert-voice": "converted", "sing": "sung"}[job.task]
+        path = os.path.join(out_dir, f"{label}.wav")
+        await asyncio.to_thread(write_wav, path, dur, sr, 392.0)
+        return [{"kind": "stem", "label": label, "path": path,
+                 "format": "wav", "sample_rate": sr, "duration_s": dur}], {}
     if job.task == "analyze":
         path = os.path.join(out_dir, "analysis.json")
         tmp = path + ".part"

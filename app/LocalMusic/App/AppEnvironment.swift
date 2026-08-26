@@ -13,7 +13,12 @@ final class PrefillBox {
         /// for it, and on a machine with none the card is gated before it can
         /// send anything here.
         var modelId: String?
-        var melodyAudio: URL?
+        /// Audio files to land in specific params of the arriving model
+        /// (param key → file). Generic on purpose: "use as melody" fills
+        /// `melody_audio`, the vocals2music card fills `accompany_audio`,
+        /// and the Studio applies whichever keys the chosen model declares,
+        /// holding the rest in case the user switches to a model that does.
+        var audioParams: [String: URL]
         /// Length to ask for, clamped to whatever the chosen model allows.
         var durationS: Double?
         /// How many takes. Same clamping — a model that renders one at a time
@@ -25,12 +30,12 @@ final class PrefillBox {
         var notice: String?
 
         init(prompt: String, lyrics: String? = nil, modelId: String? = nil,
-             melodyAudio: URL? = nil, durationS: Double? = nil,
+             audioParams: [String: URL] = [:], durationS: Double? = nil,
              takes: Int? = nil, notice: String? = nil) {
             self.prompt = prompt
             self.lyrics = lyrics
             self.modelId = modelId
-            self.melodyAudio = melodyAudio
+            self.audioParams = audioParams
             self.durationS = durationS
             self.takes = takes
             self.notice = notice

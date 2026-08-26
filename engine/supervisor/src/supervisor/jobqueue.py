@@ -64,8 +64,15 @@ CANCEL_POLL_S = 0.5
 # prompt — the one task whose primary input is a declared string param
 # (`params.prompt`), which submit validation does not presence-check, so its
 # adapter fails the job on an empty prompt itself.
+# The audio-transformation quartet is audio in, audio out, returned as `stem`
+# artifacts so the split ingest path files them as parts: "timbre" re-voices
+# a track through a neural timbre model (RAVE — the model IS the effect),
+# "reamp" runs it through a captured amp/pedal rig (NAM), "convert-voice"
+# re-sings a vocal in the timbre of a user-supplied reference recording, and
+# "sing" performs typed lyrics to a melody in a reference voice.
 TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
-         "assist", "plan", "caption", "lyrics", "tag", "compose")
+         "assist", "plan", "caption", "lyrics", "tag", "compose",
+         "timbre", "reamp", "convert-voice", "sing")
 
 # Models at or below this run in the transient slot: never evicting the
 # resident model, never kept resident themselves. The catalog leaves a clean

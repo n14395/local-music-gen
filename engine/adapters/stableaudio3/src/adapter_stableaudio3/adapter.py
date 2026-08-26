@@ -42,6 +42,8 @@ def _pcm16(wav: np.ndarray) -> bytes:
     interleaved = np.clip(np.asarray(wav, dtype=np.float32).T, -1.0, 1.0)
     return (interleaved * 32767.0).astype("<i2").tobytes()
 
+# The Small default; Medium raises it via settings.max_duration_s (its
+# training window runs to 6:20).
 MAX_DURATION_S = 120.0
 # an extension shorter than this isn't audible as a continuation
 MIN_EXTEND_TAIL_S = 5.0
@@ -52,6 +54,8 @@ class StableAudio3Adapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.sa = None
         self.sample_rate = 44100
+        self.max_duration_s = float(
+            self.settings.get("max_duration_s", MAX_DURATION_S))
 
     def _snapshot(self) -> str:
         return next(iter(self.model_paths.values()))
@@ -100,7 +104,7 @@ class StableAudio3Adapter(ModelAdapter):
         import torch
 
         assert self.sa is not None
-        duration_s = min(MAX_DURATION_S, float(params.get("duration_s", 30.0)))
+        duration_s = min(self.max_duration_s, float(params.get("duration_s", 30.0)))
         steps = max(1, min(50, int(params.get("steps", 8))))
         seed = params.get("seed")
         seed = int(seed) if seed is not None else -1
@@ -135,19 +139,20 @@ class StableAudio3Adapter(ModelAdapter):
             kwargs["inpaint_audio"] = inpaint
             kwargs["inpaint_mask_start_seconds"] = max(0.0, start)
             kwargs["inpaint_mask_end_seconds"] = min(end, src_dur)
-            kwargs["duration"] = min(MAX_DURATION_S, src_dur)
+            kwargs["duration"] = min(self.max_duration_s, src_dur)
             mode = "inpainting"
         elif extend is not None:
             src_dur = extend[1].shape[1] / extend[0]
-            if src_dur >= MAX_DURATION_S - MIN_EXTEND_TAIL_S:
+            cap = self.max_duration_s
+            if src_dur >= cap - MIN_EXTEND_TAIL_S:
                 raise RuntimeError(
                     f"source is {src_dur:.0f}s — continuation needs it under "
-                    f"{MAX_DURATION_S - MIN_EXTEND_TAIL_S:.0f}s (120s total cap)")
+                    f"{cap - MIN_EXTEND_TAIL_S:.0f}s ({cap:.0f}s total cap)")
             # continuation = inpaint everything past the source's end
             kwargs["inpaint_audio"] = extend
             kwargs["inpaint_mask_start_seconds"] = src_dur
             kwargs["duration"] = max(duration_s,
-                                     min(MAX_DURATION_S,
+                                     min(self.max_duration_s,
                                          src_dur + MIN_EXTEND_TAIL_S))
             mode = "continuing"
         elif init is not None:

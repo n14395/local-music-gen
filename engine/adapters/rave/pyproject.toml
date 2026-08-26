@@ -1,0 +1,30 @@
+[project]
+name = "adapter-rave"
+version = "0.1.0"
+description = "RAVE neural timbre transfer (IRCAM TorchScript models) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # TorchScript-only: torch.jit.load + forward. The lightest adapter venv
+    # in the engine, on purpose — the model IS the effect.
+    "torch>=2.2",
+    "soundfile>=0.12",
+    "soxr",
+    "numpy",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+rave = "adapter_rave.adapter:RaveAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_rave"]

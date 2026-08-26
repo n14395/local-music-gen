@@ -1,0 +1,49 @@
+[project]
+name = "adapter-msst"
+version = "0.1.0"
+description = "Research separation zoo (ZFTurbo MSST models + Inria BSRNN) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # torch 2.7 pair: the last with native torchaudio.load, and both repos'
+    # proven triage stack.
+    "torch==2.7.0",
+    "torchaudio==2.7.0",
+    "numpy",
+    "librosa",
+    "soundfile>=0.12",
+    "ml_collections",
+    "rotary_embedding_torch",
+    "beartype",
+    "einops",
+    "omegaconf",
+    "tqdm",
+    "pyyaml",
+    "segmentation_models_pytorch",
+    # the repo imports these without listing them
+    "matplotlib",
+    "pandas",
+    "scipy",
+    # the BSRNN engine (Inria repo, hydra CLI)
+    "lightning>=2.5,<3",
+    "hydra-core==1.3.2",
+    "museval",
+    "musdb",
+    "stempeg",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+msst = "adapter_msst.adapter:MSSTAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_msst"]

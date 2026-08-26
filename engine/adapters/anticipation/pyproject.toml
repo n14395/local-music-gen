@@ -1,0 +1,32 @@
+[project]
+name = "adapter-anticipation"
+version = "0.1.0"
+description = "Anticipatory Music Transformer symbolic generation (task compose) for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "anticipation",
+    "transformers>=4.40,<5",
+    "torch>=2.2",
+    "pretty-midi>=0.2.10",
+    # MIDI → ABC for the compose contract's text artifact (BSD, pure python)
+    "music21>=9.1,<10",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+anticipation = "adapter_anticipation.adapter:AnticipationAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+# Not on PyPI.
+anticipation = { git = "https://github.com/jthickstun/anticipation" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_anticipation"]

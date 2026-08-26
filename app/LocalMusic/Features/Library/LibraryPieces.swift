@@ -69,13 +69,47 @@ enum LibraryFormat {
     /// the stored JSON. nil when the owner was never analysed — the design's
     /// green `detected · 358 beats` has to be able to say "no" too.
     static func beatGrid(_ analysis: AnalysisRecord?) -> (text: String, detected: Bool) {
-        guard let analysis,
-              let payload = try? BackendClient.decoder.decode(
-                  AnalysisPayload.self, from: Data(analysis.analysisJSON.utf8)),
-              let beats = payload.beats, !beats.isEmpty else {
+        guard let beats = payload(analysis)?.beats, !beats.isEmpty else {
             return ("not analysed", false)
         }
         return ("detected · \(beats.count) beats", true)
+    }
+
+    /// The stored analysis JSON, decoded — the accessor every payload-only
+    /// field (beats, chords, quality) reads through.
+    static func payload(_ analysis: AnalysisRecord?) -> AnalysisPayload? {
+        guard let analysis else { return nil }
+        return try? BackendClient.decoder.decode(
+            AnalysisPayload.self, from: Data(analysis.analysisJSON.utf8))
+    }
+
+    /// `Am → F → C → G · 23 changes` — the chord track in one row. Nil when
+    /// no chords run has been made (or it heard nothing but N/X).
+    static func chordSummary(_ analysis: AnalysisRecord?) -> String? {
+        guard let chords = payload(analysis)?.chords else { return nil }
+        var run: [String] = []
+        for seg in chords where seg.chord != "N" && seg.chord != "X" {
+            if run.last != seg.chord { run.append(seg.chord) }
+        }
+        guard !run.isEmpty else { return nil }
+        let head = run.prefix(4).joined(separator: " → ")
+        return run.count <= 4 ? head : "\(head) … · \(run.count) changes"
+    }
+
+    /// `STOI 0.94 · PESQ 3.2 · SI-SDR 18.4 dB` — SQUIM's scores in one row.
+    static func qualitySummary(_ analysis: AnalysisRecord?) -> String? {
+        guard let quality = payload(analysis)?.quality else { return nil }
+        var fields: [String] = []
+        if let stoi = quality.stoi {
+            fields.append(String(format: "STOI %.2f", stoi))
+        }
+        if let pesq = quality.pesq {
+            fields.append(String(format: "PESQ %.1f", pesq))
+        }
+        if let siSdr = quality.siSdr {
+            fields.append(String(format: "SI-SDR %.1f dB", siSdr))
+        }
+        return fields.isEmpty ? nil : fields.joined(separator: " · ")
     }
 }
 

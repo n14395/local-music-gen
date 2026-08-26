@@ -234,6 +234,33 @@ class Registry:
         return os.path.join(self.settings.hf_cache_dir, "hub",
                             "models--" + repo_id.replace("/", "--"))
 
+    # ModelScope repos (catalog `ms_repos`, absent on most entries) live in a
+    # flat per-repo directory — no blob/snapshot indirection, because nothing
+    # else on the machine shares this cache. Completeness is the marker the
+    # download worker writes after the last file (see ms_download_worker).
+    @staticmethod
+    def ms_repos(model: dict) -> list[dict]:
+        return model.get("ms_repos") or []
+
+    def ms_repo_dir(self, repo_id: str) -> str:
+        return os.path.join(self.settings.ms_cache_dir,
+                            "models--" + repo_id.replace("/", "--"))
+
+    def _ms_complete(self, repo_id: str) -> bool:
+        from .ms_download_worker import COMPLETE_MARKER
+        return os.path.exists(os.path.join(self.ms_repo_dir(repo_id),
+                                           COMPLETE_MARKER))
+
+    def _ms_bytes(self, repo_id: str) -> int:
+        total = 0
+        for root, _dirs, files in os.walk(self.ms_repo_dir(repo_id)):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        return total
+
     def cache_bytes(self, model_id: str) -> int:
         """Bytes on disk that belong to THIS entry.
 
@@ -244,6 +271,8 @@ class Registry:
         snapshot symlinks instead and size the blobs they point at.
         """
         total = 0
+        for repo in self.ms_repos(self.models[model_id]):
+            total += self._ms_bytes(repo["repo_id"])
         for repo in self.models[model_id]["hf_repos"]:
             d = self.repo_cache_dir(repo["repo_id"])
             pats = repo.get("allow_patterns")
@@ -307,8 +336,14 @@ class Registry:
         # crash instead of a "Download" button.
         if not self.is_marked(model_id):
             return False
-        snaps = self.snapshot_dirs(model_id)
         model = self.models[model_id]
+        # ModelScope repos carry their own completeness marker, written after
+        # the last file — presence of the directory alone is not enough (an
+        # interrupted download leaves files behind).
+        for repo in self.ms_repos(model):
+            if not self._ms_complete(repo["repo_id"]):
+                return False
+        snaps = self.hf_snapshot_dirs(model_id)
         if len(snaps) != len(model["hf_repos"]):
             return False
         # Pattern-scoped repos (multi-quant GGUF stacks) are shared between
@@ -344,7 +379,20 @@ class Registry:
         return False
 
     def snapshot_dirs(self, model_id: str) -> dict[str, str]:
-        """repo_id -> latest snapshot dir, for handing to workers."""
+        """repo_id -> local dir, for handing to workers. HF repos resolve to
+        their latest snapshot; ModelScope repos to their flat cache dir. One
+        namespace on purpose — adapters look paths up by the repo id they
+        know, and nothing about where the bytes came from changes that."""
+        out = self.hf_snapshot_dirs(model_id)
+        for repo in self.ms_repos(self.models[model_id]):
+            d = self.ms_repo_dir(repo["repo_id"])
+            if os.path.isdir(d):
+                out[repo["repo_id"]] = d
+        return out
+
+    def hf_snapshot_dirs(self, model_id: str) -> dict[str, str]:
+        """repo_id -> latest snapshot dir, HF repos only (the install check
+        counts these against hf_repos, so ModelScope dirs must stay out)."""
         out = {}
         for repo in self.models[model_id]["hf_repos"]:
             base = os.path.join(self.repo_cache_dir(repo["repo_id"]), "snapshots")
@@ -366,10 +414,15 @@ class Registry:
         for other_id, other in self.models.items():
             if other_id != model_id and self.is_marked(other_id):
                 still_needed.update(r["repo_id"] for r in other["hf_repos"])
+                still_needed.update(r["repo_id"] for r in self.ms_repos(other))
         for repo in self.models[model_id]["hf_repos"]:
             if repo["repo_id"] in still_needed:
                 continue
             shutil.rmtree(self.repo_cache_dir(repo["repo_id"]), ignore_errors=True)
+        for repo in self.ms_repos(self.models[model_id]):
+            if repo["repo_id"] in still_needed:
+                continue
+            shutil.rmtree(self.ms_repo_dir(repo["repo_id"]), ignore_errors=True)
 
     def info(self, model_id: str, active_download_state: str | None = None) -> dict:
         m = dict(self.models[model_id])

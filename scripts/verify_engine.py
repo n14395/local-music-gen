@@ -9,6 +9,7 @@ Usage: python3 scripts/verify_engine.py
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import glob
 import json
@@ -278,6 +279,45 @@ def check_catalog_curation() -> None:
     check("no pending preferred id has quietly shipped",
           not arrived,
           f"now in the catalog, remove from PENDING_PREFERRED: {arrived}")
+
+    # Packaging must not strip code the adapters import.
+    #
+    # `bundle_engine` copies the engine into the .app with a set of rsync
+    # excludes meant for build artifacts. A pattern that also matches a real
+    # source directory removes it from the shipped app *only* — every test
+    # here runs from the repo tree, so the model works right up until it is
+    # installed. That is precisely how a blanket `--exclude 'vendor'` shipped
+    # a captioning family whose vendored Python was missing. The exclude list
+    # is read from build.sh rather than restated, so this cannot drift.
+    build_src = open(os.path.join(ROOT, "build.sh")).read()
+    block = re.search(r"rsync -a \\\n(.*?)engine/supervisor", build_src,
+                      re.S)
+    excludes = re.findall(r"--exclude '([^']+)'", block.group(1)) if block \
+        else []
+    check("bundle_engine's excludes were found", bool(excludes),
+          "could not parse the rsync block in build.sh")
+    stripped = []
+    for family in sorted(os.listdir(os.path.join(ROOT, "engine", "adapters"))):
+        src_root = os.path.join(ROOT, "engine", "adapters", family, "src")
+        if not os.path.isdir(src_root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(src_root):
+            # Do not descend into anything already excluded; report it once.
+            for name in list(dirnames):
+                if any(fnmatch.fnmatch(name, pat) for pat in excludes):
+                    if any(f.endswith(".py") for _r, _d, fs in
+                           os.walk(os.path.join(dirpath, name)) for f in fs):
+                        stripped.append(
+                            os.path.relpath(os.path.join(dirpath, name), ROOT))
+                    dirnames.remove(name)
+            for name in filenames:
+                if name.endswith(".py") and any(
+                        fnmatch.fnmatch(name, pat) for pat in excludes):
+                    stripped.append(
+                        os.path.relpath(os.path.join(dirpath, name), ROOT))
+    check("no adapter source is excluded from the app bundle",
+          not stripped,
+          f"packaging would strip: {stripped}")
 
     # The first-run sheet installs by id; a renamed catalog entry would silently
     # drop a model from onboarding rather than fail anywhere visible.

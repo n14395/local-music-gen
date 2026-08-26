@@ -29,6 +29,29 @@ def token() -> str | None:
     return None
 
 
+def ms_effective_size(repo_id: str,
+                      patterns: list[str] | None = None) -> int:
+    """Total blob bytes of a ModelScope repo (catalog `ms_repos` entries),
+    from the same anonymous listing the engine's ms_download_worker uses."""
+    url = (f"https://modelscope.cn/api/v1/models/{repo_id}"
+           f"/repo/files?Recursive=true")
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        data = json.load(resp)
+    if data.get("Code") != 200:
+        raise RuntimeError(f"ModelScope listing failed: {data.get('Message')}")
+    files = [f for f in data["Data"]["Files"] if f.get("Type") == "blob"]
+    if patterns is not None:
+        empty = [p for p in patterns
+                 if not any(fnmatch.fnmatch(f["Path"], p) for f in files)]
+        if empty:
+            raise SystemExit(
+                f"ms:{repo_id}: allow_patterns match no file upstream: "
+                f"{empty}")
+        files = [f for f in files
+                 if any(fnmatch.fnmatch(f["Path"], p) for p in patterns)]
+    return sum(int(f.get("Size") or 0) for f in files)
+
+
 def effective_size(repo_id: str, tok: str | None,
                    patterns: list[str] | None = None) -> int:
     req = urllib.request.Request(
@@ -38,6 +61,18 @@ def effective_size(repo_id: str, tok: str | None,
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.load(resp)
     siblings = data.get("siblings", [])
+    names = [s["rfilename"] for s in siblings]
+    if patterns is not None:
+        # A pattern matching nothing is not a harmless no-op: the downloader
+        # skips it silently, and `registry.is_installed` then refuses the
+        # model forever because one of its declared patterns has no file on
+        # disk. Cheapest place to notice is here, with the listing in hand.
+        empty = [p for p in patterns
+                 if not any(fnmatch.fnmatch(n, p) for n in names)]
+        if empty:
+            raise SystemExit(
+                f"{repo_id}: allow_patterns match no file upstream: {empty}\n"
+                f"  (the repo has: {sorted(names)[:12]})")
     has_st = any(s["rfilename"].endswith(".safetensors") for s in siblings)
     total = 0
     for s in siblings:
@@ -51,10 +86,12 @@ def effective_size(repo_id: str, tok: str | None,
     return total
 
 
-# User-owned HF mirror for checkpoints without stable HF hosting (viperx
-# BS-RoFormer from deleted-prone GitHub releases, beat_this final0 from CPJKU
-# Nextcloud, SoundFonts). TODO(assets-mirror): create + populate, then move
-# the weightless separation/analysis entries onto it for real install-state.
+# User-owned HF mirror for permissive single files without stable HF hosting.
+# CREATED AND POPULATED 2026-08-25 (see models-uploaded-to-my-HF.md at the
+# repo root): analysis/beat_this-final0.ckpt (MIT, CPJKU) and the two BTC
+# chord checkpoints (MIT, ISMIR 2019). Only permissively-licensed files may
+# land here — NC-licensed weights stay at origin, and the viperx BS-RoFormer
+# ckpt (no formal license) is still pending a decision.
 ASSETS_REPO = "rtikw/localmusic-assets"
 
 
@@ -100,6 +137,7 @@ TAG_ANALYSIS = "Musical analysis"
 TAG_MIXING = "Mixing & recombining"
 TAG_WRITING = "Writing help"
 TAG_TEXT = "Hears & describes"
+TAG_VOICE = "Voice & singing"
 
 # params that mean "this model can take existing audio and rework it".
 # `melody_audio` and `style_audio` belong here for the same reason the rest do:
@@ -107,7 +145,8 @@ TAG_TEXT = "Hears & describes"
 # They also carry their own, narrower tag — the Style Transfer screen filters on
 # this set, and a melody model missing from it was simply unreachable there.
 _REMIX_PARAMS = {"src_audio", "init_audio", "reference_audio", "extend_audio",
-                 "inpaint_audio", "task_type", "melody_audio", "style_audio"}
+                 "inpaint_audio", "task_type", "melody_audio", "style_audio",
+                 "accompany_audio"}
 
 
 def derive_tags(entry: dict) -> list[str]:
@@ -140,6 +179,13 @@ def derive_tags(entry: dict) -> list[str]:
     # them is picking between those two promises.
     if tasks & {"caption", "lyrics", "tag"}:
         tags.append(TAG_TEXT)
+    # The audio-transformation quartet. Timbre and re-amp rework existing
+    # audio, which is what TAG_REMIX has always meant; the two voice tasks
+    # get their own word because "restyle" undersells "this sings".
+    if tasks & {"timbre", "reamp"}:
+        tags.append(TAG_REMIX)
+    if tasks & {"convert-voice", "sing"}:
+        tags.append(TAG_VOICE)
     # Deliberately no tag for `plan`: it is never a reason to install a model,
     # only something a generative model you already have happens to offer. A
     # filter button that returned "the ACE-Step variants" under a name like
@@ -179,6 +225,19 @@ PIPELINES = {
     "acestep": _stages("lm_reasoning", "prompt_encode", "diffusion", "vocoder",
                        "master", optional=("lm_reasoning",)),
     "acestepcpp": _stages("lm_reasoning", "diffusion", "vocoder", "master"),
+    # DiffSynth's AceStep runtime: no LM half at all (the LoRA pack drives
+    # the DiT directly), so the stages are the diffusion path alone.
+    "diffsynthace": _stages("prompt_encode", "diffusion", "master"),
+    # Streaming token decode straight to audio frames; the style embed is a
+    # sub-second un-phased step before it.
+    "magentart": _stages("lm_decode", "master"),
+    "melodyflow": _stages("prompt_encode", "diffusion", "master"),
+    "vampnet": _stages("prompt_encode", "lm_decode", "master"),
+    "songgen": _stages("prompt_encode", "lm_decode", "master"),
+    # inspiremusic / songbloom / diffrhythm2 deliberately absent: their
+    # adapters run one opaque pass (subprocess or callback-free API) and the
+    # app draws one bar — declaring stages nobody reports would violate the
+    # staged-progress invariant.
     "minimax": _stages("lm_decode", "diffusion", "vocoder", "master"),
     "mlxaudio": _stages("lm_decode", "diffusion", "master"),
 }
@@ -287,17 +346,34 @@ PARAM_GROUPS = {
     # A plan the app captured from an earlier take and is handing back. Never
     # rendered; populated in code.
     "audio_codes": SAMPLING,
+    "fake_stereo": SAMPLING,
     "plan_caption": SAMPLING,
     "plan_lyrics": SAMPLING,
     "plan_count": SAMPLING,
     "plan_duration_s": SAMPLING,
     "bpm": MUSICAL,
+    # InspireMusic's structure conditioning: which section of a song the
+    # model believes it is writing, and where on its imagined timeline.
+    "chorus": MUSICAL,
+    "time_start": MUSICAL,
+    "time_end": MUSICAL,
     # The other two facts the LM otherwise guesses at. Pinning one takes it out
     # of the model's hands, which is the whole point of the control.
     "keyscale": MUSICAL,
     "timesignature": MUSICAL,
     "vocal_language": MUSICAL,
     "task_type": TASK,
+    "accompany_audio": TASK,
+    "template_scale": TASK,
+    "edit_strength": TASK,
+    "edit_source_caption": TASK,
+    "solver": SAMPLING,
+    "periodic_prompt": TASK,
+    "upper_codebook_mask": TASK,
+    "beat_mask": TASK,
+    "prefix_s": TASK,
+    "suffix_s": TASK,
+    "ref_voice": TASK,
     "src_audio": TASK,
     "reference_audio": TASK,
     "melody_audio": TASK,
@@ -309,6 +385,8 @@ PARAM_GROUPS = {
     "inpaint_end_s": TASK,
     "audio_cover_strength": TASK,
     "style_audio": TASK,
+    "style_audio_b": TASK,
+    "prompt_b": TASK,
     "style_excerpt_s": TASK,
     "flow_edit_morph": TASK,
     "flow_edit_source_caption": TASK,
@@ -412,6 +490,29 @@ PARAM_HELP = {
                        "beginning of the source. Audio outside the span is "
                        "kept exactly as it was.",
     "inpaint_end_s": "Where the regenerated span ends, in seconds.",
+    "accompany_audio": "An a-cappella vocal recording. The model writes and "
+                       "plays a band around it — the voice is kept, the "
+                       "arrangement is generated to fit it. Steady-tempo "
+                       "vocals work best.",
+    "edit_strength": "How far the edit may move from the source. Low keeps "
+                     "the original's structure and timbre with the change "
+                     "painted lightly over it; high rewrites almost "
+                     "everything except the broad shape.",
+    "solver": "The ODE solver stepping the flow. Euler is the fast default; "
+              "midpoint doubles the work per step for a slightly smoother "
+              "result.",
+    "periodic_prompt": "How often a token of the original survives into the "
+                       "variation — every Nth token is kept. Low keeps the "
+                       "source audible everywhere; high frees the model to "
+                       "wander.",
+    "upper_codebook_mask": "How many of the coarse codebooks stay pinned to "
+                           "the source. More pinned keeps the low-end and "
+                           "rhythm intact; fewer lets the variation rebuild "
+                           "them too.",
+    "ref_voice": "A short recording of the voice the song should be sung "
+                 "in — about three seconds is enough. Your own recording, "
+                 "or one you have permission to use; leave empty for the "
+                 "model's own voice.",
     # ---- task models ------------------------------------------------------
     "shifts": "How many times the separator re-runs over a time-shifted copy "
               "of the input, averaging the results to cancel "
@@ -546,6 +647,13 @@ def apply_groups(entry: dict) -> None:
         # three stem tasks, and gating a control on a task the model cannot run
         # would dim it against a value the user can never select
         scope = [t for t in ACE_TASK_SCOPE.get(key, ()) if t in offered]
+        # keyscale/timesignature are scoped because the acestep LM (which
+        # reads them) skips outside text2music. DiffSynth embeds them as
+        # direct conditioning for every task — dimming them there would
+        # claim the adapter ignores a value it honours.
+        if entry["family"] == "diffsynthace" and key in ("keyscale",
+                                                         "timesignature"):
+            scope = []
         if scope:
             param["applies_when"] = {"param": "task_type", "values": scope}
 
@@ -654,7 +762,8 @@ def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0):
 
 def entry(id_, family, repos, name, desc, caps, min_ram_gib, tier, license_,
           notes=None, variant_of=None, format_=None, gated=False,
-          settings=None, featured=False):
+          settings=None, featured=False, ms_repos=None,
+          size_hint_bytes=0):
     e = {
         "id": id_, "family": family, "featured": featured,
         "format": format_, "variant_of": variant_of,
@@ -668,6 +777,22 @@ def entry(id_, family, repos, name, desc, caps, min_ram_gib, tier, license_,
         "license": license_,
         "notes": notes,
     }
+    if ms_repos:
+        # ModelScope-hosted weights (engine download route D). Placed right
+        # after hf_repos so the two sources read as one block in the JSON.
+        rebuilt = {}
+        for key, value in e.items():
+            rebuilt[key] = value
+            if key == "hf_repos":
+                rebuilt["ms_repos"] = [r if isinstance(r, dict)
+                                       else {"repo_id": r} for r in ms_repos]
+        e = rebuilt
+    if size_hint_bytes and not repos:
+        # Route-B weights the adapter fetches itself: no repo to size, so
+        # the shown size is this preset (main() only overwrites when a
+        # lookup reports > 0).
+        e["size_bytes"] = size_hint_bytes
+        e["requirements"]["disk_bytes"] = size_hint_bytes
     if settings:
         e["settings"] = settings
     return e
@@ -1377,6 +1502,144 @@ NEW_ENTRIES = [
           notes="Accept the Stable Audio 3 license on huggingface.co and add "
                 "your token in Settings. One audio input per job: repaint > "
                 "continue > reimagine."),
+    entry("stableaudio3-medium", "stableaudio3",
+          ["stabilityai/stable-audio-3-medium"],
+          "Stable Audio 3 Medium",
+          "The 2B Stable Audio 3 — up to 6:20 of stereo music, seconds per "
+          "clip on Apple Silicon. Continues, restyles and repaints like the "
+          "Small model, with the quality of the bigger DiT. Trained on "
+          "licensed major-label data. Gated repo.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 1, "max_s": 380, "default_s": 30},
+              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 0.8,
+              "params": [
+                  {"key": "steps", "type": "int", "label": "Steps", "default": 8,
+                   "nullable": False, "min": 1, "max": 50},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 1.0, "nullable": False, "min": 0.5, "max": 15.0,
+                   "step": 0.5},
+                  {"key": "negative_prompt", "type": "string",
+                   "label": "Negative prompt", "default": None, "nullable": True,
+                   "placeholder": "low quality"},
+                  seed_param(),
+                  *init_audio_params(),
+                  {"key": "extend_audio", "type": "audio",
+                   "label": "Continue source",
+                   "default": None, "nullable": True,
+                   "help": "Song to continue — the output starts with it and "
+                           "keeps going (6:20 total cap)"},
+                  {"key": "inpaint_audio", "type": "audio",
+                   "label": "Repaint source", "default": None, "nullable": True,
+                   "help": "Audio to partially regenerate (with the region "
+                           "below); output keeps its length"},
+                  {"key": "inpaint_start_s", "type": "float",
+                   "label": "Repaint from (s)", "default": None,
+                   "nullable": True, "min": 0.0, "max": 380.0, "step": 0.5},
+                  {"key": "inpaint_end_s", "type": "float",
+                   "label": "Repaint to (s)", "default": None, "nullable": True,
+                   "min": 0.0, "max": 380.0, "step": 0.5},
+              ],
+          },
+          24, "fast",
+          {"name": "Stability AI Community License (+ Gemma terms for the "
+                   "text encoder)", "commercial_use": True,
+           "requires_hf_token": True,
+           "url": "https://stability.ai/community-license-agreement"},
+          gated=True,
+          # device: the Small entry stays on CPU (its design point); Medium
+          # was measured at 7.9 s for 10 s of audio on MPS fp32 and is too
+          # slow to enjoy on CPU. max_duration_s lifts the adapter's 120 s cap.
+          settings={"device": "mps", "max_duration_s": 380.0},
+          notes="Accept the Stable Audio 3 license on huggingface.co and add "
+                "your token in Settings. One audio input per job: repaint > "
+                "continue > reimagine. Runs on the GPU (MPS); ~19 GB peak "
+                "memory while rendering."),
+    entry("stableaudio3-medium-base", "stableaudio3",
+          ["stabilityai/stable-audio-3-medium-base"],
+          "Stable Audio 3 Medium Base",
+          "The non-distilled Medium: the same 2B DiT before its few-step "
+          "distillation — more sampling steps, often finer texture, and "
+          "(unusually) an UNGATED repo: no license click, no token.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 1, "max_s": 380, "default_s": 30},
+              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 2.5,
+              "params": [
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 50, "nullable": False, "min": 8, "max": 150},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 7.0, "nullable": False, "min": 0.5, "max": 15.0,
+                   "step": 0.5},
+                  {"key": "negative_prompt", "type": "string",
+                   "label": "Negative prompt", "default": None, "nullable": True,
+                   "placeholder": "low quality"},
+                  seed_param(),
+                  *init_audio_params(),
+                  {"key": "extend_audio", "type": "audio",
+                   "label": "Continue source",
+                   "default": None, "nullable": True,
+                   "help": "Song to continue — the output starts with it and "
+                           "keeps going (6:20 total cap)"},
+                  {"key": "inpaint_audio", "type": "audio",
+                   "label": "Repaint source", "default": None, "nullable": True,
+                   "help": "Audio to partially regenerate (with the region "
+                           "below); output keeps its length"},
+                  {"key": "inpaint_start_s", "type": "float",
+                   "label": "Repaint from (s)", "default": None,
+                   "nullable": True, "min": 0.0, "max": 380.0, "step": 0.5},
+                  {"key": "inpaint_end_s", "type": "float",
+                   "label": "Repaint to (s)", "default": None, "nullable": True,
+                   "min": 0.0, "max": 380.0, "step": 0.5},
+              ],
+          },
+          24, "medium",
+          {"name": "Stability AI Community License (+ Gemma terms for the "
+                   "text encoder)", "commercial_use": True,
+           "requires_hf_token": False,
+           "url": "https://stability.ai/community-license-agreement"},
+          variant_of="stableaudio3-medium", format_="base · 50 steps",
+          settings={"device": "mps", "max_duration_s": 380.0},
+          notes="Speed on this hardware is unmeasured — the est scales the "
+                "distilled Medium's by the step count. Same one-audio-input "
+                "rule: repaint > continue > reimagine."),
+    entry("stableaudio3-small-sfx", "stableaudio3",
+          ["stabilityai/stable-audio-3-small-sfx"],
+          "Stable Audio 3 Small SFX",
+          "The small Stable Audio 3 tuned for sound effects and design "
+          "material — hits, risers, textures, foley — rather than songs. "
+          "The natural engine for the sound-design cards.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 1, "max_s": 47, "default_s": 6},
+              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 0.6,
+              "params": [
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 8, "nullable": False, "min": 1, "max": 50},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 1.0, "nullable": False, "min": 0.5, "max": 15.0,
+                   "step": 0.5},
+                  {"key": "negative_prompt", "type": "string",
+                   "label": "Negative prompt", "default": None, "nullable": True,
+                   "placeholder": "low quality"},
+                  seed_param(),
+                  *init_audio_params(),
+              ],
+          },
+          12, "fast",
+          {"name": "Stability AI Community License (+ Gemma terms for the "
+                   "text encoder)", "commercial_use": True,
+           "requires_hf_token": True,
+           "url": "https://stability.ai/community-license-agreement"},
+          gated=True,
+          variant_of="stableaudio3-medium", format_="small · sfx",
+          settings={"device": "mps"},
+          notes="Untested on this hardware — est is a guess from the small "
+                "architecture. Gated repo (auto-approval): accept the "
+                "license on huggingface.co and add your token in Settings."),
     # ---- ACE-Step DiT variants -------------------------------------------
     ace_variant("acestep-15-dit-base", "ACE-Step/acestep-v15-base",
                 "acestep-v15-base", "ACE-Step 1.5 Base", "base · 50 steps",
@@ -1398,6 +1661,650 @@ NEW_ENTRIES = [
                 "acestep-v15-xl-base", "ACE-Step 1.5 XL Base", "XL base",
                 50, 1.0, 6.0, 48, "slow",
                 "Big non-distilled DiT. Needs 48 GB+."),
+    # ---- ACE-Step 1.5 XL LoRA pack (DiffSynth runtime) --------------------
+    #
+    # A separate family from `acestep`: these LoRAs were built against
+    # DiffSynth-Studio's own AceStep implementation, which drives the XL SFT
+    # DiT directly (no LM half). The base weights are the same HF repos the
+    # acestep entries use (shared-repo refcounting applies); the LoRAs were
+    # ModelScope-exclusive and are now mirrored (unmodified, Apache-2.0) on
+    # the user-owned HF account — see rtikw/acestep15xlsft-* and
+    # ~/build/local-music/models-uploaded-to-my-HF.md.
+    entry("acestep-xl-vocals2music", "diffsynthace",
+          [{"repo_id": ACE_CORE, "gated": False,
+            "allow_patterns": ["Qwen3-Embedding-0.6B/*", "vae/*"]},
+           "ACE-Step/acestep-v15-xl-sft",
+           # The template ControlNet (model.py + weights; the demo wavs in
+           # assets/ are deliberately excluded) and the music LoRA it rides
+           # with — unmodified mirrors on the user-owned account.
+           {"repo_id": "rtikw/acestep15xlsft-vocals2music", "gated": False,
+            "allow_patterns": ["model.safetensors", "model.py",
+                               "configuration.json"]},
+           {"repo_id": "rtikw/acestep15xlsft-lora-music", "gated": False,
+            "allow_patterns": ["model.safetensors"]}],
+          "Vocals → band (ACE-Step XL)",
+          "Sing a cappella, get a band: conditions ACE-Step 1.5 XL on your "
+          "vocal recording and generates the full arrangement around it — "
+          "the voice is kept, the music is written to fit. 30 s of "
+          "accompaniment in about 30 s on Apple Silicon.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 5, "max_s": 240, "default_s": 60},
+              "sample_rate": 48000, "outputs_per_job_max": 2,
+              "est_seconds_per_audio_second": 1.0,
+              "lyrics_hint": ("Paste the words you sang — they help the "
+                              "model follow the vocal. Structure tags like "
+                              "[Verse 1] are understood."),
+              "params": [
+                  {"key": "accompany_audio", "type": "audio",
+                   "label": "Your vocal", "default": None, "nullable": False},
+                  {"key": "template_scale", "type": "float",
+                   "label": "Vocal conditioning", "default": 1.0,
+                   "nullable": False, "min": 0.2, "max": 1.5, "step": 0.05,
+                   "help": "How strongly the ControlNet holds the band to "
+                           "the vocal — 1.0 follows it closely; lower "
+                           "loosens the arrangement around it"},
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 12, "nullable": False, "min": 4, "max": 50,
+                   "help": "Diffusion passes. 12 is already musical; more "
+                           "adds detail and time"},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 1.0, "nullable": False, "min": 0.5, "max": 10.0,
+                   "step": 0.5},
+                  seed_param(),
+                  {"key": "bpm", "type": "int", "label": "Tempo (BPM)",
+                   "default": None, "nullable": True, "min": 40, "max": 220},
+                  {"key": "keyscale", "type": "string", "label": "Key",
+                   "default": None, "nullable": True,
+                   "placeholder": "B minor"},
+                  {"key": "timesignature", "type": "string",
+                   "label": "Time signature", "default": None,
+                   "nullable": True, "placeholder": "4"},
+                  {"key": "vocal_language", "type": "enum",
+                   "label": "Vocal language", "default": "en",
+                   "nullable": False,
+                   "choices": [{"value": "en", "label": "English"},
+                               {"value": "de", "label": "German"},
+                               {"value": "es", "label": "Spanish"},
+                               {"value": "fr", "label": "French"},
+                               {"value": "ja", "label": "Japanese"},
+                               {"value": "ko", "label": "Korean"},
+                               {"value": "zh", "label": "Chinese"}]},
+              ],
+          },
+          48, "medium", APACHE,
+          notes="Works best on steady-tempo vocals (upstream's own caveat). "
+                "The render is capped at the vocal's length. ~21 GB peak "
+                "memory while rendering. LoRA weights are unmodified "
+                "mirrors of DiffSynth-Studio's ModelScope originals "
+                "(Apache-2.0).",
+          settings={"template_repo": "rtikw/acestep15xlsft-vocals2music",
+                    "lora_repo": "rtikw/acestep15xlsft-lora-music",
+                    "shift": 6.0}),
+] + [
+    entry(f"acestep-xl-{lora}", "diffsynthace",
+          [{"repo_id": ACE_CORE, "gated": False,
+            "allow_patterns": ["Qwen3-Embedding-0.6B/*", "vae/*"]},
+           "ACE-Step/acestep-v15-xl-sft",
+           {"repo_id": f"rtikw/acestep15xlsft-{lora}", "gated": False,
+            "allow_patterns": ["model.safetensors"]}],
+          name,
+          desc,
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 5, "max_s": 120, "default_s": 30},
+              "sample_rate": 48000, "outputs_per_job_max": 2,
+              "est_seconds_per_audio_second": 1.3,
+              "params": [
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 12, "nullable": False, "min": 4, "max": 50,
+                   "help": "Diffusion passes. 12 is already musical; more "
+                           "adds detail and time"},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 1.0, "nullable": False, "min": 0.5, "max": 10.0,
+                   "step": 0.5},
+                  seed_param(),
+                  {"key": "bpm", "type": "int", "label": "Tempo (BPM)",
+                   "default": None, "nullable": True, "min": 40, "max": 220},
+                  {"key": "keyscale", "type": "string", "label": "Key",
+                   "default": None, "nullable": True,
+                   "placeholder": "B minor"},
+                  {"key": "timesignature", "type": "string",
+                   "label": "Time signature", "default": None,
+                   "nullable": True, "placeholder": "4"},
+              # DiffSynth's AceStepPipeline takes the same task vocabulary as
+              # upstream ACE-Step (minus FlowEdit, which it does not
+              # implement), so the LoRA pack serves the Cover and Repaint
+              # style-transfer cards with the shared param set.
+              ] + [p for p in ace_task_params(False)
+                   if not p["key"].startswith("flow_edit")] + [
+                  {"key": "audio_codes", "type": "string",
+                   "label": "Captured plan", "default": None,
+                   "nullable": True, "internal": True},
+              ],
+          },
+          48, "medium", APACHE,
+          variant_of="acestep-xl-vocals2music", format_=fmt,
+          notes="~21 GB peak memory while rendering. Supports cover and "
+                "repaint over a source file, an optional style reference, "
+                "and re-rendering a captured ACE-Step plan (same token "
+                "vocabulary). LoRA weights are an unmodified mirror of "
+                "DiffSynth-Studio's ModelScope original (Apache-2.0).",
+          settings={"lora_repo": f"rtikw/acestep15xlsft-{lora}",
+                    "shift": 6.0})
+    for lora, fmt, name, desc in [
+        ("lora-music", "LoRA · music",
+         "ACE-Step XL (music LoRA)",
+         "The general-music finetune of the XL SFT DiT on the DiffSynth "
+         "runtime — instrumental text-to-music with the LoRA pack's "
+         "cleaner sound."),
+        ("lora-piano", "LoRA · piano",
+         "ACE-Step XL (piano LoRA)",
+         "Solo piano specialist: the XL DiT finetuned toward piano "
+         "performance. Describe the piece; it plays it."),
+        ("lora-drums", "LoRA · drums",
+         "ACE-Step XL (drums LoRA)",
+         "Drum-kit specialist — grooves and fills without the rest of the "
+         "band. A loop machine for rhythm sections."),
+        ("lora-guitar", "LoRA · guitar",
+         "ACE-Step XL (guitar LoRA)",
+         "Guitar specialist — acoustic and electric parts on their own, "
+         "from fingerpicked folk to riffs."),
+    ]
+] + [
+    # ---- Magenta RealTime 2 (MLX) ----------------------------------------
+    entry("magenta-rt2-small", "magentart", [],
+          "Magenta RealTime 2",
+          "Google's streaming music engine, running natively on MLX — "
+          "audio decodes faster than it plays (4 s of music in under 2 s "
+          "once loaded, in 1.7 GB of memory). Prompt with words or with a "
+          "reference clip whose vibe it should hold.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
+              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 0.5,
+              "params": [
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Style reference", "default": None,
+                   "nullable": True,
+                   "help": "Audio whose character the stream holds — used "
+                           "instead of the text prompt when set (MusicCoCa "
+                           "embeds either)"},
+                  {"key": "style_audio_b", "type": "audio",
+                   "label": "Morph target (audio)", "default": None,
+                   "nullable": True,
+                   "help": "Set a second style and the stream MORPHS: it "
+                           "starts as the first style and arrives at this "
+                           "one, interpolated chunk by chunk"},
+                  {"key": "prompt_b", "type": "string",
+                   "label": "Morph target (words)", "default": None,
+                   "nullable": True,
+                   "placeholder": "e.g. ambient choral drone",
+                   "help": "Morph target described in words instead of "
+                           "audio — ignored when a morph-target file is "
+                           "set"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.3, "nullable": False,
+                   "min": 0.5, "max": 2.0, "step": 0.05},
+                  {"key": "top_k", "type": "int", "label": "Top-K",
+                   "default": 40, "nullable": False, "min": 10, "max": 400},
+                  {"key": "guidance_scale", "type": "float",
+                   "label": "Style strength", "default": 3.0,
+                   "nullable": False, "min": 0.5, "max": 10.0, "step": 0.5,
+                   "help": "How hard the stream is held to the style "
+                           "embedding. Higher sticks to the prompt's "
+                           "character; lower drifts more freely"},
+              ],
+          },
+          8, "fast",
+          {"name": "Apache-2.0 (code) / CC BY 4.0 (weights)",
+           "commercial_use": True, "requires_hf_token": False,
+           "url": "https://github.com/magenta/magenta-realtime"},
+          notes="Weights (~1.75 GB: MusicCoCa + SpectroStream resources and "
+                "the exported MLX model) fetch from Google's own hosting on "
+                "first run. A streaming design (~200 ms control latency) — "
+                "the natural engine for a live-jam surface later. Python "
+                "3.12 runtime; mlx pinned below 0.32 (the exported model "
+                "fails to deserialise there).",
+          settings={"size": "mrt2_small"},
+          # Route-B weights (Google's own CLI fetches them), so HF cannot
+          # size this entry — preset what the CLI downloads.
+          size_hint_bytes=1_750_000_000),
+    entry("magenta-rt2-base", "magentart", [],
+          "Magenta RealTime 2 (base)",
+          "The larger Magenta RT 2 model: the same streaming engine with "
+          "more capacity — richer texture at a slower (unmeasured on this "
+          "hardware) decode. The small model is the proven fast one; try "
+          "this when its sound feels thin.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
+              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 1.5,
+              "params": [
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Style reference", "default": None,
+                   "nullable": True,
+                   "help": "Audio whose character the stream holds — used "
+                           "instead of the text prompt when set (MusicCoCa "
+                           "embeds either)"},
+                  {"key": "style_audio_b", "type": "audio",
+                   "label": "Morph target (audio)", "default": None,
+                   "nullable": True,
+                   "help": "Set a second style and the stream MORPHS: it "
+                           "starts as the first style and arrives at this "
+                           "one, interpolated chunk by chunk"},
+                  {"key": "prompt_b", "type": "string",
+                   "label": "Morph target (words)", "default": None,
+                   "nullable": True,
+                   "placeholder": "e.g. ambient choral drone",
+                   "help": "Morph target described in words instead of "
+                           "audio — ignored when a morph-target file is "
+                           "set"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.3, "nullable": False,
+                   "min": 0.5, "max": 2.0, "step": 0.05},
+                  {"key": "top_k", "type": "int", "label": "Top-K",
+                   "default": 40, "nullable": False, "min": 10, "max": 400},
+                  {"key": "guidance_scale", "type": "float",
+                   "label": "Style strength", "default": 3.0,
+                   "nullable": False, "min": 0.5, "max": 10.0, "step": 0.5,
+                   "help": "How hard the stream is held to the style "
+                           "embedding. Higher sticks to the prompt's "
+                           "character; lower drifts more freely"},
+              ],
+          },
+          12, "medium",
+          {"name": "Apache-2.0 (code) / CC BY 4.0 (weights)",
+           "commercial_use": True, "requires_hf_token": False,
+           "url": "https://github.com/magenta/magenta-realtime"},
+          variant_of="magenta-rt2-small", format_="base",
+          notes="Speed on Apple Silicon is unmeasured — the est is a "
+                "conservative guess, the small model the safe default. "
+                "Weights fetch from Google's hosting on first run "
+                "(mrt models download mrt2_base).",
+          settings={"size": "mrt2_base"},
+          size_hint_bytes=3_700_000_000),
+    # ---- The song-generation spikes (CPU-honest estimates) ---------------
+    entry("songgen-mixed-pro", "songgen",
+          ["LiuZH-19/SongGen_mixed_pro",
+           {"repo_id": "ZhenYe234/xcodec", "gated": False,
+            "allow_patterns": ["xcodec_hubert_general_audio_v2.pth"]}],
+          "SongGen (text + lyrics → song)",
+          "Single-stage autoregressive song generation (ICML 2025): text "
+          "and lyrics in, a sung mixed track out — with optional "
+          "three-second reference-voice conditioning from a recording you "
+          "supply. English-centric; runs on the CPU at roughly realtime "
+          "token rate.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 5, "max_s": 120, "default_s": 20},
+              "sample_rate": 16000, "outputs_per_job_max": 2,
+              "est_seconds_per_audio_second": 5.0,
+              "lyrics_hint": ("Plain lyric lines; keep them short and "
+                              "singable. English works best."),
+              "params": [
+                  {"key": "ref_voice", "type": "audio",
+                   "label": "Reference voice", "default": None,
+                   "nullable": True},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.0, "nullable": False,
+                   "min": 0.3, "max": 1.5, "step": 0.05},
+                  {"key": "top_k", "type": "int", "label": "Top-K",
+                   "default": 250, "nullable": False, "min": 10, "max": 500},
+                  {"key": "top_p", "type": "float", "label": "Top-P",
+                   "default": 1.0, "nullable": False, "min": 0.1, "max": 1.0,
+                   "step": 0.05},
+                  seed_param(),
+              ],
+          },
+          16, "slow",
+          {"name": "Apache-2.0 (code); research checkpoint",
+           "commercial_use": False, "requires_hf_token": False,
+           "url": "https://github.com/LiuZH-19/SongGen"},
+          notes="The mixed-mode checkpoint (one combined track). A "
+                "dual-track variant (separate vocal + accompaniment) exists "
+                "upstream and is a natural follow-up. MPS untried — CPU "
+                "for now."),
+    entry("diffrhythm2", "diffrhythm2",
+          ["ASLP-lab/DiffRhythm2"],
+          "DiffRhythm2 (full songs)",
+          "Full-song lyrics-to-song via block-cache flow matching — "
+          "structured songs up to 3½ minutes, style set by a text prompt "
+          "or a reference clip, lyrics as timestamped LRC lines. Slow on "
+          "CPU; the estimate is honest.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 10, "max_s": 210, "default_s": 60},
+              "sample_rate": 44100, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 11.0,
+              "lyrics_hint": ("LRC format: one line per lyric, each "
+                              "starting with a [mm:ss.xx] timestamp. "
+                              "Untimed plain lines work, less precisely."),
+              "params": [
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Style reference", "default": None,
+                   "nullable": True,
+                   "help": "A clip whose sound the song copies — used "
+                           "instead of the text prompt when set"},
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 8, "nullable": False, "min": 4, "max": 32,
+                   "help": "Flow-matching passes. 8 is the proven fast "
+                           "setting; upstream's default is 16"},
+                  {"key": "guidance_scale", "type": "float",
+                   "label": "Guidance", "default": 2.0, "nullable": False,
+                   "min": 1.0, "max": 6.0, "step": 0.5},
+                  {"key": "fake_stereo", "type": "bool",
+                   "label": "Widen to stereo", "default": True,
+                   "nullable": False,
+                   "help": "The model renders mono; on, the file is "
+                           "widened to a centred stereo pair (upstream's "
+                           "default). Off keeps the honest mono at half "
+                           "the size"},
+              ],
+          },
+          16, "slow", APACHE,
+          notes="Needs espeak-ng (`brew install espeak-ng`) for the lyrics "
+                "front-end — the adapter says so if it is missing. Chinese "
+                "and English lyrics are strongest; Japanese supported."),
+    entry("inspiremusic-15b-long", "inspiremusic",
+          ["rtikw/InspireMusic-1.5B-Long"],
+          "InspireMusic 1.5B Long",
+          "Alibaba's long-form model: 3+ minutes of coherent instrumental "
+          "structure, and true CONTINUATION of existing audio. Very slow "
+          "on CPU — roughly half an hour per minute of audio — until an "
+          "MPS port lands; queue it and walk away.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 10, "max_s": 180, "default_s": 30},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 29.0,
+              "params": [
+                  {"key": "extend_audio", "type": "audio",
+                   "label": "Continue source", "default": None,
+                   "nullable": True,
+                   "help": "Audio to continue — the model picks up where "
+                           "the clip ends and keeps going"},
+                  {"key": "chorus", "type": "enum", "label": "Section",
+                   "default": "verse", "nullable": False,
+                   "choices": [{"value": "intro", "label": "Intro"},
+                               {"value": "verse", "label": "Verse"},
+                               {"value": "chorus", "label": "Chorus"},
+                               {"value": "outro", "label": "Outro"},
+                               {"value": "random", "label": "Model's choice"}],
+                   "help": "Which part of a song the model believes it is "
+                           "writing — an intro builds, a chorus peaks, an "
+                           "outro winds down"},
+                  {"key": "time_start", "type": "float",
+                   "label": "Timeline start (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 300.0, "step": 5.0,
+                   "help": "Where on the song's imagined timeline this "
+                           "piece sits — starting at 60 writes music that "
+                           "believes a minute came before it"},
+                  {"key": "time_end", "type": "float",
+                   "label": "Timeline end (s)", "default": 30.0,
+                   "nullable": False, "min": 5.0, "max": 300.0, "step": 5.0,
+                   "help": "The imagined end point on that timeline — "
+                           "paired with the start, it frames the section's "
+                           "place in the song"},
+              ],
+          },
+          16, "slow", APACHE,
+          notes="Fast mode (no flow-matching refinement) — the proven "
+                "configuration. Upstream is effectively abandoned; the "
+                "code rides a pinned snapshot. Weights are an unmodified "
+                "mirror of Alibaba's ModelScope original (Apache-2.0; the "
+                "official HF repos were delisted). A device-unification "
+                "MPS port is the known path to usable speed."),
+    entry("songbloom-150s-dpo", "songbloom",
+          # Patterns keep the sibling non-DPO checkpoint (7.8 GB) out of the
+          # download; the yaml resolves the rest of these by name.
+          [{"repo_id": "rtikw/SongBloom", "gated": False,
+            "allow_patterns": ["songbloom_full_150s_dpo.*",
+                               "autoencoder_music_dsp1920.ckpt",
+                               "stable_audio_1920_vae.json",
+                               "vocab_g2p.yaml",
+                               "configuration.json"]}],
+          "SongBloom (lyrics + style clip)",
+          "A full song from structured lyrics and ten seconds of any "
+          "reference audio — coherent vocals and band via interleaved "
+          "sketching + diffusion, DPO-tuned checkpoint. Very slow on CPU "
+          "(about 22× the song's length); queue it and walk away.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 10, "max_s": 150, "default_s": 60},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 22.0,
+              "lyrics_hint": ("SongBloom's structure tokens: sections like "
+                              "[intro] [verse] [chorus] [inst] [outro], "
+                              "lyric lines separated by '.', sections by "
+                              "' , '. Repeat a tag to lengthen its "
+                              "section."),
+              "params": [
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Style reference (10 s)", "default": None,
+                   "nullable": False,
+                   "help": "Ten seconds of any audio whose sound the song "
+                           "should live in — genre, production, voice "
+                           "colour all follow it"},
+                  seed_param(),
+              ],
+          },
+          32, "slow", APACHE,
+          notes="Upstream deleted their repos; the code rides a pinned "
+                "fork snapshot and the weights are an unmodified mirror "
+                "of the last surviving host, ModelScope (Apache-2.0 — as "
+                "much archival as practical). ~24 GB peak memory. Listen "
+                "against YuE before reaching for it — it earns its place "
+                "on style-clip fidelity."),
+    entry("songbloom-150s", "songbloom",
+          # Same mirror, the pre-DPO checkpoint set instead.
+          [{"repo_id": "rtikw/SongBloom", "gated": False,
+            "allow_patterns": ["songbloom_full_150s.pt",
+                               "songbloom_full_150s.yaml",
+                               "autoencoder_music_dsp1920.ckpt",
+                               "stable_audio_1920_vae.json",
+                               "vocab_g2p.yaml",
+                               "configuration.json"]}],
+          "SongBloom (pre-DPO)",
+          "The same model before its preference tuning: rawer and less "
+          "polished than the DPO checkpoint, and occasionally more "
+          "varied for exactly that reason. Same inputs, same speed.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 10, "max_s": 150, "default_s": 60},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 22.0,
+              "lyrics_hint": ("SongBloom's structure tokens: sections like "
+                              "[intro] [verse] [chorus] [inst] [outro], "
+                              "lyric lines separated by '.', sections by "
+                              "' , '. Repeat a tag to lengthen its "
+                              "section."),
+              "params": [
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Style reference (10 s)", "default": None,
+                   "nullable": False,
+                   "help": "Ten seconds of any audio whose sound the song "
+                           "should live in — genre, production, voice "
+                           "colour all follow it"},
+                  seed_param(),
+              ],
+          },
+          32, "slow", APACHE,
+          variant_of="songbloom-150s-dpo", format_="pre-DPO",
+          notes="The DPO checkpoint is the better default; this one is "
+                "for A/B curiosity. Shares the autoencoder files with it, "
+                "so installing both costs only the second 7.8 GB .pt.",
+          settings={"variant": "songbloom_full_150s"}),
+    # ---- VampNet (masked-token variation) --------------------------------
+    entry("vampnet-vamp", "vampnet",
+          [{"repo_id": "hugggof/vampnet", "gated": False,
+            "allow_patterns": ["coarse.pth", "c2f.pth", "codec.pth",
+                               "wavebeat.pth"]}],
+          "VampNet (loop variations)",
+          "Feed it a loop and it plays the idea back differently — masked "
+          "tokens are re-imagined while the rest stays yours. The knobs set "
+          "how much survives: from a light shuffle to a re-write that only "
+          "keeps the groove. Nothing else here does this.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 2, "max_s": 20, "default_s": 10},
+              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 3.0,
+              "params": [
+                  {"key": "src_audio", "type": "audio",
+                   "label": "Loop to vary", "default": None,
+                   "nullable": False,
+                   "help": "The material the variations are made of — a "
+                           "bar-or-few loop works best"},
+                  {"key": "periodic_prompt", "type": "int",
+                   "label": "Keep every Nth token", "default": 7,
+                   "nullable": False, "min": 1, "max": 30},
+                  {"key": "upper_codebook_mask", "type": "int",
+                   "label": "Pinned codebooks", "default": 3,
+                   "nullable": False, "min": 0, "max": 14},
+                  {"key": "beat_mask", "type": "bool",
+                   "label": "Protect the onsets", "default": False,
+                   "nullable": False,
+                   "help": "Keep the tokens around detected note onsets so "
+                           "the rhythmic skeleton survives the vamp intact"},
+                  {"key": "prefix_s", "type": "float",
+                   "label": "Keep the start (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 10.0, "step": 0.5,
+                   "help": "Leave this many opening seconds untouched and "
+                           "vamp only what follows — set both ends to "
+                           "in-fill the middle"},
+                  {"key": "suffix_s", "type": "float",
+                   "label": "Keep the end (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 10.0, "step": 0.5,
+                   "help": "Leave this many closing seconds untouched — "
+                           "with a kept start too, the model writes only "
+                           "the gap between them"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.0, "nullable": False,
+                   "min": 0.5, "max": 2.0, "step": 0.05},
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 8, "nullable": False, "min": 2, "max": 36,
+                   "help": "Sampling passes per stage. 8 coarse (and half "
+                           "that to refine) is the proven fast setting"},
+                  seed_param(),
+              ],
+          },
+          8, "medium", CC_NC_SA,
+          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). Runs "
+                "on CPU — a 6 s vamp takes ~18 s. The prompt box is unused: "
+                "the audio is the prompt.",
+          settings={}),
+] + [
+    # VampNet finetunes: full coarse/c2f checkpoint pairs under loras/ in
+    # the same repo, swapped in whole (they are not adapter deltas). The
+    # codec and beat tracker are shared with the base entry, so installing
+    # a second voice costs only the pair (~1.4 GB).
+    entry(f"vampnet-{name}", "vampnet",
+          [{"repo_id": "hugggof/vampnet", "gated": False,
+            "allow_patterns": [f"loras/{name}/coarse.pth",
+                               f"loras/{name}/c2f.pth",
+                               "codec.pth", "wavebeat.pth"]}],
+          display,
+          desc,
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 2, "max_s": 20, "default_s": 10},
+              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 3.0,
+              "params": [
+                  {"key": "src_audio", "type": "audio",
+                   "label": "Loop to vary", "default": None,
+                   "nullable": False,
+                   "help": "The material the variations are made of — a "
+                           "bar-or-few loop works best"},
+                  {"key": "periodic_prompt", "type": "int",
+                   "label": "Keep every Nth token", "default": 7,
+                   "nullable": False, "min": 1, "max": 30},
+                  {"key": "upper_codebook_mask", "type": "int",
+                   "label": "Pinned codebooks", "default": 3,
+                   "nullable": False, "min": 0, "max": 14},
+                  {"key": "beat_mask", "type": "bool",
+                   "label": "Protect the onsets", "default": False,
+                   "nullable": False,
+                   "help": "Keep the tokens around detected note onsets so "
+                           "the rhythmic skeleton survives the vamp intact"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.0, "nullable": False,
+                   "min": 0.5, "max": 2.0, "step": 0.05},
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 8, "nullable": False, "min": 2, "max": 36,
+                   "help": "Sampling passes per stage. 8 coarse (and half "
+                           "that to refine) is the proven fast setting"},
+                  seed_param(),
+              ],
+          },
+          8, "medium", CC_NC_SA,
+          variant_of="vampnet-vamp", format_=f"finetune · {name}",
+          notes="CC BY-NC-SA weights (Hugo Flores García / Descript). Runs "
+                "on CPU. The prompt box is unused: the audio is the prompt.",
+          settings={"lora": name})
+    for name, display, desc in [
+        ("choir", "VampNet (choir)",
+         "The vamp re-voiced by a model finetuned on choral singing — "
+         "whatever loop goes in comes back sung by a phantom choir."),
+        ("n64", "VampNet (N64)",
+         "Finetuned on Nintendo 64-era game scores: variations arrive "
+         "as chiptune-adjacent, cartridge-soundtrack material."),
+        ("machines", "VampNet (machines)",
+         "Finetuned on machine and industrial recordings — loops come "
+         "back as clanking, whirring mechanical texture."),
+        ("orchestral", "VampNet (orchestral)",
+         "Finetuned on orchestral recordings: the vamp re-plays your "
+         "loop with sections of a phantom orchestra."),
+    ]
+] + [
+    # ---- MelodyFlow (vendored Space tree) --------------------------------
+    entry("melodyflow-t24", "melodyflow",
+          ["facebook/melodyflow-t24-30secs"],
+          "MelodyFlow",
+          "Meta's flow-matching model with a party trick nothing else here "
+          "has: text-guided EDITING. Drop in a clip, describe the change "
+          "('make it orchestral', 'swap the drums for congas') and it "
+          "rewrites the audio toward the words. Also a fast text-to-music "
+          "model in its own right — faster than realtime on the CPU.",
+          {
+              "supports_lyrics": False, "instrumental_only": True,
+              "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
+              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "est_seconds_per_audio_second": 0.7,
+              "params": [
+                  {"key": "src_audio", "type": "audio",
+                   "label": "Audio to edit", "default": None, "nullable": True,
+                   "help": "A clip to rewrite toward the prompt. Left empty "
+                           "the model generates from the prompt alone"},
+                  {"key": "edit_strength", "type": "float",
+                   "label": "Edit strength", "default": 0.8,
+                   "nullable": False, "min": 0.1, "max": 1.0, "step": 0.05},
+                  {"key": "edit_source_caption", "type": "string",
+                   "label": "Source description", "default": None,
+                   "nullable": True,
+                   "placeholder": "e.g. sparse piano ballad",
+                   "help": "What the source IS — naming it helps the "
+                           "inversion hold onto the material while the "
+                           "prompt pulls it elsewhere. Only used when "
+                           "editing"},
+                  {"key": "steps", "type": "int", "label": "Steps",
+                   "default": 10, "nullable": False, "min": 4, "max": 125,
+                   "help": "Solver steps. 8–10 is already musical for "
+                           "generation; edits use at least 25"},
+                  {"key": "solver", "type": "enum", "label": "Solver",
+                   "default": "euler", "nullable": False,
+                   "choices": [{"value": "euler", "label": "Euler (fast)"},
+                               {"value": "midpoint", "label": "Midpoint"}]},
+              ],
+          },
+          8, "fast", CC_NC,
+          notes="Code exists only in the Hugging Face Space's audiocraft "
+                "tree (pinned as this family's runtime); weights are "
+                "CC-BY-NC. 48 kHz stereo, up to 30 s per pass.",
+          settings={"device": "cpu"}),
     # ---- diffusers audio pipelines ---------------------------------------
     entry("audioldm2-music", "diffusers", ["cvssp/audioldm2-music"],
           "AudioLDM 2 Music",
@@ -1500,6 +2407,258 @@ NEW_ENTRIES = [
         notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33) and viperx.",
         settings={"engine": "roformer",
                   "checkpoint": "model_bs_roformer_ep_317_sdr_12.9755.ckpt"}),
+    task_entry(
+        "separation-hdemucs-mmi", "separation", [],
+        "Demucs MMI 4-stem",
+        "Hybrid Demucs v3 retrained on extra data (MMI) — a different "
+        "flavour of the classic four stems, sometimes cleaner on dense "
+        "mixes. Weights (~160 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into stems"),
+            {"key": "shifts", "type": "int", "label": "Quality shifts",
+             "default": 1, "nullable": False, "min": 1, "max": 5},
+        ], est_realtime_factor=0.2),
+        8, "fast", MIT, size_hint_bytes=160_000_000,
+        variant_of="separation-htdemucs", format_="v3 hybrid · MMI",
+        settings={"engine": "demucs", "model": "hdemucs_mmi"}),
+    task_entry(
+        "separation-mdx-extra", "separation", [],
+        "Demucs MDX Extra",
+        "The bag that won MDX 2021 track B — four v3 models trained with "
+        "extra data, run in sequence. Slower than Demucs 4-stem; a second "
+        "opinion when a stem comes out muddy. Weights fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into stems"),
+            {"key": "shifts", "type": "int", "label": "Quality shifts",
+             "default": 1, "nullable": False, "min": 1, "max": 5},
+        ], est_realtime_factor=0.6),
+        8, "medium", MIT, size_hint_bytes=1_300_000_000,
+        variant_of="separation-htdemucs", format_="v3 bag · mdx_extra",
+        settings={"engine": "demucs", "model": "mdx_extra"}),
+    # ---- Split & Recombine: cleanup (UVR community models) ---------------
+    # The same audio-separator path the RoFormer entries ride; what changes is
+    # the checkpoint and what the two output stems mean. De-noise/de-echo/
+    # de-reverb are repair tools rather than splitters — the "stem" the user
+    # wants is the cleaned one.
+    task_entry(
+        "cleanup-uvr-denoise", "separation", [],
+        "UVR De-Noise",
+        "Strip broadband noise from a recording — hiss, hum, room rumble. "
+        "Returns the cleaned audio and the removed noise as separate files. "
+        "Weights (~127 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The recording to clean up"),
+        ], est_realtime_factor=1.3),
+        8, "medium",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/Anjok07/ultimatevocalremovergui"},
+        size_hint_bytes=127_000_000,
+        notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33) / FoxJoy.",
+        settings={"engine": "roformer", "checkpoint": "UVR-DeNoise.pth"}),
+    task_entry(
+        "cleanup-uvr-deecho-dereverb", "separation", [],
+        "UVR De-Echo + De-Reverb",
+        "Pull the room out of a recording: removes echo and reverb, "
+        "returning the dry signal and the removed ambience separately. The "
+        "standard fix before re-mixing a vocal recorded in a live room. "
+        "Weights (~224 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The recording to dry out"),
+        ], est_realtime_factor=10.0),
+        8, "slow",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/Anjok07/ultimatevocalremovergui"},
+        size_hint_bytes=224_000_000,
+        variant_of="cleanup-uvr-denoise", format_="echo + reverb",
+        notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33) / FoxJoy.",
+        settings={"engine": "roformer",
+                  "checkpoint": "UVR-DeEcho-DeReverb.pth"}),
+    task_entry(
+        "separation-uvr-kimvocal2", "separation", [],
+        "Kim Vocal 2 (MDX-Net)",
+        "One of the two community-consensus vocal models: MDX-Net trained "
+        "by Kim, known for clean vocal edges. Vocals + instrumental. "
+        "Weights (~67 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into "
+                               "vocals + instrumental"),
+        ], est_realtime_factor=4.5),
+        8, "slow",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/Anjok07/ultimatevocalremovergui"},
+        size_hint_bytes=67_000_000,
+        variant_of="separation-melband-vocals", format_="MDX · Kim Vocal 2",
+        notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33) and Kim.",
+        settings={"engine": "roformer", "checkpoint": "Kim_Vocal_2.onnx"}),
+    task_entry(
+        "separation-uvr-vocft", "separation", [],
+        "Voc FT (MDX-Net)",
+        "The other community-consensus vocal model: UVR's fine-tuned "
+        "MDX-Net. Vocals + instrumental, noticeably faster than Kim Vocal 2. "
+        "Weights (~67 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into "
+                               "vocals + instrumental"),
+        ], est_realtime_factor=1.4),
+        8, "medium",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/Anjok07/ultimatevocalremovergui"},
+        size_hint_bytes=67_000_000,
+        variant_of="separation-melband-vocals", format_="MDX · Voc FT",
+        notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33).",
+        settings={"engine": "roformer",
+                  "checkpoint": "UVR-MDX-NET-Voc_FT.onnx"}),
+    task_entry(
+        "separation-uvr-karaoke", "separation", [],
+        "UVR Karaoke 2 (MDX-Net)",
+        "The karaoke split: lead vocal out, backing vocals kept with the "
+        "band — different from a full vocal split, which takes the choir "
+        "too. Weights (~53 MB) fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to make a karaoke mix from"),
+        ], est_realtime_factor=1.0),
+        8, "medium",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/Anjok07/ultimatevocalremovergui"},
+        size_hint_bytes=53_000_000,
+        notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33).",
+        settings={"engine": "roformer",
+                  "checkpoint": "UVR_MDXNET_KARA_2.onnx"}),
+    # ---- Split & Recombine: research separation (msst family) ------------
+    task_entry(
+        "separation-bsrnn", "msst", ["rtikw/bsrnn-large"],
+        "BSRNN 4-stem (Inria)",
+        "The commercially-clean separator: Inria's Band-Split RNN with "
+        "CC-BY-4.0 weights — the only separation model here whose license "
+        "asks nothing but credit. Four stems, one model per stem.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into stems"),
+            {"key": "targets", "type": "enum", "label": "Stems to extract",
+             "default": "all", "nullable": False,
+             "choices": [{"value": "all", "label": "All four"},
+                         {"value": "vocals", "label": "Vocals only"},
+                         {"value": "drums", "label": "Drums only"},
+                         {"value": "bass", "label": "Bass only"},
+                         {"value": "other", "label": "Other only"}],
+             "help": "Each BSRNN stem is its own checkpoint and its own "
+                     "pass — one stem costs a quarter of a full split"},
+        ], est_realtime_factor=2.0),
+        8, "slow",
+        {"name": "CC BY 4.0 (Inria)", "commercial_use": True,
+         "requires_hf_token": False,
+         "url": "https://zenodo.org/records/17516442"},
+        notes="Below the best community models on raw SDR, but the license "
+              "may matter more than the last decibel. Weights are an "
+              "unmodified per-file mirror of Inria's Zenodo record "
+              "(CC BY 4.0, credit Magron et al.).",
+        settings={"engine": "bsrnn"}),
+    task_entry(
+        "separation-scnet", "msst", [],
+        "SCNet 4-stem (research)",
+        "The research frontier's efficient 4-stem model, run through the "
+        "MSST training repo's own inference. Trained on MUSDB18 "
+        "(research-only data) — for listening and experiments, not "
+        "commercial release. Weights fetch from GitHub on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into stems"),
+        ], est_realtime_factor=2.5),
+        8, "slow",
+        {"name": "MIT (code) / MUSDB18-trained weights",
+         "commercial_use": False, "requires_hf_token": False,
+         "url": "https://github.com/ZFTurbo/"
+                "Music-Source-Separation-Training"},
+        size_hint_bytes=40_000_000,
+        variant_of="separation-bsrnn", format_="SCNet · musdb18",
+        settings={"engine": "msst", "model_type": "scnet",
+                  "config_url": "https://github.com/ZFTurbo/"
+                                "Music-Source-Separation-Training/releases/"
+                                "download/v.1.0.6/config_musdb18_scnet.yaml",
+                  "ckpt_url": "https://github.com/ZFTurbo/"
+                              "Music-Source-Separation-Training/releases/"
+                              "download/v.1.0.6/"
+                              "scnet_checkpoint_musdb18.ckpt"}),
+    task_entry(
+        "separation-mdx23c-vocals", "msst", [],
+        "MDX23C vocals (research)",
+        "ZFTurbo's MDX23C vocal separator from the MSST zoo — a different "
+        "architecture from the RoFormers, worth an A/B when a vocal split "
+        "sounds off. Weights fetch from GitHub on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into "
+                               "vocals + instrumental"),
+        ], est_realtime_factor=7.0),
+        8, "slow",
+        {"name": "MIT (code); checkpoint license unstated",
+         "commercial_use": False, "requires_hf_token": False,
+         "url": "https://github.com/ZFTurbo/"
+                "Music-Source-Separation-Training"},
+        size_hint_bytes=170_000_000,
+        variant_of="separation-bsrnn", format_="MDX23C · vocals",
+        settings={"engine": "msst", "model_type": "mdx23c",
+                  "config_url": "https://github.com/ZFTurbo/"
+                                "Music-Source-Separation-Training/releases/"
+                                "download/v1.0.0/config_vocals_mdx23c.yaml",
+                  "ckpt_url": "https://github.com/ZFTurbo/"
+                              "Music-Source-Separation-Training/releases/"
+                              "download/v1.0.0/"
+                              "model_vocals_mdx23c_sdr_10.17.ckpt"}),
+    task_entry(
+        "separation-scnet-xl", "msst", [],
+        "SCNet XL 4-stem (research)",
+        "The strongest 4-stem checkpoint in the MSST zoo (SDR 10.08 on "
+        "MUSDB test — a full decibel over the base SCNet). Same "
+        "research-only training data caveat; noticeably slower. Weights "
+        "fetch from GitHub on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to split into stems"),
+        ], est_realtime_factor=5.0),
+        12, "slow",
+        {"name": "MIT (code) / MUSDB18-trained weights",
+         "commercial_use": False, "requires_hf_token": False,
+         "url": "https://github.com/ZFTurbo/"
+                "Music-Source-Separation-Training"},
+        size_hint_bytes=800_000_000,
+        variant_of="separation-scnet", format_="SCNet XL · IHF",
+        settings={"engine": "msst", "model_type": "scnet",
+                  "config_url": "https://github.com/ZFTurbo/"
+                                "Music-Source-Separation-Training/releases/"
+                                "download/v1.0.15/"
+                                "config_musdb18_scnet_xl_more_wide_v5.yaml",
+                  "ckpt_url": "https://github.com/ZFTurbo/"
+                              "Music-Source-Separation-Training/releases/"
+                              "download/v1.0.15/"
+                              "model_scnet_ep_36_sdr_10.0891.ckpt"}),
+    task_entry(
+        "separation-drumsep", "msst", [],
+        "Drum-kit split (DrumSep)",
+        "Splits a DRUM track into its pieces — kick, snare, toms, hi-hat "
+        "and cymbals as separate parts. Feed it the drum stem from a "
+        "4-stem split; nothing else in the catalog does this.",
+        task_caps(["separate"], [
+            source_audio_param("A drum stem — run a 4-stem split first "
+                               "and feed the drums in"),
+        ], est_realtime_factor=7.0),
+        8, "slow",
+        {"name": "MIT (code); community checkpoint (jarredou)",
+         "commercial_use": False, "requires_hf_token": False,
+         "url": "https://github.com/ZFTurbo/"
+                "Music-Source-Separation-Training"},
+        size_hint_bytes=180_000_000,
+        variant_of="separation-bsrnn", format_="MDX23C · drum kit",
+        notes="Community-trained checkpoint (kick SDR 16.7 on the DrumSep "
+              "test set). Expects drums in, not a full mix.",
+        settings={"engine": "msst", "model_type": "mdx23c",
+                  "config_url": "https://github.com/jarredou/models/"
+                                "releases/download/DrumSep/"
+                                "config_mdx23c.yaml",
+                  "ckpt_url": "https://github.com/jarredou/models/"
+                              "releases/download/DrumSep/"
+                              "drumsep_5stems_mdx23c_jarredou.ckpt"}),
     # ---- Split & Recombine: analysis -------------------------------------
     task_entry(
         "analysis-basic", "analysis",
@@ -1540,6 +2699,238 @@ NEW_ENTRIES = [
         ], est_realtime_factor=0.15),
         6, "fast", APACHE, variant_of="analysis-basic", format_="+ CLAP",
         settings={"embed": "clap"}),
+    task_entry(
+        "analysis-chords-btc", "analysis",
+        [{"repo_id": ASSETS_REPO, "gated": False,
+          "allow_patterns": ["analysis/btc_model.pt",
+                             "analysis/btc_model_large_voca.pt"]}],
+        "Chord recognition (BTC)",
+        "Reads the chord track: a transformer trained for chord "
+        "recognition writes timed segments over 170 chord types — the "
+        "harmony layer the beat grid and key estimate don't give you. "
+        "Run it as a transcription and the same chords come back as a "
+        "playable MIDI part instead.",
+        task_caps(["analyze", "transcribe"], [
+            source_audio_param("The song to read chords from"),
+        ], est_realtime_factor=0.8),
+        4, "fast", MIT,
+        notes="BTC (Park & Choi, ISMIR 2019), vendored and modernised in "
+              "the analysis adapter. Pairs with the beat grid for a song "
+              "map; N = no chord, X = unclear. The transcribe route "
+              "renders root-position triads/tetrads — a chord bed to "
+              "stack under the Workbench, not a performance.",
+        settings={"mode": "chords", "voca": "large"}),
+    task_entry(
+        "analysis-squim", "analysis", [],
+        "Quality scores (SQUIM)",
+        "Reference-free audio-quality estimates (STOI, PESQ, SI-SDR "
+        "proxies) — rank separation takes, flag artifacted renders, A/B "
+        "seeds. Speech-trained, so treat the numbers as relative, not as "
+        "grades. Weights (~30 MB) fetch on first run.",
+        task_caps(["analyze"], [
+            source_audio_param("The audio to score"),
+        ], est_realtime_factor=0.3),
+        4, "fast",
+        {"name": "BSD-2-Clause (torchaudio)", "commercial_use": True,
+         "requires_hf_token": False,
+         "url": "https://pytorch.org/audio/stable/pipelines.html"},
+        size_hint_bytes=30_000_000,
+        notes="The sleeper use is scoring the app's own outputs: compare "
+              "two takes of the same material and keep the cleaner one.",
+        settings={"mode": "squim"}),
+    # ---- Timbre & FX: RAVE (task `timbre`) --------------------------------
+    #
+    # One TorchScript file per model, fetched from IRCAM's own API at first
+    # use (CC-BY-NC — download from origin, never re-host). The model IS the
+    # effect: whatever goes in comes out played by the model's instrument.
+] + [
+    task_entry(
+        f"timbre-rave-{name}", "rave", [],
+        display,
+        desc,
+        task_caps(["timbre"], [
+            source_audio_param("The audio to re-voice — rhythmic material "
+                               "keeps its groove; the timbre changes"),
+            {"key": "source_audio_b", "type": "audio",
+             "label": "Second source (morph)", "default": None,
+             "nullable": True,
+             "help": "Add a second recording and the two are blended in "
+                     "the model's latent space — a morph in its own "
+                     "instrument, not a crossfade"},
+            {"key": "blend", "type": "float", "label": "Blend",
+             "default": 0.5, "nullable": False, "min": 0.0, "max": 1.0,
+             "step": 0.05,
+             "help": "Only with a second source: 0 is all the first "
+                     "recording, 1 all the second"},
+        ], est_realtime_factor=0.15),
+        4, "fast",
+        {"name": "CC BY-NC 4.0 (IRCAM)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://acids-ircam.github.io/rave_models_download"},
+        size_hint_bytes=80_000_000,
+        settings={"rave_model": name},
+        notes="Genuinely realtime on CPU. Model fetches from IRCAM's API on "
+              "first run.",
+        **({"variant_of": "timbre-rave-percussion", "format_": name}
+           if name != "percussion" else {"featured": False}))
+    for name, display, desc in [
+        ("percussion", "RAVE Percussion (timbre)",
+         "Replays any audio as percussion — hum a rhythm and it comes back "
+         "as drums. The proven, instant introduction to neural timbre "
+         "transfer."),
+        ("vintage", "RAVE Vintage (timbre)",
+         "The vintage-music RAVE: audio comes back with old-record "
+         "instrumentation and colour."),
+        ("sol_ordinario", "RAVE Strings & Winds (timbre)",
+         "Trained on orchestral instrument recordings (SOL): melodies come "
+         "back bowed and blown."),
+        ("VCTK", "RAVE Voice (timbre)",
+         "Trained on speech (VCTK): anything you feed it comes back as an "
+         "eerie choir of talking voices."),
+        # The 2026-08 roster extension — each name verified downloadable
+        # from IRCAM's API before shipping (the API serves full files).
+        ("nasa", "RAVE NASA (timbre)",
+         "Trained on NASA mission recordings: radio chatter, telemetry "
+         "and launch rumble — everything comes back as space-program "
+         "atmosphere."),
+        ("musicnet", "RAVE Chamber Music (timbre)",
+         "Trained on MusicNet's classical chamber recordings: audio "
+         "returns as an ensemble of strings, winds and piano."),
+        ("sol_full", "RAVE Orchestra Full (timbre)",
+         "The full SOL orchestral set, extended techniques included — "
+         "wilder and woodier than the ordinario model."),
+        ("isis", "RAVE Singing (timbre)",
+         "Trained on solo singing (ISiS): melodies come back as a wordless "
+         "sung voice."),
+    ]
+] + [
+    # ---- Timbre & FX: NAM re-amping (task `reamp`) ------------------------
+    task_entry(
+        "reamp-nam", "nam", [],
+        "Re-amp (Neural Amp Modeler)",
+        "Run any track through a captured amp, pedal or full rig. The "
+        "capture is a .nam file you pick per job — tone3000.com hosts "
+        "hundreds of thousands, free — and the render is 26× faster than "
+        "realtime. The de-facto standard for amp capture.",
+        task_caps(["reamp"], [
+            source_audio_param("The track to re-amp — a DI guitar or a "
+                               "separated stem responds best"),
+            {"key": "nam_file", "type": "audio", "label": "Amp capture (.nam)",
+             "default": None, "nullable": False,
+             "help": "A Neural Amp Modeler capture file. Download one from "
+                     "tone3000.com (or capture your own rig with NAM's "
+                     "trainer) and pick it here"},
+        ], est_realtime_factor=0.05),
+        4, "fast", MIT, size_hint_bytes=5_000_000,
+        notes="The NAM runtime is MIT; each capture carries its own terms "
+              "on the site it came from. Captures are tiny (KB–MB) and are "
+              "not stored by the app — they ride the job."),
+    # ---- Voice: seed-vc zero-shot conversion (task `convert-voice`) -------
+    task_entry(
+        "convert-voice-seedvc", "seedvc", [],
+        "Voice changer (seed-vc)",
+        "Re-sings a vocal in the timbre of a short reference recording YOU "
+        "supply — record ten seconds of yourself and any vocal becomes your "
+        "voice. Speaks and sings (singing mode follows the melody). "
+        "Zero-shot: no training, no stored voices.",
+        task_caps(["convert-voice"], [
+            source_audio_param("The vocal to convert — a separated vocal "
+                               "stem converts far more cleanly than a mix"),
+            {"key": "reference_audio", "type": "audio",
+             "label": "Target voice", "default": None, "nullable": False,
+             "help": "A short recording of the voice this should become — "
+                     "your own, or one you have permission to use. Ten "
+                     "clean seconds is plenty"},
+            {"key": "diffusion_steps", "type": "int", "label": "Steps",
+             "default": 10, "nullable": False, "min": 4, "max": 50,
+             "help": "Diffusion passes. 10 is the proven fast setting; more "
+                     "refines the timbre and takes proportionally longer"},
+            {"key": "sing_mode", "type": "bool", "label": "Singing mode",
+             "default": False, "nullable": False,
+             "help": "Track the melody's pitch (F0 conditioning) — turn on "
+                     "for sung material, leave off for speech"},
+            {"key": "pitch_shift_st", "type": "int",
+             "label": "Pitch shift (semitones)", "default": 0,
+             "nullable": False, "min": -12, "max": 12,
+             "help": "Transpose the output. 0 with singing mode on lets the "
+                     "model auto-fit the reference's range"},
+            {"key": "length_adjust", "type": "float",
+             "label": "Length stretch", "default": 1.0, "nullable": False,
+             "min": 0.5, "max": 2.0, "step": 0.05,
+             "help": "Stretch factor of the converted performance — below "
+                     "1 speeds the delivery up, above 1 slows it down"},
+            {"key": "cfg_rate", "type": "float",
+             "label": "Voice guidance", "default": 0.7, "nullable": False,
+             "min": 0.0, "max": 1.0, "step": 0.05,
+             "help": "How hard the conversion is pushed toward the "
+                     "reference voice — higher is a closer imitation, "
+                     "lower keeps more of the source delivery"},
+        ], est_realtime_factor=4.5),
+        8, "slow",
+        {"name": "GPL-3.0 (code); weights via Hugging Face",
+         "commercial_use": True, "requires_hf_token": False,
+         "url": "https://github.com/Plachtaa/seed-vc"},
+        size_hint_bytes=2_000_000_000,
+        notes="Runs on CPU (about 4–5× the clip length). The reference "
+              "voice is supplied per job and never stored — this app ships "
+              "no voice library, deliberately. Weights (~2 GB) auto-fetch "
+              "on the first conversion."),
+    # ---- Voice: YingMusic zero-shot singing (task `sing`) -----------------
+    task_entry(
+        "sing-yingmusic", "yingmusic",
+        [{"repo_id": "GiantAILab/YingMusic-Singer", "gated": False,
+          "allow_patterns": ["autoencoder_music_dsp1920.ckpt", "rmvpe.pt",
+                             "singer.v1.pt", "some.pt",
+                             "stable_audio_1920_vae.json"]}],
+        "Singer (YingMusic)",
+        "Types words, sings them: zero-shot singing voice synthesis. Give "
+        "it a melody (a sung or played line, or a MIDI file), the lyrics, "
+        "and a few seconds of the voice that should perform them — your "
+        "own recording works. Bilingual Chinese/English.",
+        task_caps(["sing"], [
+            source_audio_param("The melody to sing — a vocal or "
+                               "single-line instrumental recording the "
+                               "singer follows"),
+            {"key": "melody_midi", "type": "midi", "label": "Melody (MIDI)",
+             "default": None, "nullable": True,
+             "help": "A MIDI melody instead of the recording — wins when "
+                     "both are set"},
+            {"key": "reference_audio", "type": "audio",
+             "label": "Voice reference", "default": None, "nullable": False,
+             "help": "A short clean recording of the voice that should "
+                     "sing — yours, or one you have permission to use"},
+            {"key": "reference_text", "type": "string",
+             "label": "Reference words", "default": None, "nullable": True,
+             "placeholder": "the words spoken/sung in the reference clip",
+             "help": "What the reference recording actually says or sings "
+                     "— the model needs the text to read the voice"},
+            {"key": "lyrics_text", "type": "string", "label": "Lyrics",
+             "default": None, "nullable": True,
+             "placeholder": "the words to sing",
+             "help": "The words to perform to the melody"},
+            {"key": "nfe_steps", "type": "int", "label": "Steps",
+             "default": 8, "nullable": False, "min": 4, "max": 64,
+             "help": "Diffusion passes. 8 is the proven fast setting; 32 "
+                     "is upstream's quality default"},
+            {"key": "cfg_strength", "type": "float", "label": "Guidance",
+             "default": 4.0, "nullable": False, "min": 1.0, "max": 8.0,
+             "step": 0.5,
+             "help": "How hard the singer is held to the lyrics and "
+                     "melody. Higher is more literal and can strain; "
+                     "lower is looser and more natural"},
+            {"key": "pitch_shift_st", "type": "int",
+             "label": "Pitch shift (semitones)", "default": 0,
+             "nullable": False, "min": -12, "max": 12,
+             "help": "Transpose the melody into the reference voice's "
+                     "comfortable range"},
+        ], est_realtime_factor=3.0),
+        16, "slow", APACHE,
+        notes="The voice is supplied per job and never stored — no voice "
+              "library ships with this app, deliberately. Chinese-centric "
+              "training; English works, judge it by ear. The SDPA "
+              "attention substitute ignores their sliding window — "
+              "restoring it is the known quality follow-up.",
+        settings={}),
     # ---- Music to words: zero-shot tagging --------------------------------
     #
     # A base entry rather than a variant of analysis-basic, deliberately: it
@@ -1565,6 +2956,34 @@ NEW_ENTRIES = [
         settings={"embed": "clap", "tagger": "zeroshot"},
         notes="Zero-shot: the vocabulary is the model. Labels it has never "
               "been trained on still score, and niche genres score poorly."),
+    task_entry(
+        "tag-essentia-discogs", "essentia", [],
+        "Genre & mood tags (Essentia)",
+        "TRAINED tags rather than zero-shot: MTG's Discogs-EffNet embeds "
+        "the track once, then tiny heads score 400 Discogs genre styles, "
+        "a dozen mood-and-character axes (happy/sad/party/aggressive/"
+        "relaxed, acoustic/electronic, bright or dark timbre, tonal/atonal, "
+        "approachability, engagement), danceability and voice/instrumental. "
+        "Seconds per song — the embedding is cached, so re-tagging and "
+        "library sweeps cost almost nothing. Weights (~25 MB) fetch from "
+        "UPF on first run.",
+        task_caps(["tag"], [
+            source_audio_param("The audio to tag"),
+            {"key": "top_n", "type": "int", "label": "Genres to keep",
+             "default": 5, "nullable": False, "min": 1, "max": 15,
+             "help": "How many of the 400 genre styles to keep, best "
+                     "first; moods and danceability report on their own "
+                     "thresholds"},
+        ], est_realtime_factor=0.15),
+        4, "fast",
+        {"name": "CC BY-NC-SA 4.0 (MTG/UPF)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://essentia.upf.edu/models.html"},
+        size_hint_bytes=20_000_000,
+        notes="Non-commercial: MTG licenses the models CC BY-NC-SA and "
+              "offers commercial terms on request. The 400-style genre "
+              "vocabulary is Discogs's own taxonomy — expect precise "
+              "electronic-music subgenres in particular."),
     # ---- Music to words: the listeners (MLX) -----------------------------
     #
     # Whisper for the sung words, Qwen2-Audio for everything you would ask a
@@ -1666,9 +3085,12 @@ NEW_ENTRIES = [
          {"repo_id": "facebook/bart-base", "gated": False,
           # Config and tokenizer only — the checkpoint above overwrites every
           # weight, so none of BART's own are needed.
+          # Exactly the files this repo has — `registry.is_installed`
+          # requires every pattern to match something on disk, so naming a
+          # file that does not exist upstream makes the model permanently
+          # "not installed" *after* a successful download.
           "allow_patterns": ["config.json", "tokenizer.json",
-                             "tokenizer_config.json", "vocab.json",
-                             "merges.txt", "special_tokens_map.json"]}],
+                             "vocab.json", "merges.txt"]}],
         "LP-MusicCaps (describer)",
         "A music captioner: it listens in ten-second windows across the "
         "track and writes what it hears — instruments, mood, genre, feel. "
@@ -1685,6 +3107,54 @@ NEW_ENTRIES = [
         notes="Describes; it cannot answer questions — for that use an "
               "audio-language model. Non-commercial: the project's licence "
               "is CC BY-NC 4.0, despite the Hugging Face card saying MIT."),
+    task_entry(
+        "lyrics-acestep-transcriber", "qwenomni",
+        ["ACE-Step/acestep-transcriber"],
+        "ACE-Step transcriber (sung words + structure)",
+        "The annotation model behind ACE-Step 1.5's training data: a "
+        "Qwen2.5-Omni fine-tune that transcribes SUNG words — 50+ languages "
+        "— and marks the song's structure inline ([Verse], [Chorus], "
+        "[Spoken Word Intro]). Where Whisper guesses at singing, this was "
+        "trained on it.",
+        task_caps(["lyrics"], [
+            source_audio_param("The audio to transcribe — full mixes are "
+                               "fine; this model was trained on them"),
+            {"key": "max_tokens", "type": "int", "label": "Length limit",
+             "default": 1024, "nullable": False, "min": 32, "max": 4096,
+             "help": "How long the transcript may run before it is cut "
+                     "off — long songs need headroom"},
+        ], est_realtime_factor=1.0),
+        24, "medium", ACE_MIT,
+        notes="16 GB of weights; loading it unloads the resident music "
+              "model. No per-line timings — structure tags ride inline in "
+              "the text.",
+        settings={"role": "transcriber"}),
+    task_entry(
+        "caption-acestep-captioner", "qwenomni",
+        ["ACE-Step/acestep-captioner"],
+        "ACE-Step captioner (describer)",
+        "The other half of ACE-Step's annotation pair: listens to a track "
+        "and writes an unusually precise production-level description — "
+        "genre, groove, instrumentation, mix character. Also answers a "
+        "typed question about the audio.",
+        task_caps(["caption"], [
+            source_audio_param("The audio to describe"),
+            {"key": "question", "type": "string", "label": "Question",
+             "default": None, "nullable": True,
+             "placeholder": "What is driving the low end?",
+             "help": "Ask something specific about the audio. Left blank it "
+                     "writes its full trained description"},
+            {"key": "max_tokens", "type": "int", "label": "Length limit",
+             "default": 512, "nullable": False, "min": 32, "max": 4096,
+             "help": "How long the description may run before it is cut "
+                     "off"},
+        ], est_realtime_factor=0.8),
+        24, "medium", ACE_MIT,
+        variant_of="lyrics-acestep-transcriber", format_="captioner",
+        notes="16 GB of weights; loading it unloads the resident music "
+              "model. The most precise describer tested here — feeds "
+              "prompt-from-reference and library annotation.",
+        settings={"role": "captioner"}),
     # Experimental captioners, kept out of the catalog until each is proven
     # on this machine. Every one needs vendored inference code rather than a
     # plain transformers class, which is why LP-MusicCaps and Qwen2-Audio
@@ -1709,6 +3179,51 @@ NEW_ENTRIES = [
     # Deliberately excluded, not merely unbuilt:
     #   LLark (Spotify) — the paper is public, the weights never were.
     #   Gemini / GPT-4o audio — cloud only; this app runs on your machine.
+    task_entry(
+        "caption-moss-music", "mossmusic",
+        ["mlx-community/MOSS-Music-8B-Thinking-8bit"],
+        "MOSS-Music 8B (music brain)",
+        "The conversational music expert: an 8B audio-language model that "
+        "answers real musicology questions — key, tempo, chord movement, "
+        "arrangement, production choices — with visible reasoning behind "
+        "them. Also transcribes sung lyrics on request. MLX-native: loads "
+        "in a second.",
+        task_caps(["caption", "lyrics"], [
+            source_audio_param("The audio to discuss"),
+            {"key": "question", "type": "string", "label": "Question",
+             "default": None, "nullable": True,
+             "placeholder": "What is the chord progression in the chorus?",
+             "help": "Ask something specific. Left blank it writes a full "
+                     "analysis: genre, instrumentation, tempo, key, "
+                     "structure"},
+        ], est_realtime_factor=1.5),
+        16, "medium", APACHE,
+        variant_of="caption-qwen2audio", format_="MOSS 8B · MLX 8-bit",
+        notes="A Thinking model — most of its tokens are reasoning, "
+              "stripped from the answer. Lyric transcription quality vs "
+              "the Whisper/ACE transcribers is unmeasured — the picker "
+              "offers all of them. The MLX backend rides a pinned "
+              "community fork; the stock PyTorch path is unusable on Macs "
+              "(<0.3 tok/s) and is not shipped."),
+    task_entry(
+        "caption-moss-music-4bit", "mossmusic",
+        ["mlx-community/MOSS-Music-8B-Thinking-4bit"],
+        "MOSS-Music 8B (4-bit)",
+        "The same music brain at 4-bit — roughly half the memory and "
+        "disk, a little faster, a little blunter in its judgements.",
+        task_caps(["caption", "lyrics"], [
+            source_audio_param("The audio to discuss"),
+            {"key": "question", "type": "string", "label": "Question",
+             "default": None, "nullable": True,
+             "placeholder": "What is the chord progression in the chorus?",
+             "help": "Ask something specific. Left blank it writes a full "
+                     "analysis: genre, instrumentation, tempo, key, "
+                     "structure"},
+        ], est_realtime_factor=1.2),
+        10, "medium", APACHE,
+        variant_of="caption-moss-music", format_="MOSS 8B · MLX 4-bit",
+        notes="Same adapter and prompts as the 8-bit entry; quantisation "
+              "quality difference is unmeasured here."),
     # ---- Music to words: notation composers ------------------------------
     #
     # ABC notation is text, so these are language models: a description (or a
@@ -1748,7 +3263,9 @@ NEW_ENTRIES = [
         [{"repo_id": "m-a-p/ChatMusician", "gated": False,
           # The repo ships the same weights twice (safetensors and the older
           # .bin shards); fetching both would double a 13 GB download.
-          "allow_patterns": ["*.safetensors", "*.json", "*.model", "*.txt"]}],
+          # Every pattern must match a real file upstream — see the guard in
+          # `effective_size`. This repo has no .txt at all.
+          "allow_patterns": ["*.safetensors", "*.json", "*.model"]}],
         "ChatMusician (notation)",
         "A LLaMA-2 tuned on music theory and ABC notation: give it a tune "
         "and it writes a new piece in the same key and metre, rather than "
@@ -1774,6 +3291,98 @@ NEW_ENTRIES = [
         settings={"engine": "chatmusician"},
         notes="13 GB of weights; loading it unloads the resident music "
               "model."),
+    task_entry(
+        "compose-anticipation", "anticipation",
+        ["stanford-crfm/music-small-800k"],
+        "Anticipatory Music Transformer",
+        "Stanford's symbolic composer: writes MIDI note events directly "
+        "(no audio model in the loop), which the note renderer then "
+        "voices. Its actual specialty is working WITH existing notes: "
+        "continue a part from where it stops, or fill a gap in the middle "
+        "while respecting what comes after.",
+        task_caps(["compose"], [
+            {"key": "compose_mode", "type": "enum", "label": "Mode",
+             "default": "generate", "nullable": False,
+             "choices": [{"value": "generate", "label": "From nothing"},
+                         {"value": "continue", "label": "Continue the notes"},
+                         {"value": "infill", "label": "Fill a gap"}],
+             "help": "Continue picks up where the MIDI part stops; "
+                     "fill-a-gap rewrites only the window below, keeping "
+                     "the notes on both sides. Both need a MIDI file; "
+                     "the result always includes the input notes"},
+            {"key": "melody_midi", "type": "midi", "label": "Notes to extend",
+             "default": None, "nullable": True,
+             "help": "The MIDI part to continue or fill — a transcription "
+                     "or an earlier composition both work"},
+            {"key": "gap_start_s", "type": "float", "label": "Gap start (s)",
+             "default": None, "nullable": True, "min": 0.0, "max": 600.0,
+             "step": 0.5,
+             "help": "Fill-a-gap only: where the rewritten window begins"},
+            {"key": "gap_end_s", "type": "float", "label": "Gap end (s)",
+             "default": None, "nullable": True, "min": 0.0, "max": 600.0,
+             "step": 0.5,
+             "help": "Fill-a-gap only: where the window ends — the notes "
+                     "after it are kept and respected"},
+            {"key": "span_s", "type": "float", "label": "Length (s)",
+             "default": 15.0, "nullable": False, "min": 5.0, "max": 60.0,
+             "step": 5.0,
+             "help": "How many seconds of music to compose (from-nothing "
+                     "and continue). Time is musical output length, not "
+                     "render time"},
+            {"key": "top_p", "type": "float", "label": "Top-P",
+             "default": 0.98, "nullable": False, "min": 0.8, "max": 1.0,
+             "step": 0.01},
+        ], est_realtime_factor=15.0),
+        8, "slow", APACHE,
+        variant_of="compose-text2music", format_="MIDI events · AMT",
+        notes="Ignores the prompt — generation is unconditional over MIDI "
+              "events. Token-by-token and slow on CPU (~23 min for 10 s in "
+              "triage); the adapter tries MPS first, which should recover "
+              "~10×."),
+    task_entry(
+        "compose-anticipation-medium", "anticipation",
+        ["stanford-crfm/music-medium-800k"],
+        "Anticipatory Music Transformer (medium)",
+        "The 360M checkpoint — the documented quality sweet spot of the "
+        "AMT line. Same modes: compose, continue a part, fill a gap.",
+        task_caps(["compose"], [
+            {"key": "compose_mode", "type": "enum", "label": "Mode",
+             "default": "generate", "nullable": False,
+             "choices": [{"value": "generate", "label": "From nothing"},
+                         {"value": "continue", "label": "Continue the notes"},
+                         {"value": "infill", "label": "Fill a gap"}],
+             "help": "Continue picks up where the MIDI part stops; "
+                     "fill-a-gap rewrites only the window below, keeping "
+                     "the notes on both sides. Both need a MIDI file; "
+                     "the result always includes the input notes"},
+            {"key": "melody_midi", "type": "midi", "label": "Notes to extend",
+             "default": None, "nullable": True,
+             "help": "The MIDI part to continue or fill — a transcription "
+                     "or an earlier composition both work"},
+            {"key": "gap_start_s", "type": "float", "label": "Gap start (s)",
+             "default": None, "nullable": True, "min": 0.0, "max": 600.0,
+             "step": 0.5,
+             "help": "Fill-a-gap only: where the rewritten window begins"},
+            {"key": "gap_end_s", "type": "float", "label": "Gap end (s)",
+             "default": None, "nullable": True, "min": 0.0, "max": 600.0,
+             "step": 0.5,
+             "help": "Fill-a-gap only: where the window ends — the notes "
+                     "after it are kept and respected"},
+            {"key": "span_s", "type": "float", "label": "Length (s)",
+             "default": 15.0, "nullable": False, "min": 5.0, "max": 60.0,
+             "step": 5.0,
+             "help": "How many seconds of music to compose (from-nothing "
+                     "and continue). Time is musical output length, not "
+                     "render time"},
+            {"key": "top_p", "type": "float", "label": "Top-P",
+             "default": 0.98, "nullable": False, "min": 0.8, "max": 1.0,
+             "step": 0.01},
+        ], est_realtime_factor=40.0),
+        12, "slow", APACHE,
+        variant_of="compose-anticipation", format_="MIDI events · medium",
+        notes="Roughly 3× the small model's cost per note — unmeasured "
+              "here; the est is scaled from the small model's triage "
+              "numbers. Same adapter, same modes."),
     # Experimental notation models, kept out of the catalog until their
     # decoding is proven here — both need vendored inference code rather
     # than a plain transformers class, which is the whole reason the two
@@ -1932,6 +3541,30 @@ NEW_ENTRIES = [
         4, "medium", MIT, featured=True,
         settings={"engine": "transkun"}),
     task_entry(
+        "transcribe-bytedance-piano", "transcription",
+        ["rtikw/piano-transcription-crnn"],
+        "ByteDance piano (with pedal)",
+        "The pedal specialist: piano notes AND sustain-pedal events in the "
+        "MIDI, which no other transcriber here writes. Judge it on real "
+        "piano recordings — synthetic tones over-transcribe.",
+        task_caps(["transcribe"], [
+            source_audio_param("Piano audio — solo recordings or a "
+                               "separated piano stem"),
+            {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+             "default": False, "nullable": False,
+             "help": "Also write each note track as ABC notation text — a "
+                     "readable sketch, and the input the notation composers "
+                     "take"},
+        ], est_realtime_factor=0.5),
+        4, "fast",
+        {"name": "CC BY 4.0", "commercial_use": True,
+         "requires_hf_token": False,
+         "url": "https://zenodo.org/record/4034264"},
+        variant_of="transcribe-transkun", format_="CRNN · pedal-aware",
+        notes="The checkpoint is an unmodified mirror of the paper's "
+              "Zenodo record (CC BY 4.0, credit Kong et al.).",
+        settings={"engine": "bytedance_piano"}),
+    task_entry(
         "transcribe-swiftf0", "transcription", [],
         "SwiftF0 (vocal melody)",
         "Instant monophonic melody extraction — run it on a vocals stem to "
@@ -2043,6 +3676,19 @@ def main() -> None:
                 else:
                     print(f"  {rid}: {cache[key] / 1e9:.2f} GB"
                           + (f" ({len(pats)} files)" if pats else ""))
+            total += cache[key]
+        for repo in m.get("ms_repos") or []:
+            pats = repo.get("allow_patterns")
+            key = ("ms", repo["repo_id"], tuple(pats) if pats else None)
+            if key not in cache:
+                try:
+                    cache[key] = ms_effective_size(repo["repo_id"], pats)
+                except Exception as e:  # noqa: BLE001 — same best-effort as HF
+                    print(f"  ms:{repo['repo_id']}: size unavailable ({e}); "
+                          f"keeping preset")
+                    cache[key] = 0
+                else:
+                    print(f"  ms:{repo['repo_id']}: {cache[key] / 1e9:.2f} GB")
             total += cache[key]
         if total > 0:
             m["size_bytes"] = total

@@ -308,6 +308,10 @@ class DownloadManager:
                 self._download_repo(task, repo, token)
                 if task.cancelled:
                     break
+            for repo in Registry.ms_repos(model):
+                if task.cancelled:
+                    break
+                self._download_ms_repo(task, repo)
             if task.cancelled:
                 self.bus.emit_threadsafe("models.changed", {})
                 return
@@ -394,8 +398,9 @@ class DownloadManager:
 
     def _total_bytes(self, model: dict, token: str | None) -> int | None:
         try:
-            api = HfApi(token=token)
             total = 0
+            if model["hf_repos"]:
+                api = HfApi(token=token)
             for repo in model["hf_repos"]:
                 info = api.model_info(repo["repo_id"], files_metadata=True)
                 pats = repo.get("allow_patterns")
@@ -404,9 +409,28 @@ class DownloadManager:
                                         for p in pats):
                         continue
                     total += s.size or 0
+            for repo in Registry.ms_repos(model):
+                from .ms_download_worker import list_files
+                files = list_files(repo["repo_id"])
+                pats = repo.get("allow_patterns")
+                if pats:
+                    files = [f for f in files
+                             if any(fnmatch.fnmatch(f["Path"], p)
+                                    for p in pats)]
+                total += sum(int(f.get("Size") or 0) for f in files)
             return total or None
         except Exception:  # noqa: BLE001 — size is best-effort; catalog estimate stands
             return None
+
+    def _download_ms_repo(self, task: DownloadTask, repo: dict) -> None:
+        """One ModelScope repo, over the same supervised-subprocess machinery
+        as an HF snapshot — the worker differs, the supervision does not."""
+        cmd = [sys.executable, "-m", "supervisor.ms_download_worker",
+               "--repo", repo["repo_id"],
+               "--dest", self.registry.ms_repo_dir(repo["repo_id"])]
+        if repo.get("allow_patterns"):
+            cmd += ["--patterns", json.dumps(repo["allow_patterns"])]
+        self._supervise_download(task, repo["repo_id"], cmd, os.environ.copy())
 
     def _download_repo(self, task: DownloadTask, repo: dict,
                        token: str | None) -> None:
@@ -419,6 +443,10 @@ class DownloadManager:
                "--repo", repo_id]
         if repo.get("allow_patterns"):
             cmd += ["--patterns", json.dumps(repo["allow_patterns"])]
+        self._supervise_download(task, repo_id, cmd, env)
+
+    def _supervise_download(self, task: DownloadTask, repo_id: str,
+                            cmd: list[str], env: dict) -> None:
         attempts = 0
         while True:
             if task.cancelled:

@@ -1,0 +1,161 @@
+"""Anticipatory Music Transformer (Stanford CRFM): symbolic music generation
+as a `compose` task — MIDI out, voiced later by the SoundFont renderer.
+
+The prompt is unused by the model (unconditional generation over MIDI events);
+`duration_s` sets the span. Contract shape: a `midi` artifact labeled
+"composition" plus, when music21 manages the conversion, a `text` artifact of
+kind "abc" — the exact pair the notation composers emit, so every downstream
+card works unchanged.
+
+Speed honesty: 10 s of music took 23 minutes of CPU in triage (token-by-token
+GPT-2). The adapter tries MPS first — the ~10× that should recover is the
+difference between a curiosity and a tool — and falls back to CPU.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
+                                     GenerateResult, ModelAdapter, ProgressCb,
+                                     TaskResult)
+
+
+class AnticipationAdapter(ModelAdapter):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.model = None
+        self.device = "cpu"
+
+    def _snapshot(self) -> str:
+        if not self.model_paths:
+            raise RuntimeError("model has no downloaded snapshot")
+        return next(iter(self.model_paths.values()))
+
+    def load(self, progress_cb: ProgressCb) -> None:
+        import torch
+        from transformers import AutoModelForCausalLM
+
+        progress_cb(None, "loading the music transformer")
+        self.model = AutoModelForCausalLM.from_pretrained(self._snapshot())
+        if torch.backends.mps.is_available():
+            try:
+                self.model = self.model.to("mps")
+                self.device = "mps"
+            except Exception:  # noqa: BLE001 — CPU is the proven fallback
+                self.device = "cpu"
+        self.model.eval()
+        progress_cb(None, f"composer ready on {self.device}")
+
+    def generate(self, prompt, lyrics, params, out_path, progress_cb,
+                 cancel) -> GenerateResult:
+        raise NotImplementedError(
+            "this model writes notes, not audio — submit a compose task, "
+            "then voice the MIDI with the note renderer")
+
+    def run_task(self, task: str, params: dict, out_dir: str,
+                 progress_cb: ProgressCb, cancel: CancelToken) -> TaskResult:
+        if task != "compose":
+            return super().run_task(task, params, out_dir, progress_cb, cancel)
+        assert self.model is not None
+        from anticipation.convert import events_to_midi
+        from anticipation.sample import generate as amt_generate
+
+        span_s = max(5.0, min(60.0, float(params.get("span_s") or 15.0)))
+        top_p = float(params.get("top_p") or 0.98)
+
+        # The model's actual specialty (it is the Anticipatory Music
+        # Transformer): events before start_time are history, events after
+        # it become anticipated controls — so continuation and infilling
+        # are the same call with different windows, and the result always
+        # includes the input, making the part playable standalone.
+        mode = str(params.get("compose_mode") or "generate").strip()
+        inputs: list[int] = []
+        if mode in ("continue", "infill"):
+            midi_in = params.get("melody_midi")
+            if not midi_in or not os.path.isfile(midi_in):
+                raise RuntimeError(
+                    "melody_midi missing — continue and infill need the "
+                    "notes to work from")
+            from anticipation.convert import midi_to_events
+
+            inputs = midi_to_events(midi_in)
+            if not inputs:
+                raise RuntimeError("the MIDI file contains no usable notes")
+        if mode == "continue":
+            from anticipation import ops
+
+            start = float(ops.max_time(inputs, seconds=True))
+            end = start + span_s
+        elif mode == "infill":
+            start = float(params.get("gap_start_s") or 0.0)
+            end = float(params.get("gap_end_s") or 0.0)
+            if end <= start:
+                raise RuntimeError("infill needs a window: set the gap's "
+                                   "end after its start")
+            # generate() keeps every input event — the window's own notes
+            # would ride through as anticipated controls and leave the model
+            # nothing to write (verified in the smoke). Clip them out: what
+            # remains before the gap is history, after it the future the
+            # model writes toward.
+            from anticipation import ops
+
+            span_end = float(ops.max_time(inputs, seconds=True)) + 1.0
+            inputs = ops.sort(
+                ops.clip(inputs, 0, start, clip_duration=False)
+                + ops.clip(inputs, end, span_end, clip_duration=False))
+        else:
+            start, end = 0.0, span_s
+
+        verb = {"continue": "continuing", "infill": "filling the gap in"}
+        progress_cb(None, f"{verb.get(mode, 'composing')} "
+                          f"{end - start:.0f} s of music "
+                          f"({'MPS' if self.device == 'mps' else 'CPU — slow'})")
+        if cancel.cancelled:
+            raise CancelledError()
+        events = amt_generate(self.model, start_time=start, end_time=end,
+                              inputs=inputs or None, top_p=top_p)
+        if cancel.cancelled:
+            raise CancelledError()
+        if not events:
+            raise RuntimeError("the model produced no events")
+
+        progress_cb(0.9, "writing the MIDI")
+        mid = events_to_midi(events)
+        midi_path = os.path.join(out_dir, "composition.mid")
+        mid.save(midi_path + ".part")
+        os.replace(midi_path + ".part", midi_path)
+        artifacts = [Artifact(kind="midi", label="composition",
+                              path=midi_path, format="mid")]
+        meta: dict = {"engine": "anticipation", "notes": len(events) // 3}
+
+        abc = self._to_abc(midi_path)
+        if abc:
+            payload = {"text_version": 1, "kind": "abc", "text": abc,
+                       "model": self.model_id, "engine": "anticipation"}
+            text_path = os.path.join(out_dir, "abc.json")
+            tmp = text_path + ".part"
+            with open(tmp, "w") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, text_path)
+            artifacts.append(Artifact(kind="text", label="abc",
+                                      path=text_path, format="json"))
+            meta["text"] = payload
+            meta["abc_preview"] = abc[:200]
+        else:
+            meta["midi_error"] = "notation conversion produced nothing"
+        progress_cb(1.0, "done")
+        return TaskResult(artifacts=artifacts, meta=meta)
+
+    @staticmethod
+    def _to_abc(midi_path: str) -> str | None:
+        # music21 has no ABC writer; the serialiser is the transcription
+        # family's own, vendored (see abc_out.py's docstring).
+        from .abc_out import midi_to_abc
+
+        abc = midi_to_abc(midi_path, title="composition")
+        return abc or None
+
+    def unload(self) -> None:
+        self.model = None

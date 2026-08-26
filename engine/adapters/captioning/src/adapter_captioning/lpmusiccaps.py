@@ -110,15 +110,34 @@ def _windows(mono):
 def _join(sentences: list[str]) -> str:
     """The distinct sentences, in order, as one paragraph.
 
-    Windows of the same song often produce the same sentence; repeating it
-    six times would read as a stutter rather than as emphasis.
+    Windows of one song describe the same music, so the model says the same
+    thing repeatedly with small variations — "This techno song features a
+    synth lead playing the main melody" and "This techno song features a
+    synth playing the main melody" are one observation, not two. Matching on
+    an exact string keeps both; matching on the opening few words keeps the
+    first and drops the echo, which is what a reader wants in a description.
     """
     seen: set[str] = set()
     kept: list[str] = []
     for sentence in sentences:
-        key = sentence.lower().rstrip(".")
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(sentence if sentence.endswith(".") else sentence + ".")
+        for part in _split(sentence):
+            key = " ".join(part.lower().split()[:6])
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            kept.append(part if part.endswith(".") else part + ".")
     return " ".join(kept)
+
+
+def _split(text: str) -> list[str]:
+    """A window's caption as individual sentences.
+
+    The model returns several at once, and de-duplication has to see them
+    separately or one repeated sentence drags a whole window along with it.
+    """
+    out: list[str] = []
+    for raw in text.replace("\n", " ").split("."):
+        sentence = raw.strip()
+        if sentence:
+            out.append(sentence)
+    return out

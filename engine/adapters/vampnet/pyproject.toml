@@ -1,0 +1,32 @@
+[project]
+name = "adapter-vampnet"
+version = "0.1.0"
+description = "VampNet masked-token variation/vamping for the LocalMusic engine"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "vampnet",
+    # vampnet's own pins drag a mismatched torch/torchaudio pair; force the
+    # proven 2.4.1 pair (triage 2026-08-25).
+    "torch==2.4.1",
+    "torchaudio==2.4.1",
+    "soundfile>=0.12",
+    "numpy<2",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+vampnet = "adapter_vampnet.adapter:VampNetAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+vampnet = { git = "https://github.com/hugofloresgarcia/vampnet", rev = "72e2675790091fe28ecfd8391303a46b25a703db" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_vampnet"]

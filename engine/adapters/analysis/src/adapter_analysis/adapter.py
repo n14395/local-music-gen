@@ -22,11 +22,43 @@ from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
 
 from . import features, keys, structure
 
+# BTC's chord vocabulary is root:quality over exactly these 14 qualities
+# (large voca; majmin uses the first two). Pitches are intervals over a
+# root near C3 — a bed register that stays out of a melody's way.
+_CHORD_ROOTS = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+                "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+                "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
+_CHORD_QUALITIES = {
+    "": (0, 4, 7), "maj": (0, 4, 7), "min": (0, 3, 7),
+    "dim": (0, 3, 6), "aug": (0, 4, 8),
+    "sus2": (0, 2, 7), "sus4": (0, 5, 7),
+    "maj6": (0, 4, 7, 9), "min6": (0, 3, 7, 9),
+    "7": (0, 4, 7, 10), "maj7": (0, 4, 7, 11), "min7": (0, 3, 7, 10),
+    "dim7": (0, 3, 6, 9), "hdim7": (0, 3, 6, 10),
+    "minmaj7": (0, 3, 7, 11),
+}
+
+
+def _chord_pitches(symbol: str) -> list[int]:
+    """MIDI pitches for a BTC chord symbol; [] for N (no chord) / X
+    (unclear). An unrecognised quality degrades to the bare root rather
+    than guessing a colour the model did not name."""
+    if symbol in ("N", "X"):
+        return []
+    root, _, quality = symbol.partition(":")
+    semitone = _CHORD_ROOTS.get(root.split("/")[0].strip())
+    if semitone is None:
+        return []
+    intervals = _CHORD_QUALITIES.get(quality.split("/")[0].strip(), (0,))
+    return [48 + semitone + i for i in intervals]
+
 
 class AnalysisAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._audio2beats = None
+        self._btc = None    # (model, mean, std, vocab) once the mode loads
+        self._squim = None
 
     def load(self, progress_cb: ProgressCb) -> None:
         hf_home = os.environ.get("HF_HOME")
@@ -77,12 +109,32 @@ class AnalysisAdapter(ModelAdapter):
                      if "clap" in r.lower()),
                     next(iter(self.model_paths.values())))
 
+    def _cache_dir(self, name: str) -> str:
+        hf_home = os.environ.get("HF_HOME")
+        base = (os.path.dirname(hf_home) if hf_home
+                else os.path.expanduser("~/.cache"))
+        d = os.path.join(base, name)
+        os.makedirs(d, exist_ok=True)
+        return d
+
     def run_task(self, task: str, params: dict, out_dir: str,
                  progress_cb: ProgressCb, cancel: CancelToken) -> TaskResult:
         if task == "tag":
             return self._run_tag(params, out_dir, progress_cb, cancel)
+        if task == "transcribe" and self.settings.get("mode") == "chords":
+            # The chords entry's second face: the same recognition, rendered
+            # as a MIDI chord bed the parts library can play and stack.
+            return self._run_chords_midi(params, out_dir, progress_cb, cancel)
         if task != "analyze":
             raise NotImplementedError(f"unsupported task '{task}'")
+        # Specialist analyze modes: same family (their torch stack is this
+        # venv), different question — the mode rides catalog settings the way
+        # the separation family's engine switch does.
+        mode = self.settings.get("mode")
+        if mode == "chords":
+            return self._run_chords(params, out_dir, progress_cb, cancel)
+        if mode == "squim":
+            return self._run_squim(params, out_dir, progress_cb, cancel)
         src = params.get("source_audio")
         if not src or not os.path.isfile(src):
             raise RuntimeError("source_audio missing")
@@ -181,6 +233,172 @@ class AnalysisAdapter(ModelAdapter):
                                 format="json")],
             meta=meta)
 
+    def _recognize_chords(self, params: dict, progress_cb: ProgressCb,
+                          cancel: CancelToken) -> tuple[list[dict], float]:
+        """Load audio + BTC, return (segments, duration_s). Shared by the
+        analyze (JSON payload) and transcribe (MIDI part) routes."""
+        def check() -> None:
+            if cancel.cancelled:
+                raise CancelledError()
+
+        src = params.get("source_audio")
+        if not src or not os.path.isfile(src):
+            raise RuntimeError("source_audio missing")
+        large_voca = str(self.settings.get("voca", "large")) == "large"
+
+        from . import btc
+
+        if getattr(self, "_btc", None) is None:
+            cache = self._cache_dir("btc-chords")
+            # The catalog entry ships both checkpoints in the assets-mirror
+            # snapshot (rtikw/localmusic-assets, analysis/btc_model*.pt —
+            # unmodified mirrors of the MIT files committed in the upstream
+            # repo). Staging them into the cache under the names btc.load
+            # expects means its GitHub download never fires.
+            for snap in self.model_paths.values():
+                for name in ("btc_model.pt", "btc_model_large_voca.pt"):
+                    staged = os.path.join(snap, "analysis", name)
+                    dst = os.path.join(cache, name)
+                    if os.path.exists(staged) and not os.path.exists(dst):
+                        try:
+                            os.symlink(staged, dst)
+                        except OSError:
+                            pass
+            progress_cb(0.05, "loading the chord model "
+                              "(12 MB; downloads on first use)")
+            self._btc = btc.load(cache, large_voca, progress_cb)
+        check()
+
+        progress_cb(0.1, "loading audio")
+        audio, sr = sf.read(src, dtype="float32", always_2d=True)
+        mono = audio.mean(axis=1)
+        check()
+
+        segments = btc.recognize(self._btc, mono, sr, progress_cb, check)
+        return segments, len(mono) / sr
+
+    def _run_chords(self, params: dict, out_dir: str, progress_cb: ProgressCb,
+                    cancel: CancelToken) -> TaskResult:
+        """Chord segments via the vendored BTC transformer (see btc.py)."""
+        segments, duration_s = self._recognize_chords(params, progress_cb,
+                                                      cancel)
+        large_voca = str(self.settings.get("voca", "large")) == "large"
+
+        progress_cb(0.95, "writing the chord track")
+        payload = {"chords_version": 1, "segments": segments,
+                   "vocabulary": "large" if large_voca else "majmin",
+                   "duration_s": round(duration_s, 3),
+                   "model": self.model_id, "engine": "btc"}
+        final = os.path.join(out_dir, "analysis.json")
+        tmp = final + ".part"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, final)
+
+        played = [s["chord"] for s in segments if s["chord"] not in ("N", "X")]
+        preview = []
+        for chord in played:
+            if not preview or preview[-1] != chord:
+                preview.append(chord)
+        return TaskResult(
+            artifacts=[Artifact(kind="analysis", label="chords", path=final,
+                                format="json")],
+            meta={"n_segments": len(segments),
+                  "chords_preview": " ".join(preview[:12])})
+
+    def _run_chords_midi(self, params: dict, out_dir: str,
+                         progress_cb: ProgressCb,
+                         cancel: CancelToken) -> TaskResult:
+        """The recognised chords as a root-position MIDI chord bed.
+
+        A part you can hear and stack, not a performance: each segment
+        becomes one block chord held for its span. N and X segments are
+        rests.
+        """
+        segments, _ = self._recognize_chords(params, progress_cb, cancel)
+
+        progress_cb(0.95, "writing the chord part")
+        import pretty_midi
+
+        pm = pretty_midi.PrettyMIDI()
+        inst = pretty_midi.Instrument(program=0, name="Chords")
+        for seg in segments:
+            for pitch in _chord_pitches(seg["chord"]):
+                inst.notes.append(pretty_midi.Note(
+                    velocity=80, pitch=pitch,
+                    start=float(seg["start_s"]), end=float(seg["end_s"])))
+        pm.instruments.append(inst)
+        final = os.path.join(out_dir, "chords.mid")
+        tmp = final + ".part"
+        pm.write(tmp)
+        os.replace(tmp, final)
+
+        return TaskResult(
+            artifacts=[Artifact(kind="midi", label="chords", path=final,
+                                format="mid")],
+            meta={"n_segments": len(segments), "n_notes": len(inst.notes)})
+
+    def _run_squim(self, params: dict, out_dir: str, progress_cb: ProgressCb,
+                   cancel: CancelToken) -> TaskResult:
+        """Reference-free quality scores (torchaudio SQUIM objective).
+
+        Trained on speech: the numbers rank takes of the same material
+        usefully but are not absolute music-quality truth, and the payload
+        says so.
+        """
+        def check() -> None:
+            if cancel.cancelled:
+                raise CancelledError()
+
+        src = params.get("source_audio")
+        if not src or not os.path.isfile(src):
+            raise RuntimeError("source_audio missing")
+
+        import soxr
+        import torch
+
+        if getattr(self, "_squim", None) is None:
+            progress_cb(0.05, "loading SQUIM (downloads on first use)")
+            os.environ.setdefault("TORCH_HOME",
+                                  self._cache_dir("torch-cache"))
+            from torchaudio.pipelines import SQUIM_OBJECTIVE
+
+            self._squim = SQUIM_OBJECTIVE.get_model()
+            self._squim.eval()
+        check()
+
+        progress_cb(0.3, "loading audio")
+        audio, sr = sf.read(src, dtype="float32", always_2d=True)
+        mono = audio.mean(axis=1)
+        if sr != 16000:
+            mono = soxr.resample(mono, sr, 16000)
+        check()
+
+        progress_cb(0.5, "scoring")
+        with torch.no_grad():
+            stoi, pesq, si_sdr = self._squim(
+                torch.from_numpy(mono).float().unsqueeze(0))
+        check()
+
+        payload = {"quality_version": 1,
+                   "stoi": round(float(stoi.item()), 4),
+                   "pesq": round(float(pesq.item()), 3),
+                   "si_sdr": round(float(si_sdr.item()), 2),
+                   "caveat": "speech-trained; compare takes, don't grade art",
+                   "model": self.model_id, "engine": "squim"}
+        final = os.path.join(out_dir, "analysis.json")
+        tmp = final + ".part"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, final)
+
+        progress_cb(1.0, "done")
+        return TaskResult(
+            artifacts=[Artifact(kind="analysis", label="quality", path=final,
+                                format="json")],
+            meta={"stoi": payload["stoi"], "pesq": payload["pesq"],
+                  "si_sdr": payload["si_sdr"]})
+
     def _run_tag(self, params: dict, out_dir: str, progress_cb: ProgressCb,
                  cancel: CancelToken) -> TaskResult:
         """Genre / mood / instrument labels, zero-shot against CLAP.
@@ -234,3 +452,5 @@ class AnalysisAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self._audio2beats = None
+        self._btc = None
+        self._squim = None

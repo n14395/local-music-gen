@@ -294,7 +294,7 @@ bundle_engine() {
         install -m 755 "$(command -v uv)" "$res/backend/bin/uv"
     fi
 
-    # Engine sources: pyprojects, lockfiles, code, catalog — no venvs, no vendor.
+    # Engine sources: pyprojects, lockfiles, code, catalog — no venvs.
     #
     # `build-src` is the acestep.cpp clone that scripts/build_acestep_cpp.sh
     # compiles into acestepcpp/bin/. It is 98 MB and 3,126 of the engine's
@@ -302,8 +302,17 @@ bundle_engine() {
     # produced. Shipping it made the bundle 98 MB larger and, because the shim
     # re-syncs the engine into the data dir on every launch, cost ~280 ms of
     # every single app start for files no process would ever open.
+    #
+    # There is deliberately NO blanket `vendor` exclude. It used to be here
+    # for acestep.cpp's vendored C sources, which live inside `build-src` and
+    # are already covered by name — while it silently stripped
+    # `captioning/src/adapter_captioning/vendor/`, which is vendored *Python
+    # the adapter imports at runtime*. The model loaded in development (which
+    # runs from this tree) and failed only in the built app, with
+    # "No module named 'adapter_captioning.vendor'". Exclude build outputs by
+    # their own names; never by a word that also means "source we ship".
     rsync -a \
-        --exclude '.venv' --exclude 'vendor' --exclude '__pycache__' \
+        --exclude '.venv' --exclude '__pycache__' \
         --exclude 'build-src' \
         --exclude '*.pyc' --exclude '.python-version' \
         engine/supervisor engine/protocol engine/adapters engine/catalog \

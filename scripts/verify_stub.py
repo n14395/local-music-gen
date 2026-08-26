@@ -84,8 +84,8 @@ def main() -> int:
         print("• models & downloads")
         status, body = c.req("GET", "/v1/models")
         models = {m["id"]: m for m in body["models"]}
-        check("catalog has 11 models, all not_installed",
-              len(models) == 11 and all(m["install_state"] == "not_installed"
+        check("catalog has 12 models, all not_installed",
+              len(models) == 12 and all(m["install_state"] == "not_installed"
                                         for m in models.values()))
         check("task models advertise capabilities.tasks",
               models["separation-stub"]["capabilities"].get("tasks")

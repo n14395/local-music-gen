@@ -35,6 +35,14 @@ class Settings:
                 or os.path.expanduser("~/.cache/huggingface"))
 
     @property
+    def ms_cache_dir(self) -> str:
+        # ModelScope-hosted weights (catalog `ms_repos`). Engine-owned rather
+        # than shared like the HF cache: there is no ModelScope tooling on the
+        # machine to share with, and keeping it inside data_dir means wiping
+        # the data dir is still a clean slate.
+        return os.path.join(self.data_dir, "ms-cache")
+
+    @property
     def envs_dir(self) -> str:
         return os.path.join(self.data_dir, "envs")
 
@@ -63,7 +71,8 @@ class Settings:
             except OSError:
                 pass
         for d in (self.data_dir, self.output_dir, self.hf_cache_dir,
-                  self.envs_dir, self.logs_dir, self.uploads_dir):
+                  self.ms_cache_dir, self.envs_dir, self.logs_dir,
+                  self.uploads_dir):
             os.makedirs(d, exist_ok=True)
         # Every hub download (supervisor or worker) goes through the app's cache dir.
         os.environ["HF_HOME"] = self.hf_cache_dir

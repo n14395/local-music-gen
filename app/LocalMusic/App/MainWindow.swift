@@ -787,8 +787,16 @@ struct MainWindow: View {
         let model = preset.need.best(env.catalog.models)
         var prompt = preset.promptSeed
         var notice = preset.notice
-        if preset.readsSource, let sourceId,
-           let measured = musicalMeta(of: sourceId) {
+        var audioParams: [String: URL] = [:]
+        if let key = preset.sourceParamKey, let sourceId,
+           let material = material(id: sourceId) {
+            // The track itself, into the param the card names. The
+            // tempo-and-key prompt line below is for cards whose model never
+            // hears the source; this model does, so writing "132 bpm" into
+            // the prompt would be describing audio it is already listening to.
+            audioParams[key] = material.fileURL
+        } else if preset.readsSource, let sourceId,
+                  let measured = musicalMeta(of: sourceId) {
             // The track's own words, not its audio: this is a *description*
             // of what to make, and the model never hears the reference.
             prompt = ActionFormat.join([measured.phrase, preset.promptSeed])
@@ -799,6 +807,7 @@ struct MainWindow: View {
         env.prefill.pending = .init(prompt: prompt,
                                     lyrics: preset.lyricsSeed,
                                     modelId: model?.id,
+                                    audioParams: audioParams,
                                     durationS: preset.durationS,
                                     takes: preset.takes,
                                     notice: notice)
@@ -926,7 +935,7 @@ struct MainWindow: View {
                 }
         }
         env.prefill.pending = .init(prompt: "", modelId: melodyModel?.id,
-                                    melodyAudio: melodyURL)
+                                    audioParams: ["melody_audio": melodyURL])
         destination = .generate
     }
 }

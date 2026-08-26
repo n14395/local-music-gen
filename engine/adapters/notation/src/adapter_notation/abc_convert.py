@@ -18,11 +18,11 @@ _HEADER = re.compile(r"^X:\s*\d+", re.MULTILINE)
 
 
 def clean(text: str) -> str:
-    """The ABC inside whatever the model wrote.
+    """Well-formed ABC from whatever the model wrote.
 
-    Drops markdown fences and any preamble before the first `X:` header. A
-    reply with no header at all is returned trimmed — it will fail to parse,
-    and the caller reports that honestly rather than guessing at a header.
+    Drops markdown fences and any preamble, then normalises the dialect —
+    see `normalise`. A reply with nothing tune-shaped in it comes back empty
+    and the caller reports that rather than inventing a tune.
     """
     body = (text or "").strip()
     if "```" in body:
@@ -36,7 +36,70 @@ def clean(text: str) -> str:
     match = _HEADER.search(body)
     if match:
         body = body[match.start():]
-    return body.strip()
+    return normalise(body.strip())
+
+
+# The header fields a tune actually opens with. Used only above the `K:`
+# line, where every line is a field by definition — below it, `B3` is a note.
+_FIELDS = "XTCOAMLQPZNGHRBDFSUVW"
+
+
+def normalise(text: str) -> str:
+    """Repair the dialects these models write in.
+
+    text-to-music, in particular, emits headers like `L1/8` (no colon) and
+    `M:6/8=150` (a tempo folded into the metre), and omits the `X:` reference
+    number entirely. Every one of those is a tune no ABC reader will accept,
+    including the `music21` parse that turns it into MIDI — but the *music*
+    underneath is fine, so it is repaired rather than rejected.
+    """
+    if not text:
+        return ""
+    lines = text.split("\n")
+    out: list[str] = []
+    in_header = True
+    for line in lines:
+        stripped = line.strip()
+        if in_header and stripped:
+            # A field letter run straight into its value: `L1/8` → `L:1/8`.
+            if len(stripped) > 1 and stripped[0].upper() in _FIELDS \
+                    and stripped[1] != ":" and not stripped[1].isalpha() \
+                    and "|" not in stripped:
+                stripped = f"{stripped[0]}:{stripped[1:]}"
+            # A tempo hidden in the metre: `M:6/8=150` → `M:6/8`.
+            if stripped[:2].upper() == "M:" and "=" in stripped:
+                stripped = stripped.split("=", 1)[0].rstrip()
+            if stripped[:2].upper() == "K:":
+                in_header = False
+        out.append(stripped if in_header or stripped else line)
+        if not in_header:
+            # Everything from here is body; keep it exactly as written.
+            out[-1] = stripped if stripped else line
+    body = "\n".join(out).strip()
+    if not _HEADER.search(body):
+        # Every tune needs a reference number, and no model reliably writes
+        # one. Prepended rather than demanded, because its absence says
+        # nothing about whether the notation itself is good.
+        body = "X:1\n" + body
+    return body
+
+
+# ABC's text annotations: a quoted string whose first character places it
+# relative to the staff (^ above, _ below, < left, > right, @ absolute).
+# Chord symbols — "D", "A7" — have no such prefix and are left alone.
+_ANNOTATION = re.compile(r'"[\^_<>@][^"]*"')
+
+
+def for_midi(abc_text: str) -> str:
+    """The tune with anything music21 cannot read stripped out.
+
+    Only annotations so far: `music21` tries to parse every quoted string as
+    a chord symbol and dies on `"^A"` with "Cannot make a step out of '^'".
+    They are removed here rather than in `clean`, because they are perfectly
+    legal ABC that other tools render — the *stored* notation keeps
+    everything the model wrote, and only the conversion sees this.
+    """
+    return _ANNOTATION.sub("", abc_text or "")
 
 
 def to_midi(abc_text: str, out_path: str) -> int:
@@ -47,7 +110,7 @@ def to_midi(abc_text: str, out_path: str) -> int:
     """
     from music21 import converter
 
-    score = converter.parse(abc_text, format="abc")
+    score = converter.parse(for_midi(abc_text), format="abc")
     notes = len(score.flatten().notes)
     if notes == 0:
         raise ValueError("the notation contains no notes")

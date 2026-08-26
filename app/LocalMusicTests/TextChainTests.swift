@@ -201,3 +201,55 @@ final class TextChainTests: XCTestCase {
         XCTAssertEqual(progress.effectiveText, "what I meant")
     }
 }
+
+/// Which models may serve which music-to-text card.
+///
+/// The engine drops params a model does not declare (contract §5.1), so a
+/// question sent to a model that cannot take one is not refused — it is
+/// silently ignored, and the user gets a general description with no sign
+/// their question went nowhere. Declaring the task is therefore not enough
+/// for the Ask card; the param is the test.
+final class TextActionEligibilityTests: XCTestCase {
+    private var captioner: ModelInfo {
+        ModelFixtures.model(id: "caption-lpmusiccaps", tasks: ["caption"],
+                            paramKeys: ["source_audio", "num_beams"])
+    }
+
+    private var answerer: ModelInfo {
+        ModelFixtures.model(id: "caption-qwen2audio",
+                            tasks: ["caption", "tag"],
+                            paramKeys: ["source_audio", "question",
+                                        "max_tokens"])
+    }
+
+    func testDescribingOnlyNeedsTheTask() {
+        XCTAssertTrue(TextAction.describe.canRun(captioner))
+        XCTAssertTrue(TextAction.describe.canRun(answerer))
+        XCTAssertTrue(TextAction.freeCaption.canRun(captioner))
+    }
+
+    func testAskingNeedsAModelThatTakesAQuestion() {
+        XCTAssertFalse(TextAction.ask.canRun(captioner),
+                       "a captioner with no question param would ignore it")
+        XCTAssertTrue(TextAction.ask.canRun(answerer))
+    }
+
+    func testTheWrongTaskIsNeverEligible() {
+        let tagger = ModelFixtures.model(id: "tag-clap", tasks: ["tag"],
+                                         paramKeys: ["source_audio"])
+        XCTAssertFalse(TextAction.describe.canRun(tagger))
+        XCTAssertTrue(TextAction.tags.canRun(tagger))
+    }
+
+    /// The Models screen's action count must agree with the picker, or a
+    /// model advertises a card that will not offer it.
+    func testActionCountAgreesWithEligibility() {
+        let ask = RecipeCatalog.all.first { recipe in
+            if case .textAction(.ask) = recipe.engine { return true }
+            return false
+        }
+        let card = try? XCTUnwrap(ask)
+        XCTAssertFalse(ModelActions.enables(captioner, card!))
+        XCTAssertTrue(ModelActions.enables(answerer, card!))
+    }
+}
