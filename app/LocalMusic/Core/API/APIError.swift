@@ -31,7 +31,7 @@ enum APIError: Error, LocalizedError {
         case "MODEL_NOT_INSTALLED":
             "That model isn't downloaded yet."
         case "WORKER_CRASHED":
-            "The engine crashed while generating — likely out of memory."
+            "The engine worker exited unexpectedly. See the job details for more information."
         default:
             body.message
         }

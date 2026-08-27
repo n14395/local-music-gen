@@ -337,6 +337,25 @@ struct DurationSpec: Codable, Sendable {
     let minS: Double
     let maxS: Double
     let defaultS: Double
+    /// How far the length slider can be pushed once "Unlock max length" is on,
+    /// for the models that have somewhere to go. Absent ⇒ `maxS` is the whole
+    /// story and the toggle does not appear: a fixed-latent model (Stable
+    /// Audio renders `sample_size` and trims) or a runtime that clamps for
+    /// itself (acestep.cpp) would take the longer request and hand back the
+    /// same audio, which is a worse answer than not offering it.
+    ///
+    /// `maxS` stays what the model documents about itself. This is the number
+    /// past it — untrained territory, which is why reaching it takes a
+    /// deliberate toggle and a warning rather than a longer slider.
+    var unlockedMaxS: Double? = nil
+
+    /// The ceiling actually in force. Unlocking a model that never declared a
+    /// higher one is a no-op rather than an error.
+    func maxS(unlocked: Bool) -> Double {
+        unlocked ? max(maxS, unlockedMaxS ?? maxS) : maxS
+    }
+
+    var canUnlock: Bool { (unlockedMaxS ?? maxS) > maxS }
 }
 
 struct ParamSpec: Codable, Identifiable, Sendable {

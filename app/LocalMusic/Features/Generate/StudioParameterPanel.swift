@@ -40,6 +40,9 @@ struct StudioParameterPanel: View {
     let model: ModelInfo?
     let onApplyPreset: (StudioPreset) -> Void
     var layout: Layout = .inspector
+    /// Bound when the panel is hosting the length unlock. Optional so a panel
+    /// shown somewhere without a length slider simply does not offer it.
+    var unlockLength: Binding<Bool>?
     var materialPicker: MaterialPickerContext?
 
     @AppStorage("studio.presets") private var storedPresetsJSON = "[]"
@@ -80,8 +83,11 @@ struct StudioParameterPanel: View {
                 presetRow
             }
             ScrollView {
-                ParameterFormView(state: state, materialPicker: materialPicker)
-                    .padding(.horizontal, 18).padding(.vertical, 16)
+                VStack(alignment: .leading, spacing: 14) {
+                    unlockLengthRow
+                    ParameterFormView(state: state, materialPicker: materialPicker)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 16)
             }
         }
     }
@@ -100,10 +106,59 @@ struct StudioParameterPanel: View {
                 Spacer(minLength: 8)
                 presetRow
             }
+            unlockLengthRow
             ParameterFormView(state: state, allowsTwoColumns: true,
                               materialPicker: materialPicker)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "Unlock max length", shown only for a model that declares somewhere to
+    /// go. It lives here rather than beside the length slider on purpose: the
+    /// slider is in Simple mode too, and a ceiling that can be raised by a
+    /// control sitting next to it is a ceiling raised by accident. Full
+    /// control is the room you go into deliberately.
+    @ViewBuilder private var unlockLengthRow: some View {
+        if let binding = unlockLength, let model,
+           model.capabilities.duration.canUnlock {
+            let duration = model.capabilities.duration
+            VStack(alignment: .leading, spacing: 7) {
+                Toggle(isOn: binding) {
+                    Text("Unlock max length")
+                        .font(Bench.Typo.secondaryEmphasis)
+                        .foregroundStyle(binding.wrappedValue
+                                         ? Bench.Palette.warn
+                                         : Bench.Palette.textSecondary)
+                }
+                .toggleStyle(.bench(width: 32, tint: Bench.Palette.warn))
+                // Both numbers, always: the trade is only legible if you can
+                // see what you are leaving as well as what you are getting.
+                Text(binding.wrappedValue
+                     ? "Length can now reach \(Int(duration.unlockedMaxS ?? duration.maxS)) s. "
+                       + "Past \(Int(duration.maxS)) s this model is beyond what it was "
+                       + "trained for — renders may drift, repeat, end early, or fail "
+                       + "outright, and they take proportionally longer."
+                     : "\(model.displayName) recommends at most \(Int(duration.maxS)) s. "
+                       + "Unlocking raises the slider to \(Int(duration.unlockedMaxS ?? duration.maxS)) s, "
+                       + "into lengths the model was not trained for.")
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(binding.wrappedValue
+                                     ? Bench.Palette.warn.opacity(0.85)
+                                     : Bench.Palette.textQuaternary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card,
+                                         style: .continuous)
+                .fill(binding.wrappedValue ? Bench.Palette.warn.opacity(0.08)
+                                           : Bench.Palette.raised))
+            .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card,
+                                      style: .continuous)
+                .strokeBorder(binding.wrappedValue
+                              ? Bench.Palette.warn.opacity(0.30)
+                              : Bench.Palette.cardStrokeSoft, lineWidth: 1))
+        }
     }
 
     private var presetRow: some View {

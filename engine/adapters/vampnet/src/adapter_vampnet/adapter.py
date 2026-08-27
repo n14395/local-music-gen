@@ -13,14 +13,14 @@ file beside site-packages at import (setup.py forgets to install it — created
 here before the import); the steps kwarg is `_sampling_steps`; decoding is
 `interface.decode(z)`, not the documented `to_signal`.
 
-Device: settings.device = "mps" hands the whole Interface (coarse, c2f,
-codec, wavebeat) to the GPU — it is fully device-parameterized upstream.
-Its cuda-autocast contexts already degrade to plain fp32 on this machine,
-proven by the CPU runs. Default without the setting: CPU.
+Device: the catalog keeps VampNet on CPU. The PyTorch 2.4 MPS codec path can
+abort the worker in Metal while allocating its first compiled codec buffer,
+despite ample system RAM. CPU is the proven path for this family.
 """
 
 from __future__ import annotations
 
+import math
 import os
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
@@ -47,11 +47,74 @@ def _ensure_repo_marker() -> None:
         marker.write_text("hugggof/vampnet")
 
 
+def _apply_mps_patch() -> None:
+    """Keep VampNet's attention scale in MPS-supported float32 precision.
+
+    The pinned upstream implementation divides the MPS attention tensor by
+    ``numpy.sqrt(...)``. That returns a NumPy float64 scalar and PyTorch tries
+    to promote the tensor to float64, which MPS cannot represent.
+    """
+    import torch
+    import vampnet.beats as beats
+    import vampnet.modules.transformer as transformer
+
+    attention = transformer.MultiHeadRelativeAttention
+    if getattr(attention, "_localmusic_mps", False):
+        return
+    attention._localmusic_mps = True
+
+    def forward(self_, q, k, v, mask=None, position_bias=None):
+        q = transformer.rearrange(self_.w_qs(q), "b l (head k) -> head b l k",
+                                  head=self_.n_head)
+        k = transformer.rearrange(self_.w_ks(k), "b t (head k) -> head b t k",
+                                  head=self_.n_head)
+        v = transformer.rearrange(self_.w_vs(v), "b t (head k) -> head b t k",
+                                  head=self_.n_head)
+        attn = transformer.torch.einsum("hblk,hbtk->hblt", [q, k])
+        attn = attn / math.sqrt(q.shape[-1])
+        if position_bias is None:
+            if self_.has_relative_attention_bias:
+                position_bias = self_.compute_bias(q.size(-2), k.size(-2))
+            else:
+                position_bias = transformer.torch.zeros_like(attn)
+        attn += position_bias
+        if mask is not None:
+            attn = attn.masked_fill(mask[None] == 0, -1e9)
+        attn = self_.dropout(transformer.torch.softmax(attn, dim=3))
+        output = transformer.torch.einsum("hblt,hbtv->hblv", [attn, v])
+        output = transformer.rearrange(output, "head b l v -> b l (head v)")
+        return self_.fc(output), position_bias
+
+    attention.forward = forward
+
+    # WaveBeat's own extraction path selects CPU whenever CUDA is unavailable,
+    # including Apple Silicon. Loading its Lightning checkpoint on MPS first is
+    # therefore both unnecessary and invalid: the checkpoint contains float64
+    # tensors that MPS cannot deserialize.
+    wavebeat = beats.WaveBeat
+    if not getattr(wavebeat, "_localmusic_cpu_load", False):
+        wavebeat._localmusic_cpu_load = True
+
+        def init(self_, ckpt_path: str, device: str = "cpu") -> None:
+            from wavebeat.dstcn import dsTCNModel
+
+            model = dsTCNModel.load_from_checkpoint(
+                ckpt_path, map_location=torch.device("cpu"))
+            model.eval()
+            self_.device = "cpu"
+            self_.model = model
+
+        wavebeat.__init__ = init
+
+
 class VampNetAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.interface = None
-        self.device = str(self.settings.get("device") or "cpu")
+        requested_device = str(self.settings.get("device") or "cpu")
+        # Protect existing user catalogs created before the MPS route proved
+        # unstable; new catalog entries already request CPU explicitly.
+        self.device = "cpu" if requested_device == "mps" else requested_device
 
     def _snapshot(self) -> str:
         if not self.model_paths:
@@ -62,6 +125,9 @@ class VampNetAdapter(ModelAdapter):
         _ensure_repo_marker()
         progress_cb(None, "loading VampNet (coarse + c2f + codec + wavebeat)")
         from vampnet import interface as vi
+
+        if self.device == "mps":
+            _apply_mps_patch()
 
         snap = self._snapshot()
         # A finetune entry names its checkpoint pair under loras/<name>/;
@@ -101,6 +167,9 @@ class VampNetAdapter(ModelAdapter):
         duration = min(MAX_INPUT_S, float(params.get("duration_s") or 10.0))
         progress_cb(0.05, "encoding the source", phase="prompt_encode")
         signal = at.AudioSignal(src, duration=duration)
+        # SoundFile decodes some input formats to float64. The interface moves
+        # this signal to MPS before preprocessing, where float64 is unsupported.
+        signal.samples = signal.samples.to(dtype=torch.float32)
         z = self.interface.encode(signal)
         if cancel.cancelled:
             raise CancelledError()

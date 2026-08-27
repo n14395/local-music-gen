@@ -18,7 +18,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -124,7 +125,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -347,7 +349,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -1727,7 +1730,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -1874,7 +1878,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3389,7 +3394,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3499,7 +3505,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3609,7 +3616,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3719,7 +3727,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3825,7 +3834,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -3942,7 +3952,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4059,7 +4070,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4165,7 +4177,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4271,7 +4284,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4377,7 +4391,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4494,7 +4509,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -4611,7 +4627,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 32000,
     "outputs_per_job_max": 16,
@@ -5483,7 +5500,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -6074,7 +6092,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -6665,7 +6684,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -7172,7 +7192,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -7763,7 +7784,8 @@
     "duration": {
      "min_s": 10,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -8374,7 +8396,8 @@
     "duration": {
      "min_s": 5,
      "max_s": 600,
-     "default_s": 60
+     "default_s": 60,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -8581,7 +8604,8 @@
     "duration": {
      "min_s": 5,
      "max_s": 600,
-     "default_s": 30
+     "default_s": 30,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -8837,7 +8861,8 @@
     "duration": {
      "min_s": 5,
      "max_s": 600,
-     "default_s": 30
+     "default_s": 30,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -9093,7 +9118,8 @@
     "duration": {
      "min_s": 5,
      "max_s": 600,
-     "default_s": 30
+     "default_s": 30,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -9349,7 +9375,8 @@
     "duration": {
      "min_s": 5,
      "max_s": 600,
-     "default_s": 30
+     "default_s": 30,
+     "unlocked_max_s": 1200.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -9585,7 +9612,8 @@
     "duration": {
      "min_s": 2,
      "max_s": 300,
-     "default_s": 12
+     "default_s": 12,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -9703,7 +9731,8 @@
     "duration": {
      "min_s": 2,
      "max_s": 300,
-     "default_s": 12
+     "default_s": 12,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 48000,
     "outputs_per_job_max": 16,
@@ -10456,9 +10485,9 @@
     "requires_hf_token": false,
     "url": null
    },
-   "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. On the GPU (MPS) since 2026-08-26, unmeasured — the est carries the CPU baseline (a 6 s vamp took ~18 s there).",
+    "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. Runs on CPU: the PyTorch MPS codec path is unstable. A 6 s vamp took about 18 s there.",
    "settings": {
-    "device": "mps"
+     "device": "cpu"
    },
    "tags": [
     "Instrumental & loops",
@@ -10600,10 +10629,10 @@
     "requires_hf_token": false,
     "url": null
    },
-   "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. On the GPU (MPS) since 2026-08-26, unmeasured — the est carries the CPU baseline.",
+    "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. Runs on CPU: the PyTorch MPS codec path is unstable.",
    "settings": {
     "lora": "choir",
-    "device": "mps"
+     "device": "cpu"
    },
    "tags": [
     "Instrumental & loops",
@@ -10745,10 +10774,10 @@
     "requires_hf_token": false,
     "url": null
    },
-   "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. On the GPU (MPS) since 2026-08-26, unmeasured — the est carries the CPU baseline.",
+    "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. Runs on CPU: the PyTorch MPS codec path is unstable.",
    "settings": {
     "lora": "n64",
-    "device": "mps"
+     "device": "cpu"
    },
    "tags": [
     "Instrumental & loops",
@@ -10890,10 +10919,10 @@
     "requires_hf_token": false,
     "url": null
    },
-   "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. On the GPU (MPS) since 2026-08-26, unmeasured — the est carries the CPU baseline.",
+    "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. Runs on CPU: the PyTorch MPS codec path is unstable.",
    "settings": {
     "lora": "machines",
-    "device": "mps"
+     "device": "cpu"
    },
    "tags": [
     "Instrumental & loops",
@@ -11035,10 +11064,10 @@
     "requires_hf_token": false,
     "url": null
    },
-   "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. On the GPU (MPS) since 2026-08-26, unmeasured — the est carries the CPU baseline.",
+    "notes": "CC BY-NC-SA weights (Hugo Flores García / Descript). The prompt box is unused: the audio is the prompt. Runs on CPU: the PyTorch MPS codec path is unstable.",
    "settings": {
     "lora": "orchestral",
-    "device": "mps"
+     "device": "cpu"
    },
    "tags": [
     "Instrumental & loops",
@@ -11192,7 +11221,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,
@@ -11297,7 +11327,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,
@@ -11402,7 +11433,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 30,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,
@@ -11507,7 +11539,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 20,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,
@@ -11612,7 +11645,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 20,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,
@@ -11717,7 +11751,8 @@
     "duration": {
      "min_s": 1,
      "max_s": 20,
-     "default_s": 10
+     "default_s": 10,
+     "unlocked_max_s": 600.0
     },
     "sample_rate": 16000,
     "outputs_per_job_max": 16,

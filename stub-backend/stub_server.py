@@ -131,7 +131,8 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "capabilities": {
                 "supports_lyrics": False,
                 "instrumental_only": True,
-                "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
+                "duration": {"min_s": 1, "max_s": 30, "default_s": 10,
+                             "unlocked_max_s": 600.0},
                 "sample_rate": 32000,
                 "outputs_per_job_max": 16,
                 "est_seconds_per_audio_second": 1.5,
@@ -170,7 +171,8 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "capabilities": {
                 "supports_lyrics": True,
                 "instrumental_only": False,
-                "duration": {"min_s": 10, "max_s": 600, "default_s": 60},
+                "duration": {"min_s": 10, "max_s": 600, "default_s": 60,
+                             "unlocked_max_s": 1200.0},
                 "sample_rate": 44100,
                 "outputs_per_job_max": 16,
                 "lyrics_tags": ["[intro]", "[verse]", "[chorus]", "[bridge]",
@@ -2151,7 +2153,9 @@ async def jobs_submit(body: dict):
     group_id = f"grp_{uuid.uuid4().hex[:12]}"
     if task == "generate":
         dur = float(body.get("duration_s", caps["duration"]["default_s"]))
-        dur = max(caps["duration"]["min_s"], min(caps["duration"]["max_s"], dur))
+        # mirrors the supervisor: unlocked_max_s is the ceiling where declared
+        ceiling = caps["duration"].get("unlocked_max_s") or caps["duration"]["max_s"]
+        dur = max(caps["duration"]["min_s"], min(ceiling, dur))
     else:
         raw_dur = body.get("duration_s")
         dur = float(raw_dur) if raw_dur is not None else None

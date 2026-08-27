@@ -5,13 +5,16 @@ description = "MOSS-Music-8B music understanding (MLX community backend) for the
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "mlx",
+    "mlx-lm>=0.29",
     "transformers",
     "soundfile>=0.12",
     "librosa",
     "numpy",
     "huggingface-hub",
-    # the processor's audio side is torch-based even under the MLX backend
+    # The processor's audio side is TorchAudio-based even under the MLX backend.
     "torch",
+    "torchaudio",
+    "torchcodec",
     "einops",
     "engine-protocol",
 ]

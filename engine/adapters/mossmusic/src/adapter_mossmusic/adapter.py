@@ -76,11 +76,16 @@ class MossMusicAdapter(ModelAdapter):
         from moss_music_mlx.convert import load_pretrained
         from moss_music_mlx.generate import generate
         from src.processing_moss_music import MossMusicProcessor
+        from transformers import AutoTokenizer
 
         snapshot = self._snapshot()
         self.model = load_pretrained(snapshot)
-        self.processor = MossMusicProcessor.from_pretrained(
-            snapshot, trust_remote_code=True, enable_time_marker=True)
+        # MOSS's processor drops trust_remote_code before it calls AutoTokenizer,
+        # which otherwise prompts on this worker's protocol stdin indefinitely.
+        tokenizer = AutoTokenizer.from_pretrained(
+            snapshot, use_fast=False, trust_remote_code=True,
+            local_files_only=True)
+        self.processor = MossMusicProcessor(tokenizer, enable_time_marker=True)
         self._generate = generate
         progress_cb(None, "MOSS-Music ready")
 

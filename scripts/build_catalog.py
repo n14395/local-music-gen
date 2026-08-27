@@ -32,6 +32,27 @@ GIB = 1 << 30
 # outright.
 TAKES_MAX = 16
 
+# `duration.unlocked_max_s` — how far "Unlock max length" may push the slider
+# past what the model documents about itself. Declared ONLY where the longer
+# request actually reaches the model: a family whose runtime clamps for itself
+# (acestep.cpp stops at 600 in metadata-fsm.h) or whose latent size is fixed by
+# the checkpoint (Stable Audio renders `sample_size` and trims; MAGNeT's span
+# pattern fixes the clip) would take the longer number and return the same
+# audio, and a toggle that changes nothing is worse than no toggle.
+#
+# 600 for the families with no ceiling in the code at all — MusicGen counts out
+# `duration * 50` tokens and audiocraft strides past its 30 s window by
+# windowed continuation, Magenta RT chains 2 s chunks, AudioLDM enforces only a
+# minimum. None of them stop on their own; this is where WE stop, so a
+# mis-dragged slider cannot queue an overnight render.
+UNLOCKED_MAX_S = 600.0
+
+# ACE-Step gets its own, because unlike the above it has a real wall to aim at:
+# the DiT's RoPE table (max_position_embeddings=32768) against 25 latent frames
+# per second puts it near 1310 s. 1200 keeps a margin under a limit that would
+# otherwise be found the hard way, at the end of a very long render.
+ACESTEP_UNLOCKED_MAX_S = 1200.0
+
 
 def token() -> str | None:
     path = os.path.expanduser("~/.cache/huggingface/token")
@@ -788,7 +809,8 @@ def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
             params.insert(offset, param)
     return {
         "supports_lyrics": False, "instrumental_only": True,
-        "duration": {"min_s": 1, "max_s": max_s, "default_s": 10},
+        "duration": {"min_s": 1, "max_s": max_s, "default_s": 10,
+                     "unlocked_max_s": UNLOCKED_MAX_S},
         "sample_rate": 32000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
         "params": params,
@@ -798,7 +820,8 @@ def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
 def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0):
     return {
         "supports_lyrics": False, "instrumental_only": True,
-        "duration": {"min_s": 1, "max_s": max_s, "default_s": default_s},
+        "duration": {"min_s": 1, "max_s": max_s, "default_s": default_s,
+                     "unlocked_max_s": UNLOCKED_MAX_S},
         "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
         "params": [
@@ -1143,7 +1166,8 @@ def ace_variant(id_, dit_repo, dit_config, name, fmt, steps, shift, est,
         # acestep.cpp clamps to exactly 600 in metadata-fsm.h — two
         # independent runtimes agreeing on the same ceiling. Nothing in the
         # adapter clamps, so this number is the whole ceiling.
-        "duration": {"min_s": 10, "max_s": 600, "default_s": 60},
+        "duration": {"min_s": 10, "max_s": 600, "default_s": 60,
+                     "unlocked_max_s": ACESTEP_UNLOCKED_MAX_S},
         "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
@@ -1765,7 +1789,8 @@ NEW_ENTRIES = [
               # the same 600 s ceiling. In practice this one rarely reaches it:
               # the adapter locks the render to the vocal recording's own
               # length, so max_s is the ceiling and the singer is the bound.
-              "duration": {"min_s": 5, "max_s": 600, "default_s": 60},
+              "duration": {"min_s": 5, "max_s": 600, "default_s": 60,
+                           "unlocked_max_s": ACESTEP_UNLOCKED_MAX_S},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.0,
               "lyrics_hint": ("Paste the words you sang — they help the "
@@ -1838,7 +1863,8 @@ NEW_ENTRIES = [
               # (15k frames, fewer after patchify) sits under half of. 600 is
               # kept because it is where both reference ACE-Step runtimes stop;
               # past it is untrained extrapolation nobody upstream sanctions.
-              "duration": {"min_s": 5, "max_s": 600, "default_s": 30},
+              "duration": {"min_s": 5, "max_s": 600, "default_s": 30,
+                           "unlocked_max_s": ACESTEP_UNLOCKED_MAX_S},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.3,
               "params": [
@@ -1907,7 +1933,8 @@ NEW_ENTRIES = [
           "reference clip whose vibe it should hold.",
           {
               "supports_lyrics": False, "instrumental_only": True,
-              "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
+              "duration": {"min_s": 2, "max_s": 300, "default_s": 12,
+                           "unlocked_max_s": UNLOCKED_MAX_S},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.5,
               "params": [
@@ -1965,7 +1992,8 @@ NEW_ENTRIES = [
           "this when its sound feels thin.",
           {
               "supports_lyrics": False, "instrumental_only": True,
-              "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
+              "duration": {"min_s": 2, "max_s": 300, "default_s": 12,
+                           "unlocked_max_s": UNLOCKED_MAX_S},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.5,
               "params": [
@@ -2303,10 +2331,10 @@ NEW_ENTRIES = [
           },
           8, "medium", CC_NC_SA,
           notes="CC BY-NC-SA weights (Hugo Flores García / Descript). The "
-                "prompt box is unused: the audio is the prompt. On the GPU "
-                "(MPS) since 2026-08-26, unmeasured — the est carries the "
-                "CPU baseline (a 6 s vamp took ~18 s there).",
-          settings={"device": "mps"}),
+                "prompt box is unused: the audio is the prompt. Runs on CPU: "
+                "the PyTorch MPS codec path is unstable. A 6 s vamp took "
+                "about 18 s there.",
+          settings={"device": "cpu"}),
 ] + [
     # VampNet finetunes: full coarse/c2f checkpoint pairs under loras/ in
     # the same repo, swapped in whole (they are not adapter deltas). The
@@ -2354,10 +2382,9 @@ NEW_ENTRIES = [
           8, "medium", CC_NC_SA,
           variant_of="vampnet-vamp", format_=f"finetune · {name}",
           notes="CC BY-NC-SA weights (Hugo Flores García / Descript). The "
-                "prompt box is unused: the audio is the prompt. On the GPU "
-                "(MPS) since 2026-08-26, unmeasured — the est carries the "
-                "CPU baseline.",
-          settings={"lora": name, "device": "mps"})
+                "prompt box is unused: the audio is the prompt. Runs on CPU: "
+                "the PyTorch MPS codec path is unstable.",
+          settings={"lora": name, "device": "cpu"})
     for name, display, desc in [
         ("choir", "VampNet (choir)",
          "The vamp re-voiced by a model finetuned on choral singing — "

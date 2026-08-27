@@ -41,6 +41,13 @@ struct StudioView: View {
     @State private var name = ""
     @State private var durationS: Double
     @State private var count: Int
+    /// "Unlock max length", from Full control. Deliberately `@State` and not
+    /// `@AppStorage`: it is a per-session decision about one render, and a
+    /// ceiling that silently stayed unlocked from last week is exactly the
+    /// surprise the warning is there to prevent. `clampToModel` clears it
+    /// whenever the model changes, so it can never outlive the model it was
+    /// granted for.
+    @State private var unlockLength = false
     @State private var formState = ParameterFormState(specs: [])
     /// Reference audio waiting to land in the (possibly not-yet-rebuilt) form.
     @State private var pendingAudio: [String: URL] = [:]
@@ -114,6 +121,10 @@ struct StudioView: View {
         .onAppear { syncSelection(); applyPrefill() }
         .onChange(of: catalog.models.map(\.id)) { syncSelection() }
         .onChange(of: selectedModelId) { rebuildForm() }
+        // Re-locking has to pull the length back down with it, or the slider
+        // would keep a value the model no longer offers and the engine would
+        // clamp it on submit — the change happening somewhere you cannot see.
+        .onChange(of: unlockLength) { clampToModel() }
         .onChange(of: prefill.pending) { applyPrefill() }
         // Coming back to a finished queue should not leave you stranded on an
         // empty rendering pane.
@@ -186,6 +197,7 @@ struct StudioView: View {
                             StudioParameterPanel(
                                 state: formState, model: model,
                                 onApplyPreset: applyPreset, layout: .inline,
+                                unlockLength: $unlockLength,
                                 materialPicker: MaterialPickerContext(
                                     catalog: catalog, library: library,
                                     parts: parts, jobs: jobs,
@@ -464,14 +476,24 @@ struct StudioView: View {
                         .font(Bench.Typo.valueLarge)
                         .foregroundStyle(Bench.Palette.textPrimary)
                 }
-                DurationBar(value: $durationS, range: duration.minS...duration.maxS)
+                DurationBar(value: $durationS,
+                            range: duration.minS...effectiveMaxS(model))
                 HStack {
                     Text("0")
                     Spacer()
-                    Text("MAX \(Int(duration.maxS)) S")
+                    // Unlocked, the ceiling is no longer the model's own
+                    // recommendation, and the readout says so rather than
+                    // just showing a bigger number: this is the one place
+                    // the length is read back after the toggle is out of
+                    // sight in Full control.
+                    Text(isUnlocked(model)
+                         ? "UNLOCKED \(Int(effectiveMaxS(model))) S"
+                         : "MAX \(Int(duration.maxS)) S")
                 }
                 .font(Bench.Typo.mono(10))
-                .foregroundStyle(Bench.Palette.textFaintest)
+                .foregroundStyle(isUnlocked(model)
+                                 ? Bench.Palette.warn
+                                 : Bench.Palette.textFaintest)
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
             .frame(maxWidth: .infinity)
@@ -744,11 +766,30 @@ struct StudioView: View {
     }
 
     /// Length and take count are the user's until the model disagrees.
+    ///
+    /// The unlock is cleared here rather than carried across: it was granted
+    /// against one model's ceiling, and a model that never offered one must
+    /// not inherit it. Clearing before the clamp is what makes the length fall
+    /// back inside the new model's own recommendation.
     private func clampToModel() {
         guard let model else { return }
+        if !model.capabilities.duration.canUnlock { unlockLength = false }
         let dur = model.capabilities.duration
-        durationS = min(max(durationS, dur.minS), dur.maxS)
+        durationS = min(max(durationS, dur.minS), effectiveMaxS(model))
         count = min(max(1, count), model.capabilities.outputsPerJobMax)
+    }
+
+    /// Whether this render is currently running past the model's own
+    /// recommendation — the toggle being on is not enough, the model has to
+    /// have somewhere to go.
+    private func isUnlocked(_ model: ModelInfo) -> Bool {
+        unlockLength && model.capabilities.duration.canUnlock
+    }
+
+    /// The length ceiling in force: the model's documented maximum, or the
+    /// unlocked one when Full control has been used to ask for it.
+    private func effectiveMaxS(_ model: ModelInfo) -> Double {
+        model.capabilities.duration.maxS(unlocked: unlockLength)
     }
 
     /// Apply whichever prefilled audio params the current model declares.

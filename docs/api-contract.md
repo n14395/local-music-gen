@@ -263,7 +263,16 @@ Capabilities = {
   // let the adapter load gigabytes and then say no.
   "requires_lyrics": true,
   "instrumental_only": true,
-  "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
+  "duration": {"min_s": 1, "max_s": 30, "default_s": 10,
+    // optional; the ceiling the app's "Unlock max length" toggle raises the
+    // slider to. max_s stays what the model documents about itself; this is
+    // the number past it, which is untrained territory for every model that
+    // declares one. Absent ⇒ max_s is the ceiling and the app offers no
+    // toggle — declare it only where the longer request genuinely reaches the
+    // model, never where the runtime clamps for itself or the latent size is
+    // fixed by the checkpoint. The supervisor clamps duration_s to
+    // unlocked_max_s when present, so the lock lives in the app, not here.
+    "unlocked_max_s": 600},
   "sample_rate": 32000,
   "outputs_per_job_max": 4,
   "est_seconds_per_audio_second": 1.5,
@@ -636,7 +645,8 @@ other, never half of one, and the terminal event names which went.
                                        // the other tasks and their relaxed field rules.
   "prompt": "dreamy synthwave with saxophone",
   "lyrics": null,                     // 422 VALIDATION if the model lacks supports_lyrics
-  "duration_s": 20,                   // clamped to the model's capabilities.duration
+  "duration_s": 20,                   // clamped to capabilities.duration — to
+                                      // unlocked_max_s where declared, else max_s
   "count": 1,                         // takes per job, ≤ outputs_per_job_max
   "params": {"guidance_scale": 3.0, "seed": null},   // validated against the model's
                                        // ParamSpecs; unknown keys dropped with a job.log note

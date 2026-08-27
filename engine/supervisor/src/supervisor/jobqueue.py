@@ -236,8 +236,15 @@ class JobQueue:
         with self.lock:
             if task == "generate":
                 dur = float(body.get("duration_s", caps["duration"]["default_s"]))
-                dur = max(caps["duration"]["min_s"],
-                          min(caps["duration"]["max_s"], dur))
+                # `unlocked_max_s` is the ceiling when a model declares one —
+                # the lock is an app-side affordance (a toggle behind a
+                # warning), not a second server-side rule. Clamping to max_s
+                # here would take an unlocked request and quietly hand back a
+                # shorter take, which is the failure this whole field exists to
+                # avoid. Absent ⇒ max_s is the ceiling, as it always was.
+                ceiling = (caps["duration"].get("unlocked_max_s")
+                           or caps["duration"]["max_s"])
+                dur = max(caps["duration"]["min_s"], min(ceiling, dur))
             else:
                 # output length derives from the input; echo what was sent
                 raw_dur = body.get("duration_s")
@@ -1119,7 +1126,7 @@ class JobQueue:
             self._canceled(job)
         else:
             self._fail(job, "WORKER_CRASHED",
-                       f"the engine worker crashed — likely out of memory ({detail})")
+                       f"the engine worker exited unexpectedly ({detail})")
 
     def _canceled(self, job: Job) -> None:
         job.status = "canceled"

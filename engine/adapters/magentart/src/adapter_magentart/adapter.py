@@ -47,16 +47,46 @@ class MagentaRTAdapter(ModelAdapter):
         root = os.path.join(self._magenta_home(), "magenta-rt-v2")
         resources = os.path.join(root, "resources")
         model_dir = os.path.join(root, "models", self.size)
+        resource_files = (
+            os.path.join(resources, "musiccoca", filename)
+            for filename in (
+                "text_encoder.tflite",
+                "audio_preprocessor.tflite",
+                "music_encoder.tflite",
+                "pretrained_vector_quantizer.tflite",
+            )
+        )
+        spectrostream_files = (
+            os.path.join(resources, "spectrostream", filename)
+            for filename in (
+                "decoder.safetensors",
+                "encoder.safetensors",
+                "quantizer.safetensors",
+                "spectrostream_encoder.mlxfn",
+            )
+        )
+        model_files = (
+            os.path.join(model_dir, f"{self.size}.mlxfn"),
+            os.path.join(model_dir, f"{self.size}_state.safetensors"),
+        )
         mrt_cli = os.path.join(os.path.dirname(sys.executable), "mrt")
         env = {**os.environ, "MAGENTA_HOME": self._magenta_home()}
-        if not os.path.isdir(resources) or not os.listdir(resources):
+        # `mrt models init` has two independent resource directories. A
+        # partially interrupted fetch leaves the parent nonempty but cannot
+        # embed text or decode generated audio.
+        if not all(os.path.isfile(path) and os.path.getsize(path) > 0
+                   for path in (*resource_files, *spectrostream_files)):
             progress_cb(None, "fetching Magenta RT resources "
                               "(~1.3 GB, first use only)")
             subprocess.run([mrt_cli, "models", "init"], env=env, check=True,
                            capture_output=True)
-        if not os.path.isdir(model_dir) or not os.listdir(model_dir):
+        # The MLX export needs its separate recurrent state file. An older
+        # downloader left only the .mlxfn behind, so a nonempty directory is
+        # not sufficient evidence that this model is usable.
+        if not all(os.path.isfile(path) and os.path.getsize(path) > 0
+                   for path in model_files):
             progress_cb(None, f"fetching the {self.size} model "
-                              f"(~450 MB, first use only)")
+                               "(first use only)")
             subprocess.run([mrt_cli, "models", "download", self.size],
                            env=env, check=True, capture_output=True)
 
