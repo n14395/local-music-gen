@@ -229,7 +229,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 1,
-     "max_s": 11,
+     "max_s": 11.8,
      "default_s": 5
     },
     "sample_rate": 44100,
@@ -346,7 +346,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2000,7 +2000,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2139,7 +2139,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2278,7 +2278,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2417,7 +2417,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2556,7 +2556,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2695,7 +2695,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2834,7 +2834,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -2973,7 +2973,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -4716,7 +4716,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 1,
-     "max_s": 47,
+     "max_s": 47.5,
      "default_s": 20
     },
     "sample_rate": 44100,
@@ -5348,7 +5348,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 1,
-     "max_s": 47,
+     "max_s": 120,
      "default_s": 6
     },
     "sample_rate": 44100,
@@ -5482,7 +5482,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -6073,7 +6073,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -6664,7 +6664,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -7171,7 +7171,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -7762,7 +7762,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 10,
-     "max_s": 300,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -8373,7 +8373,7 @@
     "instrumental_only": false,
     "duration": {
      "min_s": 5,
-     "max_s": 240,
+     "max_s": 600,
      "default_s": 60
     },
     "sample_rate": 48000,
@@ -8580,7 +8580,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 5,
-     "max_s": 120,
+     "max_s": 600,
      "default_s": 30
     },
     "sample_rate": 48000,
@@ -8836,7 +8836,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 5,
-     "max_s": 120,
+     "max_s": 600,
      "default_s": 30
     },
     "sample_rate": 48000,
@@ -9092,7 +9092,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 5,
-     "max_s": 120,
+     "max_s": 600,
      "default_s": 30
     },
     "sample_rate": 48000,
@@ -9348,7 +9348,7 @@
     "instrumental_only": true,
     "duration": {
      "min_s": 5,
-     "max_s": 120,
+     "max_s": 600,
      "default_s": 30
     },
     "sample_rate": 48000,

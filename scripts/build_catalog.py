@@ -1138,7 +1138,12 @@ def ace_variant(id_, dit_repo, dit_config, name, fmt, steps, shift, est,
                        "need a Base or SFT DiT).")
     caps = {
         "supports_lyrics": True, "instrumental_only": False,
-        "duration": {"min_s": 10, "max_s": 300, "default_s": 60},
+        # 10~600 is the range upstream documents for its own `duration`
+        # parameter (acestep/inference.py, `generate_music` docstring), and
+        # acestep.cpp clamps to exactly 600 in metadata-fsm.h — two
+        # independent runtimes agreeing on the same ceiling. Nothing in the
+        # adapter clamps, so this number is the whole ceiling.
+        "duration": {"min_s": 10, "max_s": 600, "default_s": 60},
         "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
@@ -1198,7 +1203,11 @@ def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
                       desc, notes=None):
     caps = {
         "supports_lyrics": True, "instrumental_only": False,
-        "duration": {"min_s": 10, "max_s": 300, "default_s": 60},
+        # The C++ runtime clamps duration to 600 itself (metadata-fsm.h:
+        # `if (aces[i].duration > 600) aces[i].duration = 600.0f`), which is
+        # the same ceiling the PyTorch pipeline documents. Asking for more
+        # would be silently truncated down there rather than refused here.
+        "duration": {"min_s": 10, "max_s": 600, "default_s": 60},
         "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
@@ -1493,7 +1502,11 @@ NEW_ENTRIES = [
           "Longer stereo loops and textures than Small — up to 47 s. Gated repo.",
           {
               "supports_lyrics": False, "instrumental_only": True,
-              "duration": {"min_s": 1, "max_s": 47, "default_s": 20},
+              # sample_size 2097152 @ 44.1 kHz in the checkpoint's
+              # model_config.json is 47.55 s, and the adapter renders that
+              # fixed size and trims — so 47.5 is the real ceiling, not a
+              # rounded-down 47. Asking for more returns the same audio.
+              "duration": {"min_s": 1, "max_s": 47.5, "default_s": 20},
               "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 2.0,
               "params": [
@@ -1668,7 +1681,11 @@ NEW_ENTRIES = [
           "The natural engine for the sound-design cards.",
           {
               "supports_lyrics": False, "instrumental_only": True,
-              "duration": {"min_s": 1, "max_s": 47, "default_s": 6},
+              # Same sample_size as small-music (5292032 @ 44.1 kHz = 120 s)
+              # in the checkpoint's model_config.json — the sfx and music
+              # Smalls are the same size of model. This entry read 47 for
+              # no reason the weights give.
+              "duration": {"min_s": 1, "max_s": 120, "default_s": 6},
               "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.6,
               "params": [
@@ -1744,7 +1761,11 @@ NEW_ENTRIES = [
           "accompaniment in about 30 s on Apple Silicon.",
           {
               "supports_lyrics": True, "instrumental_only": False,
-              "duration": {"min_s": 5, "max_s": 240, "default_s": 60},
+              # The XL SFT DiT underneath is the one the acestep entries run
+              # to 600. DiffSynth drives it directly and the adapter passes
+              # duration straight through; the render still locks to the
+              # vocal's own length, which is what actually bounds this one.
+              "duration": {"min_s": 5, "max_s": 600, "default_s": 60},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.0,
               "lyrics_hint": ("Paste the words you sang — they help the "
@@ -1807,7 +1828,10 @@ NEW_ENTRIES = [
           desc,
           {
               "supports_lyrics": False, "instrumental_only": True,
-              "duration": {"min_s": 5, "max_s": 120, "default_s": 30},
+              # Same XL SFT DiT as the acestep-15-dit-xl-sft entry, so the
+              # same 600 s ceiling — a LoRA changes what it plays, not how
+              # long it can play for.
+              "duration": {"min_s": 5, "max_s": 600, "default_s": 30},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.3,
               "params": [

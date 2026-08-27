@@ -68,7 +68,11 @@ class YuEAdapter(ModelAdapter):
         with open(lyrics_txt, "w") as f:
             f.write((lyrics or "[verse]\nla la la\n").strip() + "\n")
 
-        segments = max(1, min(4, int(duration_s // 30)))
+        # ~30 s of song per segment, so the ceiling here has to reach the
+        # catalog's max_s or the slider lies: at min(4, …) a 180 s request
+        # rendered about 120 s and nothing said why. 6 segments covers the
+        # advertised range.
+        segments = max(1, min(6, int(duration_s // 30)))
         cmd = [sys.executable, "infer.py",
                "--stage1_model", self.model_paths.get(STAGE1_REPO, STAGE1_REPO),
                "--stage2_model", self.model_paths.get(STAGE2_REPO, STAGE2_REPO),

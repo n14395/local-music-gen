@@ -170,7 +170,7 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "capabilities": {
                 "supports_lyrics": True,
                 "instrumental_only": False,
-                "duration": {"min_s": 10, "max_s": 240, "default_s": 60},
+                "duration": {"min_s": 10, "max_s": 600, "default_s": 60},
                 "sample_rate": 44100,
                 "outputs_per_job_max": 16,
                 "lyrics_tags": ["[intro]", "[verse]", "[chorus]", "[bridge]",
@@ -276,7 +276,7 @@ def _catalog() -> dict[str, dict[str, Any]]:
             "capabilities": {
                 "supports_lyrics": False,
                 "instrumental_only": True,
-                "duration": {"min_s": 1, "max_s": 11, "default_s": 5},
+                "duration": {"min_s": 1, "max_s": 11.8, "default_s": 5},
                 "sample_rate": 44100,
                 "outputs_per_job_max": 16,
                 "est_seconds_per_audio_second": 0.8,
