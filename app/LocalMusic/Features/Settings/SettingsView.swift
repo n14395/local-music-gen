@@ -507,7 +507,7 @@ struct SettingsView: View {
                             .font(Bench.Typo.secondary)
                             .foregroundStyle(Bench.Palette.textSecondary)
                             .frame(width: 64, alignment: .leading)
-                        BenchStepper(value: settings.defaultTakes, range: 1...8)
+                        BenchStepper(value: settings.defaultTakes, range: 1...16)
                         Spacer(minLength: 0)
                     }
                 }

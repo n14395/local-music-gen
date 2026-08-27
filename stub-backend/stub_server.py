@@ -133,7 +133,7 @@ def _catalog() -> dict[str, dict[str, Any]]:
                 "instrumental_only": True,
                 "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
                 "sample_rate": 32000,
-                "outputs_per_job_max": 4,
+                "outputs_per_job_max": 16,
                 "est_seconds_per_audio_second": 1.5,
                 # stands in for the MLX MusicGen build, the autoregressive
                 # half of the preview fixture (see STUB_PREVIEW_GROWS)
@@ -278,7 +278,7 @@ def _catalog() -> dict[str, dict[str, Any]]:
                 "instrumental_only": True,
                 "duration": {"min_s": 1, "max_s": 11, "default_s": 5},
                 "sample_rate": 44100,
-                "outputs_per_job_max": 4,
+                "outputs_per_job_max": 16,
                 "est_seconds_per_audio_second": 0.8,
                 # the diffusion half of the preview fixture: full-length frames
                 "supports_preview": True,

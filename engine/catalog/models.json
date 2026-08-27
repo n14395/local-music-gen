@@ -21,7 +21,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.5,
     "pipeline": [
      {
@@ -127,7 +127,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 4.0,
     "pipeline": [
      {
@@ -233,7 +233,7 @@
      "default_s": 5
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "supports_preview": true,
     "pipeline": [
@@ -350,7 +350,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -1048,7 +1048,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -1161,7 +1161,7 @@
      "default_s": 30
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -1274,7 +1274,7 @@
      "default_s": 30
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.0,
     "pipeline": [
      {
@@ -1387,7 +1387,7 @@
      "default_s": 30
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -1500,7 +1500,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -1613,7 +1613,7 @@
      "default_s": 30
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.0,
     "pipeline": [
      {
@@ -1730,7 +1730,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 5.0,
     "pipeline": [
      {
@@ -1877,7 +1877,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 5.5,
     "pipeline": [
      {
@@ -2004,7 +2004,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2143,7 +2143,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2282,7 +2282,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2421,7 +2421,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2560,7 +2560,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2699,7 +2699,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2838,7 +2838,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -2977,7 +2977,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -3392,7 +3392,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.0,
     "supports_preview": true,
     "pipeline": [
@@ -3502,7 +3502,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.0,
     "supports_preview": true,
     "pipeline": [
@@ -3612,7 +3612,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 4.0,
     "supports_preview": true,
     "pipeline": [
@@ -3722,7 +3722,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 8.0,
     "pipeline": [
      {
@@ -3828,7 +3828,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 4.5,
     "pipeline": [
      {
@@ -3945,7 +3945,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 8.0,
     "pipeline": [
      {
@@ -4062,7 +4062,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.0,
     "pipeline": [
      {
@@ -4168,7 +4168,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 4.5,
     "pipeline": [
      {
@@ -4274,7 +4274,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 8.5,
     "pipeline": [
      {
@@ -4380,7 +4380,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 5.0,
     "pipeline": [
      {
@@ -4497,7 +4497,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 8.5,
     "pipeline": [
      {
@@ -4614,7 +4614,7 @@
      "default_s": 10
     },
     "sample_rate": 32000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "pipeline": [
      {
@@ -4720,7 +4720,7 @@
      "default_s": 20
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.0,
     "supports_preview": true,
     "pipeline": [
@@ -4837,7 +4837,7 @@
      "default_s": 30
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.15,
     "supports_preview": true,
     "pipeline": [
@@ -5006,7 +5006,7 @@
      "default_s": 30
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.8,
     "supports_preview": true,
     "pipeline": [
@@ -5179,7 +5179,7 @@
      "default_s": 30
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.5,
     "supports_preview": true,
     "pipeline": [
@@ -5352,7 +5352,7 @@
      "default_s": 6
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.6,
     "supports_preview": true,
     "pipeline": [
@@ -5486,7 +5486,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -6077,7 +6077,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -6668,7 +6668,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -7175,7 +7175,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -7766,7 +7766,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "lyrics_tags": [
      "[intro]",
      "[verse]",
@@ -9588,7 +9588,7 @@
      "default_s": 12
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.5,
     "pipeline": [
      {
@@ -9706,7 +9706,7 @@
      "default_s": 12
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.5,
     "pipeline": [
      {
@@ -10328,7 +10328,7 @@
      "default_s": 10
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "pipeline": [
      {
@@ -10496,7 +10496,7 @@
      "default_s": 10
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "pipeline": [
      {
@@ -10641,7 +10641,7 @@
      "default_s": 10
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "pipeline": [
      {
@@ -10786,7 +10786,7 @@
      "default_s": 10
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "pipeline": [
      {
@@ -10931,7 +10931,7 @@
      "default_s": 10
     },
     "sample_rate": 44100,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "pipeline": [
      {
@@ -11070,7 +11070,7 @@
      "default_s": 10
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 0.3,
     "pipeline": [
      {
@@ -11195,7 +11195,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "supports_preview": true,
     "pipeline": [
@@ -11300,7 +11300,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 3.0,
     "supports_preview": true,
     "pipeline": [
@@ -11405,7 +11405,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 5.0,
     "supports_preview": true,
     "pipeline": [
@@ -11510,7 +11510,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.5,
     "supports_preview": true,
     "pipeline": [
@@ -11615,7 +11615,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.0,
     "supports_preview": true,
     "pipeline": [
@@ -11720,7 +11720,7 @@
      "default_s": 10
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 4,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 2.5,
     "supports_preview": true,
     "pipeline": [

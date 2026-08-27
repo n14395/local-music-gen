@@ -19,6 +19,17 @@ CATALOG = os.path.join(ROOT, "engine", "catalog", "models.json")
 
 GIB = 1 << 30
 
+# Takes ceiling for the generation families. Not a model constraint: the
+# supervisor renders a job's takes in a plain sequential loop (jobqueue's
+# `for i in range(job.count)`), one worker round-trip each, sweeping previews
+# between them — so N takes is N renders back to back, not a batched forward
+# pass. The number is a judgment about how long one queued job should hold the
+# GPU before you can reorder the queue around it. Families that stay lower
+# (the long-form singers at 1, the vocal-conditioned ACE-Step variants at 2)
+# say so at their own entry, and task-only models are pinned to 1 by
+# `task_caps` — a non-generate job with count != 1 is refused outright.
+TAKES_MAX = 16
+
 
 def token() -> str | None:
     path = os.path.expanduser("~/.cache/huggingface/token")
@@ -776,7 +787,7 @@ def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
     return {
         "supports_lyrics": False, "instrumental_only": True,
         "duration": {"min_s": 1, "max_s": max_s, "default_s": 10},
-        "sample_rate": 32000, "outputs_per_job_max": 4,
+        "sample_rate": 32000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
         "params": params,
     }
@@ -786,7 +797,7 @@ def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0):
     return {
         "supports_lyrics": False, "instrumental_only": True,
         "duration": {"min_s": 1, "max_s": max_s, "default_s": default_s},
-        "sample_rate": 16000, "outputs_per_job_max": 4,
+        "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
         "params": [
             {"key": "steps", "type": "int", "label": "Steps",
@@ -1126,7 +1137,7 @@ def ace_variant(id_, dit_repo, dit_config, name, fmt, steps, shift, est,
     caps = {
         "supports_lyrics": True, "instrumental_only": False,
         "duration": {"min_s": 10, "max_s": 300, "default_s": 60},
-        "sample_rate": 48000, "outputs_per_job_max": 4,
+        "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
         "lyrics_hint": ("Section tags on their own lines structure the song; "
@@ -1186,7 +1197,7 @@ def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
     caps = {
         "supports_lyrics": True, "instrumental_only": False,
         "duration": {"min_s": 10, "max_s": 300, "default_s": 60},
-        "sample_rate": 48000, "outputs_per_job_max": 4,
+        "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
         "lyrics_hint": ("Section tags on their own lines structure the song; "
@@ -1252,7 +1263,7 @@ def magnet_entry(id_, repo, name, seconds, min_ram_gib, tier, est, desc,
     caps = {
         "supports_lyrics": False, "instrumental_only": True,
         "duration": {"min_s": seconds, "max_s": seconds, "default_s": seconds},
-        "sample_rate": 32000, "outputs_per_job_max": 4,
+        "sample_rate": 32000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
         "params": [
             {"key": "temperature", "type": "float", "label": "Temperature",
@@ -1481,7 +1492,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 47, "default_s": 20},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 2.0,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps", "default": 100,
@@ -1505,7 +1516,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 120, "default_s": 30},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.15,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps", "default": 8,
@@ -1554,7 +1565,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 380, "default_s": 30},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.8,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps", "default": 8,
@@ -1607,7 +1618,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 380, "default_s": 30},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 2.5,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps",
@@ -1656,7 +1667,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 47, "default_s": 6},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.6,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps",
@@ -1864,7 +1875,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
-              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.5,
               "params": [
                   {"key": "style_audio", "type": "audio",
@@ -1922,7 +1933,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 2, "max_s": 300, "default_s": 12},
-              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.5,
               "params": [
                   {"key": "style_audio", "type": "audio",
@@ -2216,7 +2227,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 2, "max_s": 20, "default_s": 10},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 3.0,
               "params": [
                   {"key": "src_audio", "type": "audio",
@@ -2278,7 +2289,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 2, "max_s": 20, "default_s": 10},
-              "sample_rate": 44100, "outputs_per_job_max": 4,
+              "sample_rate": 44100, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 3.0,
               "params": [
                   {"key": "src_audio", "type": "audio",
@@ -2342,7 +2353,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 1, "max_s": 30, "default_s": 10},
-              "sample_rate": 48000, "outputs_per_job_max": 4,
+              "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 0.3,
               "params": [
                   {"key": "src_audio", "type": "audio",

@@ -220,8 +220,7 @@ struct StudioView: View {
                                     if installed.contains(where: { $0.id == song.modelId }) {
                                         selectedModelId = song.modelId
                                     }
-                                },
-                                onSplit: { actions.split($0) })
+                                })
             }
         }
         .frame(maxHeight: .infinity)

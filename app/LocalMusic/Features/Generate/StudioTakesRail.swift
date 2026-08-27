@@ -13,7 +13,6 @@ struct StudioTakesRail: View {
     let catalog: ModelCatalogStore
     let actions: SongActions
     let onReusePrompt: (SongRecord) -> Void
-    let onSplit: (SongRecord) -> Void
 
     /// Only what this Studio made. `library.recent` is every recent row of any
     /// origin, so without the filter an album you imported this morning would
@@ -23,7 +22,11 @@ struct StudioTakesRail: View {
         library.recent.filter { $0.originKind == .generated }
     }
 
-    private var takes: [SongRecord] { Array(generated.prefix(8)) }
+    /// Enough to hold a full batch: a job may render up to `TAKES_MAX` takes,
+    /// and a rail that showed half of them would hide takes the run you are
+    /// watching just made. The rail scrolls, so this is a history window
+    /// rather than a layout ceiling.
+    private var takes: [SongRecord] { Array(generated.prefix(16)) }
 
     private var todayCount: Int {
         let start = Calendar.current.startOfDay(for: Date())
@@ -73,8 +76,7 @@ struct StudioTakesRail: View {
                                      actions: actions,
                                      onPlay: { play(song) },
                                      onSeek: { seek(song, to: $0) },
-                                     onReusePrompt: { onReusePrompt(song) },
-                                     onSplit: { onSplit(song) })
+                                     onReusePrompt: { onReusePrompt(song) })
                                 // The rail is a history: the further down, the
                                 // quieter, bottoming out rather than vanishing.
                                 .opacity(index >= 3 ? 0.62 : 1)
@@ -113,7 +115,6 @@ private struct TakeCard: View {
     let onPlay: () -> Void
     let onSeek: (Double) -> Void
     let onReusePrompt: () -> Void
-    let onSplit: () -> Void
 
     @State private var showingDetails = false
 
@@ -154,19 +155,17 @@ private struct TakeCard: View {
                                 onSeek: onSeek)
                 .frame(height: isLead ? 46 : 38)
 
-            if isLead {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                if isLead {
                     RatingStars(rating: song.rating, size: 13, spacing: 2) { rating in
                         var updated = song
                         updated.rating = rating
                         library.update(updated)
                     }
-                    Spacer()
-                    Button("Reuse prompt", action: onReusePrompt)
-                        .buttonStyle(.bench(.quiet))
-                    Button("Split", action: onSplit)
-                        .buttonStyle(.bench(.quiet))
                 }
+                Spacer()
+                Button("Reuse prompt", action: onReusePrompt)
+                    .buttonStyle(.bench(.quiet))
             }
         }
         .padding(14)

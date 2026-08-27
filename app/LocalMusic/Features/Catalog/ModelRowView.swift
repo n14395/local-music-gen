@@ -61,25 +61,27 @@ struct ModelRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                titleRow
-                Text(model.description)
-                    .font(Bench.Typo.secondary)
-                    .foregroundStyle(Bench.Palette.textTertiary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let download {
-                    DownloadProgressLine(download: download)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    titleRow
+                    Text(model.description)
+                        .font(Bench.Typo.secondary)
+                        .foregroundStyle(Bench.Palette.textTertiary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if download == nil, let failure {
-                    DownloadFailureLine(failure: failure, model: model,
-                                        onDismiss: onDismissFailure)
-                }
-                badgeRow
+                .frame(maxWidth: .infinity, alignment: .leading)
+                controls
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            controls
+            if let download {
+                DownloadProgressLine(download: download)
+            }
+            if download == nil, let failure {
+                DownloadFailureLine(failure: failure, model: model,
+                                    onDismiss: onDismissFailure)
+            }
+            badgeRow
         }
         .padding(.horizontal, 16).padding(.vertical, 15)
         .benchCard(fill: isDownloading || isInspected ? Bench.Palette.cardSelected
@@ -188,13 +190,19 @@ struct ModelRowView: View {
     /// Studio, which shows the same model and has to say the same things about
     /// it — see `ModelBadges`.
     private var badgeRow: some View {
-        FlowLayout(spacing: 6, rowSpacing: 6) {
-            ForEach(ModelBadges.list(for: model, isVariant: row.isVariant,
-                                     physicalMemory: physicalMemory,
-                                     freeDiskBytes: freeDiskBytes,
-                                     hasHFToken: hasHFToken,
-                                     actionCount: actionCount)) { badge in
-                BenchBadge(badge.text, tone: badge.tone)
+        HStack(alignment: .bottom, spacing: 12) {
+            FlowLayout(spacing: 6, rowSpacing: 6) {
+                ForEach(ModelBadges.list(for: model, isVariant: row.isVariant,
+                                         physicalMemory: physicalMemory,
+                                         freeDiskBytes: freeDiskBytes,
+                                         hasHFToken: hasHFToken,
+                                         actionCount: actionCount)) { badge in
+                    BenchBadge(badge.text, tone: badge.tone)
+                }
+            }
+            if let download, download.state != .provisioning {
+                Spacer(minLength: 8)
+                DownloadProgressStats(download: download)
             }
         }
     }
@@ -364,51 +372,29 @@ private struct DownloadFailureLine: View {
     }
 }
 
-/// `▓▓▓▓▓░░░░  18.1 / 53.4 GB · 12 MB/S · 48 MIN LEFT`
-///
-/// The rate is smoothed and the ETA derived here rather than in the store, so
-/// the smoothing window belongs to the thing being looked at: the estimate
-/// resets when the row appears instead of carrying a stale average across a
-/// pause, a cancel and a fresh start.
+/// The full-width progress row on a downloading model card.
 private struct DownloadProgressLine: View {
     let download: DownloadInfo
-    @State private var rate = DownloadRate()
 
     private var fraction: Double {
         guard download.bytesTotal > 0 else { return 0 }
         return Double(download.bytesDone) / Double(download.bytesTotal)
     }
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 11) {
-            if download.state == .provisioning {
+        if download.state == .provisioning {
+            HStack(spacing: 11) {
                 BenchSpinner(size: 13)
                 Text((download.message ?? "Setting up the runtime…").uppercased())
                     .font(Bench.Typo.mono(11, .semibold))
                     .foregroundStyle(Bench.Palette.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-            } else {
-                // The bar is flexible and the stats are not, so on a narrow
-                // card the bar was the thing that vanished. Side by side only
-                // while the bar keeps a readable width; below that it takes a
-                // full line of its own with the stats underneath.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 11) {
-                        bar.frame(minWidth: 120)
-                        lineText.fixedSize()
-                    }
-                    VStack(alignment: .leading, spacing: 7) {
-                        bar
-                        lineText.lineLimit(1)
-                    }
-                }
             }
+        } else {
+            bar
         }
-        .onAppear { rate.ingest(download.speedBps) }
-        // The sampled quantity is the speed, so that is what is fed to the
-        // smoother — one ingest per engine sample, no double counting.
-        .onChange(of: download.speedBps) { _, sample in rate.ingest(sample) }
     }
 
     private var bar: some View {
@@ -418,15 +404,22 @@ private struct DownloadProgressLine: View {
                                              : Bench.Palette.textMuted,
                                 track: Bench.Palette.windowStroke)
     }
+}
 
-    private var lineText: some View {
-        Text(line)
+/// `18.1 / 53.4 GB · 12 MB/S · 48 MIN LEFT`, aligned beside the card tags.
+/// The rate is smoothed here rather than in the store, so the estimate resets
+/// when the row appears instead of carrying a stale average across attempts.
+private struct DownloadProgressStats: View {
+    let download: DownloadInfo
+    @State private var rate = DownloadRate()
+
+    var body: some View {
+        Text(DownloadFormat.transferLine(download, rate: rate))
             .font(Bench.Typo.mono(11, .semibold))
             .foregroundStyle(Bench.Palette.textSecondary)
-    }
-
-    private var line: String {
-        DownloadFormat.transferLine(download, rate: rate)
+            .fixedSize()
+            .onAppear { rate.ingest(download.speedBps) }
+            .onChange(of: download.speedBps) { _, sample in rate.ingest(sample) }
     }
 }
 
@@ -446,4 +439,3 @@ private struct InstalledCheck: View {
         .help("Downloaded — model files and runtime both here")
     }
 }
-
