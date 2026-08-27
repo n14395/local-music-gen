@@ -31,11 +31,15 @@ struct StyleTransferScreen: View {
         var id: String { rawValue }
     }
 
+    private enum ControlMode: String {
+        case simple, full
+    }
+
     @State private var picking: PickTarget?
     /// Rebuilt whenever the model changes; seeded from — and written back to —
     /// `model.overrides`, which is what survives that rebuild.
     @State private var formState = ParameterFormState(specs: [])
-    @State private var showAdvanced = false
+    @AppStorage("styleTransfer.controlMode") private var controlMode: ControlMode = .simple
     /// Set when the user asks for the controls back while a run is in flight
     /// — Generate's `showingComposer`, under this screen's name for it.
     @State private var showingWorkspace = false
@@ -167,6 +171,12 @@ struct StyleTransferScreen: View {
                     Button("Clear") { model.clearConfiguration() }
                         .buttonStyle(.bench(.quiet))
                         .disabled(model.isChainRunning)
+                }
+                if !showsRendering {
+                    BenchSegmented(selection: $controlMode, options: [
+                        .init(value: .simple, label: "Simple"),
+                        .init(value: .full, label: "Full control"),
+                    ])
                 }
             }
         }
@@ -650,29 +660,26 @@ struct StyleTransferScreen: View {
     private var advancedSection: some View {
         let specs = model.knobSpecs(in: models)
         if !specs.isEmpty {
-            ActionOptionsCard {
-                HStack(spacing: 10) {
-                    Text("ADVANCED").eyebrow()
-                    // Counts what *this* model will send, not everything the
-                    // document is holding for other models.
-                    let changed = model.applicableOverrides(in: models).count
-                    if changed > 0 {
-                        BenchBadge("\(changed) CHANGED", tone: .accent)
-                    }
-                    Spacer(minLength: 8)
-                    if !model.overrides.isEmpty {
-                        Button("Reset") {
-                            model.overrides = [:]
-                            rebuildForm()
+            advancedSummary
+            if controlMode == .full {
+                ActionOptionsCard {
+                    HStack(spacing: 10) {
+                        Text("PARAMETERS").eyebrow()
+                        // Counts what *this* model will send, not everything
+                        // the document is holding for other models.
+                        let changed = model.applicableOverrides(in: models).count
+                        if changed > 0 {
+                            BenchBadge("\(changed) CHANGED", tone: .accent)
                         }
-                        .buttonStyle(.bench(.quiet))
+                        Spacer(minLength: 8)
+                        if !model.overrides.isEmpty {
+                            Button("Reset") {
+                                model.overrides = [:]
+                                rebuildForm()
+                            }
+                            .buttonStyle(.bench(.quiet))
+                        }
                     }
-                    Button(showAdvanced ? "Hide" : "Show") {
-                        showAdvanced.toggle()
-                    }
-                    .buttonStyle(.bench(.quiet))
-                }
-                if showAdvanced {
                     ParameterFormView(state: formState, grouped: false,
                                       labelWidth: 130,
                                       materialPicker: MaterialPickerContext(
@@ -684,6 +691,58 @@ struct StyleTransferScreen: View {
                 }
             }
         }
+    }
+
+    /// The parameter values stay visible in Simple mode, just as they do in
+    /// Generate, so the full form is never an opaque "Advanced" drawer.
+    private var advancedSummary: some View {
+        let isOpen = controlMode == .full
+        return Button { controlMode = isOpen ? .simple : .full } label: {
+            HStack(spacing: 14) {
+                Text(summaryText)
+                    .font(Bench.Typo.mono(12))
+                    .foregroundStyle(Bench.Palette.textQuaternary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    Text("Full control")
+                    Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .font(Bench.Typo.secondaryEmphasis)
+                .foregroundStyle(Bench.Palette.accent)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card)
+                .fill(Color(hex: 0x131820)))
+            .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card)
+                .strokeBorder(Bench.Palette.hairline, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .help(isOpen ? "Hide the full parameter panel"
+                     : "Open the full parameter panel")
+    }
+
+    private var summaryText: String {
+        let interesting = formState.specs.filter {
+            $0.isInternal != true && ($0.type == .int || $0.type == .float
+                || $0.type == .enum || $0.type == .bool)
+        }
+        return interesting.prefix(4).map { spec in
+            let value: String
+            switch spec.type {
+            case .int, .float:
+                value = formState.isNull(spec) ? "random"
+                    : (spec.type == .int ? String(Int(formState.doubleValue(spec)))
+                                         : String(format: "%g", formState.doubleValue(spec)))
+            case .bool:
+                value = formState.boolValue(spec) ? "on" : "off"
+            default:
+                value = formState.stringValue(spec)
+            }
+            return "\(spec.label.uppercased()) \(value)"
+        }.joined(separator: " · ")
     }
 
     // MARK: - Commit bar
