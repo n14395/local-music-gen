@@ -166,11 +166,10 @@ struct ModelsScreen: View {
             }
         }
         .background(Bench.Palette.windowBackground)
-        .onKeyPress(phases: .down) { press in
-            guard press.key == KeyEquivalent("f"),
-                  press.modifiers.contains(.command) else { return .ignored }
-            filterFocused = true
-            return .handled
+        .background {
+            Button("") { filterFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
         }
         .task { await catalog.refresh() }
         .sheet(isPresented: $showAddModel) {

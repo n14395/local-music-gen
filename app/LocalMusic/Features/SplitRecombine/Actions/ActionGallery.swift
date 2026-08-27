@@ -27,6 +27,7 @@ struct ActionGallery: View {
     let onOpenModels: () -> Void
 
     @State private var isTargeted = false
+    @FocusState private var queryFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,6 +49,11 @@ struct ActionGallery: View {
                 .padding(.horizontal, 20).padding(.vertical, 18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .background {
+            Button("") { queryFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
         }
     }
 
@@ -141,7 +147,8 @@ struct ActionGallery: View {
         } trailing: {
             HStack(spacing: 9) {
                 BenchSearchField(text: $query,
-                                 placeholder: "What do you want to do?")
+                                 placeholder: "What do you want to do?",
+                                 focused: $queryFocused)
                 BenchMenu(label: "Recently used") {
                     if recent.isEmpty {
                         Text("Nothing yet")

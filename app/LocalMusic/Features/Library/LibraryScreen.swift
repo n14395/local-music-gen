@@ -94,11 +94,10 @@ struct LibraryScreen: View {
             .frame(maxHeight: .infinity)
         }
         .background(Bench.Palette.windowBackground)
-        .onKeyPress(phases: .down) { press in
-            guard press.key == KeyEquivalent("f"),
-                  press.modifiers.contains(.command) else { return .ignored }
-            searchFocused = true
-            return .handled
+        .background {
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
         }
         .onAppear {
             applyScope()
