@@ -1761,10 +1761,10 @@ NEW_ENTRIES = [
           "accompaniment in about 30 s on Apple Silicon.",
           {
               "supports_lyrics": True, "instrumental_only": False,
-              # The XL SFT DiT underneath is the one the acestep entries run
-              # to 600. DiffSynth drives it directly and the adapter passes
-              # duration straight through; the render still locks to the
-              # vocal's own length, which is what actually bounds this one.
+              # Same unclamped DiffSynth path as the LoRA entries below, so
+              # the same 600 s ceiling. In practice this one rarely reaches it:
+              # the adapter locks the render to the vocal recording's own
+              # length, so max_s is the ceiling and the singer is the bound.
               "duration": {"min_s": 5, "max_s": 600, "default_s": 60},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.0,
@@ -1828,9 +1828,16 @@ NEW_ENTRIES = [
           desc,
           {
               "supports_lyrics": False, "instrumental_only": True,
-              # Same XL SFT DiT as the acestep-15-dit-xl-sft entry, so the
-              # same 600 s ceiling — a LoRA changes what it plays, not how
-              # long it can play for.
+              # This path does NOT go through the pipeline whose docstring
+              # documents 10~600 — DiffSynth drives the DiT directly, no LM
+              # half — so the ceiling is its own: `max_latent_length =
+              # round(duration * 48000 / 1920)` (25 latent frames/s) with no
+              # clamp anywhere in pipelines/ace_step.py, and the silence
+              # latent it slices from TILES rather than running out. The wall
+              # is the DiT's RoPE at max_position_embeddings=32768, which 600 s
+              # (15k frames, fewer after patchify) sits under half of. 600 is
+              # kept because it is where both reference ACE-Step runtimes stop;
+              # past it is untrained extrapolation nobody upstream sanctions.
               "duration": {"min_s": 5, "max_s": 600, "default_s": 30},
               "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.3,

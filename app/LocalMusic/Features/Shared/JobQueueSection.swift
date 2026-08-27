@@ -244,7 +244,7 @@ struct JobRow: View {
             }
             Text(metaLine)
                 .metaLine()
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             if let onShowInLibrary {
                 // Its own line rather than another control in the header row:
                 // the title up there already gives way to the status readout
@@ -468,6 +468,7 @@ struct DownloadQueueRow: View {
             }
             Text(metaLine)
                 .metaLine()
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(13)
         // The selected-card treatment means "this is the one the machine is
@@ -531,7 +532,7 @@ struct FinishedDownloadRow: View {
             }
             Text(metaLine)
                 .metaLine()
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(13)
         // The ordinary card, like a finished render's: the selected treatment

@@ -31,6 +31,12 @@ from engine_protocol.adapter import (CancelledError, CancelToken,
 CORE_REPO = "ACE-Step/Ace-Step1.5"
 DIT_REPO = "ACE-Step/acestep-v15-xl-sft"
 
+# Above this, decode the VAE in tiles (see the note at the `tiled` kwarg).
+# 240 s rather than the ~350 s the arithmetic gives: 240 is the longest take
+# this family shipped before the ceiling moved to 600, so it is the longest
+# the untiled path is known — not calculated — to survive.
+TILED_DECODE_ABOVE_S = 240.0
+
 
 class DiffSynthAceAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
@@ -122,6 +128,21 @@ class DiffSynthAceAdapter(ModelAdapter):
             "shift": float(self.settings.get("shift", 6.0)),
             "seed": seed,
         }
+        # The DiT renders any length the catalog offers, but the VAE decode is
+        # where a long take dies: the decoder's last upsampling block holds
+        # 128 channels x 48000 samples per second of audio in one tensor, and
+        # past roughly 350 s that clears the 2^31 elements MPS can address, so
+        # conv_transpose1d falls off the Metal path and raises
+        # "convolution_overrideable not implemented" — after the whole
+        # diffusion has already been paid for.
+        #
+        # `tiled` is upstream's own answer (OobleckVAE.tiled_decode): decode
+        # ~20 s of latent at a time, blend the overlaps, accumulate on CPU.
+        # Only above a length the untiled path is known to survive, because
+        # tiling decodes the overlap twice and there is no reason to spend
+        # that on a 30 s take.
+        if duration > TILED_DECODE_ABOVE_S:
+            kwargs["tiled"] = True
         bpm = params.get("bpm")
         if bpm is not None:
             kwargs["bpm"] = int(bpm)
