@@ -628,17 +628,15 @@ struct BenchSearchField: View {
     /// as "unconstrained", so the default keeps every existing call site at the
     /// exact width it had.
     var width: CGFloat? = 250
+    /// When set, the field can be focused programmatically (e.g. Cmd+F).
+    var focused: FocusState<Bool>.Binding? = nil
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Bench.Palette.textFaint)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-                .tint(Bench.Palette.accent)
-                .font(Bench.Typo.secondary)
-                .foregroundStyle(Bench.Palette.textPrimary)
+            field
         }
         .padding(.horizontal, 11).padding(.vertical, 7)
         .frame(width: width)
@@ -648,6 +646,20 @@ struct BenchSearchField: View {
         .overlay(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.button,
                                   style: .continuous)
             .strokeBorder(Bench.Palette.cardStrokeSoft, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var field: some View {
+        let tf = TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .tint(Bench.Palette.accent)
+            .font(Bench.Typo.secondary)
+            .foregroundStyle(Bench.Palette.textPrimary)
+        if let focused {
+            tf.focused(focused)
+        } else {
+            tf
+        }
     }
 }
 

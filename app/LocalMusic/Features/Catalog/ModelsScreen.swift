@@ -33,6 +33,7 @@ struct ModelsScreen: View {
     @State private var inspectedId: String?
     @State private var showAddModel = false
     @State private var filter = ""
+    @FocusState private var filterFocused: Bool
     @State private var selectedTags: Set<String> = []
     /// Persisted, and shared with the sidebar's storage card: "Free up
     /// space…" narrows the list to what is actually taking up room, which
@@ -151,17 +152,26 @@ struct ModelsScreen: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: .top)
-                if let model = inspectedModel {
-                    BenchInspector(width: Bench.Metrics.Inspector.modelProperties) {
+                BenchInspector(width: Bench.Metrics.Inspector.modelProperties) {
+                    if let model = inspectedModel {
                         ModelInspector(
                             model: model,
                             actionCount: ModelActions.count(for: model),
                             onOpenAction: { onOpenAction?($0) })
+                    } else {
+                        LibraryEmptyState(title: "Select a model",
+                                          message: "Details appear here.")
                     }
                 }
             }
         }
         .background(Bench.Palette.windowBackground)
+        .onKeyPress(phases: .down) { press in
+            guard press.key == KeyEquivalent("f"),
+                  press.modifiers.contains(.command) else { return .ignored }
+            filterFocused = true
+            return .handled
+        }
         .task { await catalog.refresh() }
         .sheet(isPresented: $showAddModel) {
             AddModelSheet(catalog: catalog)
@@ -189,7 +199,8 @@ struct ModelsScreen: View {
 
     private var topBar: some View {
         BenchTopBar(title: "Models") {
-            BenchSearchField(text: $filter, placeholder: "Filter models")
+            BenchSearchField(text: $filter, placeholder: "Filter models",
+                             focused: $filterFocused)
             Button { showAddModel = true } label: {
                 Text("＋ Add a model…")
             }

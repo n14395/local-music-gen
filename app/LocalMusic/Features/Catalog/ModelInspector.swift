@@ -39,7 +39,7 @@ struct ModelInspector: View {
                     whatItTakes
                     costSection
                     licenceSection
-                    repoSection
+                    sourceSection
                     if let notes = model.notes, !notes.isEmpty {
                         section("NOTES") {
                             Text(notes)
@@ -236,23 +236,46 @@ struct ModelInspector: View {
     }
 
     @ViewBuilder
-    private var repoSection: some View {
-        // Where the weights actually come from — the thing to check when a
-        // download 401s, and the only place the app admits that one model can
-        // be several repositories.
-        if !model.hfRepos.isEmpty {
-            section("WEIGHTS FROM") {
+    private var sourceSection: some View {
+        let links = sourceLinks
+        section("SOURCE") {
+            if links.isEmpty {
+                fact("Origin", "Included with Local Music")
+            } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(model.hfRepos, id: \.repoId) { repo in
-                        Text(repo.repoId)
-                            .font(Bench.Typo.mono(10))
-                            .foregroundStyle(Bench.Palette.textTertiary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                    ForEach(Array(links.enumerated()), id: \.offset) { _, link in
+                        Link(destination: link.url) {
+                            HStack(spacing: 5) {
+                                Text(link.label)
+                                    .font(Bench.Typo.mono(10))
+                                    .foregroundStyle(Bench.Palette.accent)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Bench.Palette.accent)
+                            }
+                        }
+                        .textSelection(.enabled)
                     }
                 }
             }
         }
+    }
+
+    /// Where to send the user to read about the model. Hugging Face wins when a
+    /// model is available there; otherwise the catalog's homepage names its
+    /// original host.
+    private var sourceLinks: [(label: String, url: URL)] {
+        var out: [(String, URL)] = []
+        for repo in model.hfRepos {
+            guard let url = URL(string: "https://huggingface.co/\(repo.repoId)") else { continue }
+            out.append((repo.repoId, url))
+        }
+        if !out.isEmpty { return out }
+        if let homepage = model.homepage, let url = URL(string: homepage) {
+            return [(url.host ?? "Source", url)]
+        }
+        return []
     }
 
     // MARK: - Pieces

@@ -60,6 +60,7 @@ struct LibraryScreen: View {
     /// opposed to the user picking it.
     @State private var promotedSort = false
     @State private var siblings: [PartRecord] = []
+    @FocusState private var searchFocused: Bool
 
     private struct ScopeCounts: Equatable {
         var songs = 0
@@ -93,6 +94,12 @@ struct LibraryScreen: View {
             .frame(maxHeight: .infinity)
         }
         .background(Bench.Palette.windowBackground)
+        .onKeyPress(phases: .down) { press in
+            guard press.key == KeyEquivalent("f"),
+                  press.modifiers.contains(.command) else { return .ignored }
+            searchFocused = true
+            return .handled
+        }
         .onAppear {
             applyScope()
             library.refreshSearch()
@@ -154,7 +161,8 @@ struct LibraryScreen: View {
             HStack(spacing: 9) {
                 BenchSearchField(text: searchText,
                                  placeholder: searchPlaceholder,
-                                 width: scope == .parts ? 230 : 250)
+                                 width: scope == .parts ? 230 : 250,
+                                 focused: $searchFocused)
                 // Offered from Generated Songs too: that is where you are when
                 // it occurs to you to bring something in, and hiding the button
                 // until you have already found the Imported scope makes the

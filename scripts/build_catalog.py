@@ -243,6 +243,48 @@ PIPELINES = {
 }
 
 
+# The catalog has a source page for every model. Prefer configured Hugging Face
+# repositories below: some projects have moved or been mirrored there since the
+# original catalog research. These entries either self-download from the named
+# provider, ship with a package, or have no catalogued HF repository.
+SOURCE_HOMEPAGES = {
+    "magenta-rt2-small": "https://huggingface.co/google/magenta-realtime-2",
+    "magenta-rt2-base": "https://huggingface.co/google/magenta-realtime-2",
+    "separation-htdemucs": "https://github.com/adefossez/demucs",
+    "separation-htdemucs-ft": "https://github.com/adefossez/demucs",
+    "separation-htdemucs-6s": "https://github.com/adefossez/demucs",
+    "separation-hdemucs-mmi": "https://github.com/adefossez/demucs",
+    "separation-mdx-extra": "https://github.com/adefossez/demucs",
+    "cleanup-uvr-denoise": "https://huggingface.co/Politrees/UVR_resources",
+    "cleanup-uvr-deecho-dereverb": "https://huggingface.co/Politrees/UVR_resources",
+    "separation-uvr-kimvocal2": "https://huggingface.co/Politrees/UVR_resources",
+    "separation-uvr-vocft": "https://huggingface.co/Politrees/UVR_resources",
+    "separation-uvr-karaoke": "https://huggingface.co/Politrees/UVR_resources",
+    "separation-scnet": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
+    "separation-mdx23c-vocals": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
+    "separation-scnet-xl": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
+    "separation-drumsep": "https://github.com/jarredou/models/releases/tag/DrumSep",
+    "analysis-squim": "https://pytorch.org/audio/stable/pipelines.html",
+    "timbre-rave-percussion": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-vintage": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-sol_ordinario": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-VCTK": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-nasa": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-musicnet": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-sol_full": "https://acids-ircam.github.io/rave_models_download",
+    "timbre-rave-isis": "https://acids-ircam.github.io/rave_models_download",
+    "reamp-nam": "https://www.tone3000.com/",
+    "convert-voice-seedvc": "https://huggingface.co/Plachtaa/seed-vc",
+    "convert-voice-seedvc-v2": "https://huggingface.co/Plachtaa/seed-vc",
+    "tag-essentia-discogs": "https://essentia.upf.edu/models.html",
+    "dsp-mixdown": "https://github.com/spotify/pedalboard",
+    "transcribe-basicpitch": "https://github.com/spotify/basic-pitch",
+    "transcribe-transkun": "https://github.com/Yujia-Yan/Skipping-The-Frame-Level",
+    "transcribe-swiftf0": "https://github.com/lars76/swift-f0",
+    "render-soundfont": "https://huggingface.co/rtikw/localmusic-assets",
+}
+
+
 def apply_pipeline(entry: dict) -> None:
     """Set capabilities.pipeline from PIPELINES, or drop it where the family
     reports no stages. Task-only entries never get one even when their family
@@ -3754,6 +3796,14 @@ def main() -> None:
     # model that can do X" against /v1/models order, which is this order.
     models = kept + [copy.deepcopy(e) for e in NEW_ENTRIES]
     for m in models:
+        # A configured Hub repository is the preferred source, even where the
+        # original publisher also hosts the same weights elsewhere.
+        if m["hf_repos"]:
+            m["homepage"] = "https://huggingface.co/" + m["hf_repos"][0]["repo_id"]
+        else:
+            m["homepage"] = SOURCE_HOMEPAGES.get(m["id"])
+        if not m["homepage"]:
+            raise ValueError(f"{m['id']}: no source homepage")
         m["tags"] = derive_tags(m)
         apply_pipeline(m)
         apply_preview(m)

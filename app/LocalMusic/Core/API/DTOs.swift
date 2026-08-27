@@ -180,6 +180,12 @@ struct ModelInfo: Codable, Identifiable, Sendable {
     let requirements: Requirements
     let license: LicenseInfo
     let notes: String?
+    /// Where the model's weights and write-up live, as a real URL. Optional so
+    /// engines that predate it still decode; when absent the inspector derives
+    /// a Hugging Face link from `hfRepos`, which is right for the catalogue's
+    /// Hugging Face models and lets a non-Hugging Face model name its own page
+    /// without the app guessing a hub.
+    let homepage: String?
 
     var isFeatured: Bool { featured ?? false }
     var isPinned: Bool { pinned ?? false }
@@ -195,8 +201,9 @@ struct ModelInfo: Codable, Identifiable, Sendable {
          description: String, hfRepos: [HFRepo], sizeBytes: Int64,
          installState: InstallState, installedBytes: Int64,
          runtimeState: RuntimeState? = nil, pinned: Bool? = nil,
-         capabilities: Capabilities, requirements: Requirements,
-         license: LicenseInfo, notes: String? = nil) {
+          capabilities: Capabilities, requirements: Requirements,
+          license: LicenseInfo, notes: String? = nil,
+          homepage: String? = nil) {
         self.id = id
         self.family = family
         self.featured = featured
@@ -215,6 +222,7 @@ struct ModelInfo: Codable, Identifiable, Sendable {
         self.requirements = requirements
         self.license = license
         self.notes = notes
+        self.homepage = homepage
     }
 }
 
