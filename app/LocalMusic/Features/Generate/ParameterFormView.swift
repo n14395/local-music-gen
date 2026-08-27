@@ -10,6 +10,9 @@ final class ParameterFormState {
     let specs: [ParamSpec]
     private(set) var values: [String: JSONValue]
     var audioSelections: [String: URL] = [:]
+    /// The library track name chosen for an audio param, kept alongside the URL
+    /// so the row can show the sound's name instead of its storage filename.
+    var audioSelectionNames: [String: String] = [:]
 
     init(specs: [ParamSpec]) {
         self.specs = specs
@@ -55,6 +58,7 @@ final class ParameterFormState {
     func reset() {
         values = Dictionary(uniqueKeysWithValues: specs.map { ($0.key, $0.default) })
         audioSelections = [:]
+        audioSelectionNames = [:]
     }
 
     /// How many params differ from their declared default. The design's
@@ -189,10 +193,14 @@ struct ParameterFormView: View {
                     library: picker.library, parts: picker.parts,
                     jobs: picker.jobs, playback: picker.playback,
                     onOpenModels: picker.onOpenModels,
-                    onPick: { state.audioSelections[pick.key] = $0.fileURL })
-            }
+                    onPick: {
+                        state.audioSelections[pick.key] = $0.fileURL
+                        state.audioSelectionNames[pick.key] = $0.name
+                    }
+            )
         }
     }
+}
 
     private func groupCard(_ group: ParameterGroups.Group) -> some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -390,12 +398,13 @@ struct ParameterFormView: View {
     private func audioRow(_ spec: ParamSpec) -> some View {
         HStack(spacing: 9) {
             if let url = state.audioSelections[spec.key] {
-                Text(url.lastPathComponent)
+                Text(state.audioSelectionNames[spec.key] ?? url.lastPathComponent)
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(Bench.Palette.textPrimary)
                     .lineLimit(1).truncationMode(.middle)
                 Button {
                     state.audioSelections[spec.key] = nil
+                    state.audioSelectionNames[spec.key] = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Bench.Palette.textMuted)

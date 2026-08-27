@@ -129,22 +129,6 @@ struct StudioView: View {
                     .font(Bench.Typo.screenTitle)
                     .tracking(-0.15)
                     .foregroundStyle(Bench.Palette.textPrimary)
-                // In Full control the model moves up here, because the left
-                // column is entirely prompt and lyrics.
-                if mode == .full, !showsRendering, let model {
-                    modelPicker(model, compact: true)
-                    // The same row the Models screen draws — but a top bar
-                    // cannot wrap, and squeezing the segmented control off the
-                    // right edge to fit "9.4 GB" is a bad trade. In a window
-                    // too narrow for the lot it falls back to what the model
-                    // makes and how long it can make it.
-                    ViewThatFits(in: .horizontal) {
-                        badgeStrip(badges(model))
-                        badgeStrip(ModelBadges.essential(
-                            for: model,
-                            physicalMemory: ModelCatalogStore.physicalRAM))
-                    }
-                }
             }
         } trailing: {
             HStack(spacing: 10) {
@@ -173,9 +157,9 @@ struct StudioView: View {
     private var composer: some View {
         HStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: mode == .simple ? 22 : 14) {
+                VStack(alignment: .leading, spacing: 22) {
                     if let notice { noticeBar(notice) }
-                    if mode == .simple, let model {
+                    if let model {
                         HStack(alignment: .center, spacing: 12) {
                             modelPicker(model, compact: false)
                             badgeRow(model)
@@ -219,8 +203,8 @@ struct StudioView: View {
                         .foregroundStyle(Bench.Palette.danger)
                     }
                 }
-                .padding(.horizontal, mode == .simple ? 32 : 24)
-                .padding(.vertical, mode == .simple ? 28 : 22)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -322,24 +306,12 @@ struct StudioView: View {
 
     /// One line of badges, kept at its natural width. For the top bar, where
     /// wrapping is not an option.
-    private func badgeStrip(_ badges: [ModelBadges.Badge]) -> some View {
-        HStack(spacing: 6) {
-            ForEach(badges) { badge in
-                BenchBadge(badge.text, tone: badge.tone)
-            }
-        }
-        .fixedSize()
-    }
-
     // MARK: prompt
 
     private var promptCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if mode == .full {
-                Text("PROMPT").eyebrow()
-            }
-            StudioPromptEditor(text: $prompt, font: mode == .simple
-                               ? Bench.Typo.promptHero : Bench.Typo.promptCompact)
+            Text("PROMPT").eyebrow()
+            StudioPromptEditor(text: $prompt, font: Bench.Typo.promptHero)
             if mode == .simple {
                 HStack(spacing: 10) {
                     attachment("Lyrics",
@@ -366,9 +338,9 @@ struct StudioView: View {
                 }
             }
         }
-        .padding(mode == .simple ? 20 : 18)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .benchCard(radius: mode == .simple ? Bench.Metrics.Radius.cardLarge : 13)
+        .benchCard(radius: Bench.Metrics.Radius.cardLarge)
     }
 
     private func hasParam(type: ParamType, containing token: String) -> Bool {
@@ -481,7 +453,7 @@ struct StudioView: View {
 
     private func lengthAndTakes(_ model: ModelInfo) -> some View {
         let duration = model.capabilities.duration
-        return HStack(spacing: mode == .simple ? 14 : 12) {
+        return HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 11) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Length")
@@ -508,7 +480,7 @@ struct StudioView: View {
 
             if model.capabilities.outputsPerJobMax > 1 {
                 StudioTakesCard(count: $count, model: model,
-                                width: mode == .simple ? 150 : 132)
+                                width: 150)
             }
         }
     }
