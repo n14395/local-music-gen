@@ -172,7 +172,7 @@ def _catalog() -> dict[str, dict[str, Any]]:
                 "instrumental_only": False,
                 "duration": {"min_s": 10, "max_s": 240, "default_s": 60},
                 "sample_rate": 44100,
-                "outputs_per_job_max": 2,
+                "outputs_per_job_max": 16,
                 "lyrics_tags": ["[intro]", "[verse]", "[chorus]", "[bridge]",
                                 "[outro]"],
                 "lyrics_hint": "Section tags on their own lines structure the song.",

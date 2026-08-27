@@ -8377,7 +8377,7 @@
      "default_s": 60
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.0,
     "lyrics_hint": "Paste the words you sang — they help the model follow the vocal. Structure tags like [Verse 1] are understood.",
     "pipeline": [
@@ -8584,7 +8584,7 @@
      "default_s": 30
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.3,
     "pipeline": [
      {
@@ -8840,7 +8840,7 @@
      "default_s": 30
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.3,
     "pipeline": [
      {
@@ -9096,7 +9096,7 @@
      "default_s": 30
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.3,
     "pipeline": [
      {
@@ -9352,7 +9352,7 @@
      "default_s": 30
     },
     "sample_rate": 48000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 1.3,
     "pipeline": [
      {
@@ -9837,7 +9837,7 @@
      "default_s": 20
     },
     "sample_rate": 16000,
-    "outputs_per_job_max": 2,
+    "outputs_per_job_max": 16,
     "est_seconds_per_audio_second": 5.0,
     "lyrics_hint": "Plain lyric lines; keep them short and singable. English works best.",
     "pipeline": [

@@ -24,10 +24,12 @@ GIB = 1 << 30
 # `for i in range(job.count)`), one worker round-trip each, sweeping previews
 # between them — so N takes is N renders back to back, not a batched forward
 # pass. The number is a judgment about how long one queued job should hold the
-# GPU before you can reorder the queue around it. Families that stay lower
-# (the long-form singers at 1, the vocal-conditioned ACE-Step variants at 2)
-# say so at their own entry, and task-only models are pinned to 1 by
-# `task_caps` — a non-generate job with count != 1 is refused outright.
+# GPU before you can reorder the queue around it — and since a slow model makes
+# that judgment for you by taking longer per take, every generate family gets
+# the same ceiling rather than a per-family guess at what "too long" means.
+# The long-form singers stay at 1 at their own entry, and task-only models are
+# pinned to 1 by `task_caps` — a non-generate job with count != 1 is refused
+# outright.
 TAKES_MAX = 16
 
 
@@ -1743,7 +1745,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": True, "instrumental_only": False,
               "duration": {"min_s": 5, "max_s": 240, "default_s": 60},
-              "sample_rate": 48000, "outputs_per_job_max": 2,
+              "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.0,
               "lyrics_hint": ("Paste the words you sang — they help the "
                               "model follow the vocal. Structure tags like "
@@ -1806,7 +1808,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 5, "max_s": 120, "default_s": 30},
-              "sample_rate": 48000, "outputs_per_job_max": 2,
+              "sample_rate": 48000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 1.3,
               "params": [
                   {"key": "steps", "type": "int", "label": "Steps",
@@ -1994,7 +1996,7 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": True, "instrumental_only": False,
               "duration": {"min_s": 5, "max_s": 120, "default_s": 20},
-              "sample_rate": 16000, "outputs_per_job_max": 2,
+              "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 5.0,
               "lyrics_hint": ("Plain lyric lines; keep them short and "
                               "singable. English works best."),
