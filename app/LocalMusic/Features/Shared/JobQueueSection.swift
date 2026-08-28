@@ -95,10 +95,86 @@ struct JobQueueSection: View {
                         onDismiss: { downloads.dismissFinished(done.id) })
                 }
             }
-            ForEach(jobs.displayJobs) { job in
-                row(job)
+            ForEach(QueueBatches.of(jobs.displayJobs)) { group in
+                if group.isBatch {
+                    batch(group)
+                } else {
+                    ForEach(group.jobs) { job in
+                        row(job)
+                    }
+                }
             }
         }
+    }
+
+    /// A submission's takes, under one header.
+    ///
+    /// Four takes are four jobs now (contract §5.1), and four cards all
+    /// titled with the same prompt would read as four unrelated renders. So
+    /// the prompt is said once, up here, and each card below is titled by the
+    /// take it is — which is also the thing you are choosing between when you
+    /// cancel one.
+    private func batch(_ group: QueueBatches.Group) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            batchHeader(group)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(group.jobs) { job in
+                    row(job, inBatch: true)
+                }
+            }
+            .padding(.leading, 10)
+            .overlay(alignment: .leading) {
+                // The takes hang off one rule, so a batch is a shape rather
+                // than an argument the header has to keep making.
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(group.isActive ? Bench.Palette.accent.opacity(0.35)
+                                         : Bench.Palette.cardStrokeSoft)
+                    .frame(width: 2)
+            }
+        }
+    }
+
+    private func batchHeader(_ group: QueueBatches.Group) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.jobs.first.map { jobs.displayTitle(for: $0.info) }
+                     ?? "Render")
+                    .font(Bench.Typo.secondaryEmphasis)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+                    .lineLimit(1)
+                Text(batchMeta(group))
+                    .metaLine()
+            }
+            Spacer(minLength: 6)
+            if group.hasUnfinished {
+                // One press for the whole batch, because the alternative is
+                // four — and a batch is what was asked for in the first place.
+                QueueIconButton(
+                    symbol: "trash",
+                    help: "Cancel every take of this render that has not "
+                        + "finished",
+                    label: "Cancel all takes",
+                    tone: .destructive,
+                    isDisabled: group.isCancelingAll(jobs)) {
+                    Task { await jobs.cancelBatch(group.groupId) }
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    /// `4 TAKES · 2 DONE · 1 FAILED` — what the group as a whole amounts to,
+    /// so the header is worth its line when the cards below are scrolled off.
+    private func batchMeta(_ group: QueueBatches.Group) -> String {
+        let takes = group.jobs.first?.info.takesInBatch ?? group.jobs.count
+        var parts = ["\(takes) TAKE\(takes == 1 ? "" : "S")"]
+        let done = group.jobs.filter { $0.status == .succeeded }.count
+        let failed = group.jobs.filter { $0.status == .failed }.count
+        let canceled = group.jobs.filter { $0.status == .canceled }.count
+        if done > 0 { parts.append("\(done) DONE") }
+        if failed > 0 { parts.append("\(failed) FAILED") }
+        if canceled > 0 { parts.append("\(canceled) CANCELED") }
+        return parts.joined(separator: " · ")
     }
 
     /// A runtime install fetches no model, so the row says what it is doing
@@ -109,11 +185,18 @@ struct JobQueueSection: View {
     }
 
     @ViewBuilder
-    private func row(_ job: JobsStore.ActiveJob) -> some View {
+    private func row(_ job: JobsStore.ActiveJob,
+                     inBatch: Bool = false) -> some View {
         let movable = reorderable && job.status == .queued
+        // Inside a batch the card is titled by its take: the header above it
+        // already said what the render is, and "Take 2 of 4" is what tells
+        // this card apart from the three around it.
         let view = JobRow(job: job,
-                          title: jobs.displayTitle(for: job.info),
+                          title: inBatch
+                              ? (job.takeLabel ?? jobs.displayTitle(for: job.info))
+                              : jobs.displayTitle(for: job.info),
                           modelName: jobs.modelName(job.info.modelId),
+                          showsTake: !inBatch,
                           movable: movable,
                           isDropTarget: dropTarget == job.id,
                           isCanceling: jobs.isCanceling(job.id),
@@ -166,6 +249,64 @@ struct JobQueueSection: View {
     }
 }
 
+/// How the queue's rows fall into batches.
+///
+/// A render of N takes is N jobs sharing a `groupId` (contract §5.1). They are
+/// drawn together under one header, so this walks the list the queue is
+/// already sorted into and gathers *consecutive* runs of one group — never
+/// pulling a job out of its place in the list, because that place is the order
+/// it will run in, and a batch broken up by a job dragged into the middle of
+/// it has genuinely been broken up. It draws as two headers, which is the
+/// truth.
+///
+/// Pure, so the grouping can be tested without a store.
+enum QueueBatches {
+    struct Group: Identifiable {
+        /// The first job of the run: a group id is not unique across a list
+        /// where a batch can be split in two.
+        let id: String
+        let groupId: String
+        var jobs: [JobsStore.ActiveJob]
+        /// Several takes were asked for, so the run gets a header. A
+        /// single-take render is one card, as it always was.
+        let isBatch: Bool
+
+        var isActive: Bool {
+            jobs.contains {
+                switch $0.status {
+                case .loading, .generating, .encoding: true
+                default: false
+                }
+            }
+        }
+
+        var hasUnfinished: Bool { jobs.contains { !$0.status.isTerminal } }
+
+        /// Every take that could still be cancelled already has been asked to
+        /// stop, so the button has nothing left to do and says so.
+        @MainActor
+        func isCancelingAll(_ store: JobsStore) -> Bool {
+            jobs.filter { !$0.status.isTerminal }
+                .allSatisfy { store.isCanceling($0.id) }
+        }
+    }
+
+    static func of(_ jobs: [JobsStore.ActiveJob]) -> [Group] {
+        var out: [Group] = []
+        for job in jobs {
+            let isBatch = job.info.takesInBatch > 1
+            if isBatch, let last = out.last, last.isBatch,
+               last.groupId == job.info.groupId {
+                out[out.count - 1].jobs.append(job)
+            } else {
+                out.append(Group(id: job.id, groupId: job.info.groupId,
+                                 jobs: [job], isBatch: isBatch))
+            }
+        }
+        return out
+    }
+}
+
 /// Where a dragged job lands. Pure, because the interesting part is an index
 /// shuffle and dragging a row in a test is not a thing.
 enum QueueReorder {
@@ -193,6 +334,10 @@ struct JobRow: View {
     let job: JobsStore.ActiveJob
     let title: String
     let modelName: String
+    /// Whether the meta line names the take. Off inside a batch, where the
+    /// card's own title is the take — saying it twice in 340 pt costs the
+    /// model name.
+    var showsTake = true
     /// Draws the grip and takes the accent edge while a drag hovers. The row
     /// does not own the gesture — its host does, because a drop has to know
     /// about the rows either side of this one.
@@ -324,13 +469,15 @@ struct JobRow: View {
         if let duration = job.info.durationS {
             parts.append("\(Int(duration.rounded())) S")
         }
-        // One row still means one job, so the row has to say how much work is
-        // in it — otherwise a four-take render is indistinguishable from a
-        // one-take one until four tracks appear.
-        if let take = job.takeLabel {
-            parts.append(take.uppercased())
-        } else if job.info.count > 1 {
-            parts.append("\(job.info.count) TAKES")
+        // Which take this is, for a row standing on its own — a queue drawn
+        // without batch headers (Settings' engine panel) still has to tell a
+        // four-take render from a one-take one.
+        if showsTake {
+            if let take = job.takeLabel {
+                parts.append(take.uppercased())
+            } else if job.info.count > 1 {
+                parts.append("\(job.info.count) TAKES")
+            }
         }
         switch job.status {
         case .queued:

@@ -366,6 +366,44 @@ final class JobsStore {
         return displayJobs.first { !$0.status.isTerminal && $0.status != .queued }
     }
 
+    /// Every take of one submission, in take order.
+    ///
+    /// A render of four takes is four jobs sharing a `groupId` (contract
+    /// §5.1), so this is what puts them back together — for the queue's batch
+    /// header, for "cancel all takes", and for deciding which take is the last
+    /// one to land.
+    func batch(_ groupId: String) -> [ActiveJob] {
+        active.values
+            .filter { $0.info.groupId == groupId }
+            .sorted { ($0.info.takeIndexInBatch, $0.info.createdAt, $0.id)
+                        < ($1.info.takeIndexInBatch, $1.info.createdAt, $1.id) }
+    }
+
+    /// Takes of this submission that have not finished yet.
+    func unfinishedBatchJobs(_ groupId: String) -> [ActiveJob] {
+        batch(groupId).filter { !$0.status.isTerminal }
+    }
+
+    /// Whether nothing of this job's submission is still running — which is
+    /// what "the render is done" means once a batch is several jobs, and the
+    /// only honest moment to say so once rather than once per take.
+    func isFinalOfBatch(_ jobId: String) -> Bool {
+        guard let info = active[jobId]?.info else { return true }
+        return unfinishedBatchJobs(info.groupId).isEmpty
+    }
+
+    /// Cancel every take of one submission (contract §5.3, once per job).
+    ///
+    /// Sent take by take rather than as one verb because that is all the
+    /// engine has: a group is a grouping key, not a queue entry. Terminal
+    /// takes are skipped — cancelling one is a 409, and a batch that is
+    /// half-finished is exactly when this button gets pressed.
+    func cancelBatch(_ groupId: String) async {
+        for job in unfinishedBatchJobs(groupId) {
+            await cancel(job.id)
+        }
+    }
+
     // MARK: actions
 
     @discardableResult
@@ -1286,12 +1324,12 @@ final class JobsStore {
             canceling.remove(jobId)
             // Takes that landed incrementally before the failure stay in the
             // library — they are finished audio; only the bookkeeping goes.
-            finishTakeIngest(jobId)
+            dropBatchIngestIfFinished(jobId)
         case .jobCanceled(let jobId):
             active[jobId]?.status = .canceled
             notifyOnLanding.remove(jobId)
             canceling.remove(jobId)
-            finishTakeIngest(jobId)
+            dropBatchIngestIfFinished(jobId)
         case .queueState(let held, _):
             queueHeld = held
         default:
@@ -1341,31 +1379,29 @@ final class JobsStore {
             return
         }
         let outputs = result.outputs ?? []
-        if let seed = outputs.first?.seedUsed { lastSeedUsed = seed }
+        // The seed is taken in `landTake`, from take a of the batch — not
+        // here. Read off "this job's first output", it was take a's seed only
+        // while a batch was one job: now every take is a job, so each landing
+        // would overwrite it and "hold the seed" would reuse whichever take
+        // finished last.
         // Takes may have landed one by one while the batch ran
         // (`job.take_done`); this pass ingests only what is left, so a
         // client that saw every event and one that saw none converge on the
         // same library.
-        var state = takeIngests.removeValue(forKey: jobId)
-            ?? TakeIngest(names: allocateTakeNames(jobId: jobId,
-                                                   count: outputs.count))
         var fresh: [SongRecord] = []
-        for (take, output) in outputs.enumerated()
-        where !state.ingested.contains(take) {
-            guard take < state.names.count else { continue }
-            let title = (try? repo.uniqueTitle(state.names[take],
-                                               reserved: state.usedTitles))
-                ?? state.names[take]
-            if let song = ingestOneTake(job: job, output: output,
-                                        title: title) {
-                state.usedTitles.insert(title)
+        for (offset, output) in outputs.enumerated() {
+            if let song = landTake(job: job, index: job.batchIndex(of: offset),
+                                   output: output) {
                 fresh.append(song)
-                state.songs.append(song)
             }
         }
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
-        record(state.songs, for: jobId)
+        active[jobId]?.producedSongIds += fresh.map(\.id)
+        // The batch's shared naming state outlives this job — its siblings are
+        // still rendering under the same base name — so it goes only when the
+        // whole submission has stopped.
+        dropBatchIngestIfFinished(jobId)
         // Only the takes this pass created: the incremental ones were
         // announced when they landed, and announcing a song twice makes
         // anything counting arrivals count it twice.
@@ -1381,9 +1417,14 @@ final class JobsStore {
         var names: [String]
         var ingested: Set<Int> = []
         var usedTitles: Set<String> = []
-        var songs: [SongRecord] = []
     }
 
+    /// Keyed by `groupId`, not by job: the takes of one submission are
+    /// separate jobs now (contract §5.1) and they have to keep sharing a base
+    /// name. Keyed per job, four takes landed as four unrelated `trackNNN`s —
+    /// and each would have read the library's high-water mark *after* the
+    /// previous take was already in it, so they would not even have been
+    /// consecutive.
     private var takeIngests: [String: TakeIngest] = [:]
 
     /// A finished take of a still-running batch (`job.take_done`): land it in
@@ -1394,32 +1435,42 @@ final class JobsStore {
         // Generative parts route through their own ingest at completion, and
         // are single-take by construction — nothing to land early.
         if case .generativePart? = pendingContext[jobId] { return }
-        var state = takeIngests[jobId]
-            ?? TakeIngest(names: allocateTakeNames(
-                jobId: jobId, count: max(info.count, take + 1)))
-        guard !state.ingested.contains(take),
-              take < state.names.count else { return }
-        if take == 0, let seed = output.seedUsed { lastSeedUsed = seed }
-        let title = (try? repo.uniqueTitle(state.names[take],
-                                           reserved: state.usedTitles))
-            ?? state.names[take]
-        if let song = ingestOneTake(job: info, output: output, title: title) {
-            state.ingested.insert(take)
-            state.usedTitles.insert(title)
-            state.songs.append(song)
-            takeIngests[jobId] = state
-            onSongsIngested([song])
-        }
+        guard let song = landTake(job: info, index: info.batchIndex(of: take),
+                                  output: output) else { return }
+        active[jobId]?.producedSongIds.append(song.id)
+        onSongsIngested([song])
     }
 
-    /// Drop a batch's incremental bookkeeping without touching its songs —
-    /// takes that landed before a failure or cancel are finished audio and
-    /// stay in the library.
-    private func finishTakeIngest(_ jobId: String) {
-        if let state = takeIngests.removeValue(forKey: jobId),
-           !state.songs.isEmpty {
-            record(state.songs, for: jobId)
-        }
+    /// Move one take into the library under its batch's shared name, or nil if
+    /// it already landed (both the incremental event and the completion pass
+    /// offer it) or its file could not be moved.
+    private func landTake(job: JobInfo, index: Int,
+                          output: JobOutput) -> SongRecord? {
+        var state = takeIngests[job.groupId]
+            ?? TakeIngest(names: allocateTakeNames(
+                jobId: job.jobId,
+                count: max(job.takesInBatch, index + 1)))
+        guard !state.ingested.contains(index),
+              index < state.names.count else { return nil }
+        if index == 0, let seed = output.seedUsed { lastSeedUsed = seed }
+        let title = (try? repo.uniqueTitle(state.names[index],
+                                           reserved: state.usedTitles))
+            ?? state.names[index]
+        guard let song = ingestOneTake(job: job, output: output,
+                                       title: title) else { return nil }
+        state.ingested.insert(index)
+        state.usedTitles.insert(title)
+        takeIngests[job.groupId] = state
+        return song
+    }
+
+    /// Let go of a batch's shared naming state once no take of it is still
+    /// running. Nothing in the library is touched: takes that landed before a
+    /// failure or a cancel are finished audio and stay.
+    private func dropBatchIngestIfFinished(_ jobId: String) {
+        guard let info = active[jobId]?.info,
+              unfinishedBatchJobs(info.groupId).isEmpty else { return }
+        takeIngests.removeValue(forKey: info.groupId)
     }
 
     /// Names are allocated up front, and the whole submission shares one

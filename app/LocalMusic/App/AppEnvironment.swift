@@ -557,6 +557,12 @@ final class AppEnvironment {
             // says "Edits applied", and "Your track is ready" beside it
             // would be the same event claimed twice.
             guard !jobsStore.isEditorJob(jobId) else { break }
+            // One notice per submission, not per take. A batch is four jobs
+            // now (contract §5.1) and each of them is armed, so without this
+            // a four-take render buzzes four times — and the first three of
+            // those are false: the render was not finished. Every take is
+            // armed all the same, because any of them may be the last.
+            guard jobsStore.isFinalOfBatch(jobId) else { break }
             let title = jobsStore.active[jobId].map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
@@ -575,6 +581,10 @@ final class AppEnvironment {
             // would be the arming's worst outcome: they asked to be told when
             // it was done and it is done, badly.
             let armed = jobsStore.takeNotifyOnLanding(jobId)
+            // Once per submission, as above: takes of a batch fail together
+            // (same model, same params), and four identical alerts for one
+            // press of Generate is what "tell me when it lands" would become.
+            guard jobsStore.isFinalOfBatch(jobId) else { break }
             let title = jobsStore.active[jobId].map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""

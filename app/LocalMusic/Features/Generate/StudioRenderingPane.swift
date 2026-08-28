@@ -102,6 +102,7 @@ struct StudioRenderingPane: View {
         let model = catalog.models.first { $0.id == job.info.modelId }
         return VStack(alignment: .leading, spacing: 18) {
             header(job, model: model)
+            batchStrip(job)
             RenderSplitPane(
                 job: job, stages: model?.capabilities.pipeline,
                 timing: timing, timings: timings, telemetry: telemetry,
@@ -147,8 +148,8 @@ struct StudioRenderingPane: View {
                 // engine card is: something you read at a glance has to be
                 // where you last found it, and a label that comes and goes is
                 // one you stop looking for.
-                if let landing {
-                    Text(landing.uppercased())
+                if let eyebrow = eyebrowLine(job, landing: landing) {
+                    Text(eyebrow)
                         .eyebrow()
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -187,6 +188,88 @@ struct StudioRenderingPane: View {
         }
     }
 
+    /// `TAKE 2 OF 4 · TRACK042B` — which take is on screen, over what it will
+    /// be called when it lands.
+    ///
+    /// The take leads, because a batch is four jobs now and this pane draws
+    /// them one at a time: without it the same card, with the same prompt and
+    /// a bar starting from zero, comes back four times looking like a render
+    /// that restarted itself.
+    private func eyebrowLine(_ job: JobsStore.ActiveJob,
+                             landing: String?) -> String? {
+        let parts = [job.takeLabel, landing]
+            .compactMap { $0?.uppercased() }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Every take of this submission, as one chip each: what is done, what is
+    /// rendering now, what is still to come.
+    ///
+    /// The point of the strip is the sentence the user asked for — *these are
+    /// takes of one prompt* — which the hero alone cannot make, since it shows
+    /// whichever take the engine happens to be on. Drawn from the batch's
+    /// sibling jobs (contract §5.1), and from the take count where a sibling
+    /// has already been dismissed off the queue.
+    @ViewBuilder
+    private func batchStrip(_ job: JobsStore.ActiveJob) -> some View {
+        let takes = job.info.takesInBatch
+        if takes > 1 {
+            let siblings = jobs.batch(job.info.groupId)
+            HStack(spacing: 7) {
+                Text("TAKES OF THIS PROMPT").eyebrow()
+                ForEach(Array(0..<takes), id: \.self) { index in
+                    let sibling = siblings.first {
+                        $0.info.takeIndexInBatch == index
+                    }
+                    takeChip(index: index, take: sibling,
+                             isCurrent: sibling?.id == job.id)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// One take's chip: its letter, in the colour of what became of it. The
+    /// letter rather than a number because it is the letter the track lands
+    /// under — `track042c` is on the chip and in the library.
+    private func takeChip(index: Int, take: JobsStore.ActiveJob?,
+                          isCurrent: Bool) -> some View {
+        let tint: Color = switch take?.status {
+        case .succeeded: Bench.Palette.ok
+        case .failed: Bench.Palette.danger
+        case .canceled: Bench.Palette.textMuted
+        case .loading, .generating, .encoding: Bench.Palette.accent
+        // Queued, or a take whose row has been dismissed: neither is a
+        // colour, and pretending otherwise would report an outcome.
+        case .queued, nil: Bench.Palette.textFaintest
+        }
+        return Text(SongRecord.takeSuffix(index))
+            .font(Bench.Typo.mono(10, .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 17, height: 17)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(tint.opacity(isCurrent ? 0.18 : 0.08)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(tint.opacity(isCurrent ? 0.7 : 0.25),
+                                  lineWidth: 1))
+            .help(chipHelp(index: index, take: take))
+    }
+
+    private func chipHelp(index: Int, take: JobsStore.ActiveJob?) -> String {
+        let name = "Take \(index + 1)"
+        return switch take?.status {
+        case .succeeded: "\(name) — done, in the Library"
+        case .failed: "\(name) — failed"
+        case .canceled: "\(name) — canceled"
+        case .loading, .generating, .encoding: "\(name) — rendering now"
+        case .queued: "\(name) — waiting its turn"
+        case nil: "\(name) — no longer in the queue"
+        }
+    }
+
     /// The title the take on screen will land under.
     ///
     /// Known outright wherever the submission carried a name; predicted from
@@ -200,14 +283,17 @@ struct StudioRenderingPane: View {
         let base = jobs.landingBaseTitle(for: job.id)
             ?? (job.info.isGenerate ? library.nextTrackName : nil)
         guard let base, !base.isEmpty else { return nil }
-        guard job.info.count > 1 else { return base }
+        let takes = job.info.takesInBatch
+        guard takes > 1 else { return base }
         // A batch shares one base and separates on the letter, so the card
         // has to name *this* take: track042b, not the base it came from.
-        let names = SongRecord.takeNames(base: base, count: job.info.count)
-        if let take = job.progress?.take, names.indices.contains(take) {
-            return names[take]
-        }
-        return names.first
+        // Which take that is comes off the job itself now that a batch is one
+        // job per take; `progress.take` is the fallback for a job carrying a
+        // whole batch, where it is the only thing that knows.
+        let names = SongRecord.takeNames(base: base, count: takes)
+        let index = job.info.takeOf == nil
+            ? (job.progress?.take ?? 0) : job.info.takeIndexInBatch
+        return names.indices.contains(index) ? names[index] : names.first
     }
 
     /// Copy the log · arm a notification · cancel.

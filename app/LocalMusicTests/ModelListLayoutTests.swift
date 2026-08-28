@@ -72,6 +72,49 @@ final class ModelListLayoutTests: XCTestCase {
         XCTAssertFalse(plan.other[0].isVariant)
     }
 
+    /// The reported bug: the Models screen could draw only 125 of 129 models,
+    /// and the four it could not were the four whose base is itself a variant
+    /// — SCNet XL under SCNet under BSRNN, and so on. Keyed by the immediate
+    /// parent their bucket was filled and never read, because the list loops
+    /// over the BASES and only a model with no base of its own can carry a
+    /// row. They were unreachable at every filter setting, with nothing but
+    /// the sidebar's "125/129" to say they existed.
+    func testAGrandchildVariantNestsUnderTheRootBase() {
+        let models = [model("bsrnn"),
+                      model("scnet", variantOf: "bsrnn", format: "a"),
+                      model("scnet-xl", variantOf: "scnet", format: "b")]
+        let plan = ModelListLayout.plan(
+            models: models, matching: ["bsrnn", "scnet", "scnet-xl"],
+            recommended: ["bsrnn"], expanded: true)
+        XCTAssertEqual(ids(plan.recommended), ["bsrnn", "scnet", "scnet-xl"])
+        XCTAssertFalse(plan.recommended[0].isVariant)
+        XCTAssertTrue(plan.recommended[1].isVariant)
+        XCTAssertTrue(plan.recommended[2].isVariant,
+                      "a grandchild is still one level of nesting")
+    }
+
+    /// However deep the chain, every row is drawn exactly once.
+    func testADeepVariantChainLosesNoRow() {
+        let models = [model("root"),
+                      model("a", variantOf: "root"),
+                      model("b", variantOf: "a"),
+                      model("c", variantOf: "b"),
+                      model("d", variantOf: "c")]
+        let plan = ModelListLayout.plan(
+            models: models, matching: Set(models.map(\.id)),
+            recommended: [], expanded: true)
+        XCTAssertEqual(Set(ids(plan.other)), Set(models.map(\.id)))
+        XCTAssertEqual(plan.other.count, models.count)
+    }
+
+    /// A catalog that names a cycle is wrong, but it must not hang the list.
+    func testACycleDoesNotHangTheLayout() {
+        let models = [model("x", variantOf: "y"), model("y", variantOf: "x")]
+        let plan = ModelListLayout.plan(models: models, matching: ["x", "y"],
+                                        recommended: [], expanded: true)
+        XCTAssertEqual(Set(ids(plan.other)), ["x", "y"])
+    }
+
     /// When only a variant matches the filter, its base still draws as the
     /// group's header — otherwise the match is orphaned.
     func testBaseSurvivesWhenOnlyAVariantMatches() {

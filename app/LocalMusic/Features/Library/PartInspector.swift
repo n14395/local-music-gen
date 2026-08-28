@@ -362,11 +362,19 @@ struct PartInspector: View {
 
     // MARK: actions
 
-    /// Two columns, three rows, with the lime tile in the top-left: a part
-    /// exists to be put on the bench, and the panel should say so before it
-    /// offers anything else.
+    /// Three rows, grouped by what the row is for: put the part to work, then
+    /// change its audio, then the file it lives in. The lime tile stays in the
+    /// top-left — a part exists to be put on the bench, and the panel should
+    /// say so before it offers anything else.
+    ///
+    /// It was four rows, the last of them a single Delete tile stretched the
+    /// full width of the pane: a lone destructive button drawn larger than
+    /// everything above it, and a row's worth of height spent saying nothing.
+    /// It joins the file row, which is the same third row the track inspector
+    /// ends with.
     private var actionGrid: some View {
         VStack(spacing: 8) {
+            // Put it to work.
             HStack(spacing: 8) {
                 LibraryActionTile(
                     title: "Add to Workbench", tone: .primary,
@@ -383,6 +391,7 @@ struct PartInspector: View {
                         : "Only audio parts can be ranked for compatibility"
                 ) { onFindMatches(part.id) }
             }
+            // Change the audio.
             HStack(spacing: 8) {
                 secondaryGenerativeTile
                 // Stems are editable too: topping and tailing them, and
@@ -396,6 +405,7 @@ struct PartInspector: View {
                         : "Only audio parts can be edited"
                 ) { onEdit?(part) }
             }
+            // The file on disk.
             HStack(spacing: 8) {
                 LibraryActionTile(title: "Export…",
                                   help: "Save a copy of this part's file") {
@@ -405,10 +415,10 @@ struct PartInspector: View {
                                   help: "Show this part's file in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([part.fileURL])
                 }
-            }
-            LibraryActionTile(title: "Delete…", tone: .destructive,
-                              help: "Delete this part and its files") {
-                requestDelete()
+                LibraryActionTile(title: "Delete…", tone: .destructive,
+                                  help: "Delete this part and its files") {
+                    requestDelete()
+                }
             }
         }
     }

@@ -113,6 +113,19 @@ final class ModelListPlacementTests: XCTestCase {
                        ["orphan-q4"])
     }
 
+    /// The same agreement, one level deeper: the layout hangs a grandchild off
+    /// the ROOT of its chain, so the section held open for its download has to
+    /// be that one. Naming the immediate parent would hold open a section the
+    /// row is not in — and, where the root is featured, hold the long tail
+    /// open for a download sitting in the recommended section.
+    func testAGrandchildReportsTheRootBase() {
+        let models = [model("bsrnn"),
+                      model("scnet", variantOf: "bsrnn"),
+                      model("scnet-xl", variantOf: "scnet")]
+        XCTAssertEqual(ModelListLayout.baseIds(of: ["scnet-xl"], in: models),
+                       ["bsrnn"])
+    }
+
     func testBaseIdsIgnoresModelsThatAreNotDownloading() {
         let models = [model("a"), model("b")]
         XCTAssertEqual(ModelListLayout.baseIds(of: ["a"], in: models), ["a"])

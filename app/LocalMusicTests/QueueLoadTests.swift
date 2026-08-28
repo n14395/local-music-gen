@@ -7,12 +7,15 @@ import XCTest
 final class QueueLoadTests: XCTestCase {
     private func job(id: String = UUID().uuidString, count: Int,
                      status: JobStatus = .generating,
-                     take: Int? = nil) -> JobsStore.ActiveJob {
+                     take: Int? = nil, group: String = "grp",
+                     takeIndex: Int? = nil,
+                     takeOf: Int? = nil) -> JobsStore.ActiveJob {
         let info = JobInfo(
-            jobId: id, groupId: "grp", modelId: "acestep-base", task: "generate",
+            jobId: id, groupId: group, modelId: "acestep-base", task: "generate",
             status: status, prompt: "p", lyrics: nil, durationS: 10,
             count: count, params: [:], createdAt: "2026-08-19T10:00:00Z",
-            progress: nil, result: nil, error: nil)
+            progress: nil, result: nil, error: nil,
+            takeIndex: takeIndex, takeOf: takeOf)
         let progress = take.map {
             JobProgress(stage: "generating", fraction: 0.5, etaS: 10,
                         message: "m", take: $0, phase: nil, step: nil,
@@ -78,14 +81,29 @@ final class QueueLoadTests: XCTestCase {
                        "Rendering 1 take")
     }
 
-    /// Several jobs need both numbers — but one job never says "1 job · 3
-    /// takes", which makes the reader do arithmetic to learn nothing.
-    func testRenderingLabelNamesJobsOnlyWhenThereAreSeveral() {
+    /// Several submissions need both numbers — but one never says "1 render ·
+    /// 3 takes", which makes the reader do arithmetic to learn nothing.
+    func testRenderingLabelNamesBatchesOnlyWhenThereAreSeveral() {
         XCTAssertEqual(
-            QueueLoad.of(jobs: [job(count: 3), job(count: 2)]).renderingLabel,
-            "Rendering 2 jobs · 5 takes")
+            QueueLoad.of(jobs: [job(count: 3, group: "a"),
+                                job(count: 2, group: "b")]).renderingLabel,
+            "Rendering 2 renders · 5 takes")
         XCTAssertFalse(QueueLoad.of(jobs: [job(count: 3)]).renderingLabel
-            .contains("job"))
+            .contains("render "))
+    }
+
+    /// The takes of one submission are separate jobs now, and three of them
+    /// are still "3 takes" — not "3 renders · 3 takes", which says the same
+    /// number twice and calls one press of Generate three things.
+    func testOneBatchOfSingleTakeJobsReadsAsItsTakes() {
+        let batch = (0..<3).map {
+            job(count: 1, takeIndex: $0, takeOf: 3)
+        }
+        let load = QueueLoad.of(jobs: batch)
+        XCTAssertEqual(load.takes, 3)
+        XCTAssertEqual(load.batches, 1)
+        XCTAssertEqual(load.renderingLabel, "Rendering 3 takes")
+        XCTAssertEqual(load.headerLabel, "3 TAKES")
     }
 
     func testHeaderLabelCoversBothHalvesOfTheQueue() {
@@ -116,6 +134,102 @@ final class QueueLoadTests: XCTestCase {
     func testTakeLabelClampsToTheJob() {
         XCTAssertEqual(job(count: 4, take: 9).takeLabel, "Take 4 of 4")
         XCTAssertEqual(job(count: 4, take: -1).takeLabel, "Take 1 of 4")
+    }
+
+    // MARK: which take, once a batch is one job per take
+
+    /// The whole point of the fan-out: a QUEUED take already knows which take
+    /// it is, where the old single-job row could not say until the engine was
+    /// rendering it.
+    func testTakeLabelComesOffAQueuedJob() {
+        XCTAssertEqual(
+            job(count: 1, status: .queued, takeIndex: 1, takeOf: 4).takeLabel,
+            "Take 2 of 4")
+    }
+
+    func testTakeLabelSilentForASingleTakeSubmission() {
+        XCTAssertNil(job(count: 1, takeIndex: 0, takeOf: 1).takeLabel)
+    }
+
+    func testTakeLabelClampsAStrayIndex() {
+        XCTAssertEqual(job(count: 1, takeIndex: 9, takeOf: 4).takeLabel,
+                       "Take 4 of 4")
+        XCTAssertEqual(job(count: 1, takeIndex: -1, takeOf: 4).takeLabel,
+                       "Take 1 of 4")
+    }
+}
+
+/// How the queue's rows fall into batches — the header a fanned-out render is
+/// drawn under, and the run of takes it covers.
+final class QueueBatchesTests: XCTestCase {
+    private func job(_ id: String, group: String = "grp",
+                     takeIndex: Int? = nil, takeOf: Int? = nil,
+                     status: JobStatus = .queued) -> JobsStore.ActiveJob {
+        let info = JobInfo(
+            jobId: id, groupId: group, modelId: "acestep-base", task: "generate",
+            status: status, prompt: "p", lyrics: nil, durationS: 10,
+            count: 1, params: [:], createdAt: "2026-08-19T10:00:00Z",
+            progress: nil, result: nil, error: nil,
+            takeIndex: takeIndex, takeOf: takeOf)
+        return JobsStore.ActiveJob(info: info, progress: nil, status: status,
+                                   error: nil, preview: nil)
+    }
+
+    func testTakesOfOneSubmissionGatherUnderOneGroup() {
+        let groups = QueueBatches.of([
+            job("a", takeIndex: 0, takeOf: 3),
+            job("b", takeIndex: 1, takeOf: 3),
+            job("c", takeIndex: 2, takeOf: 3),
+        ])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertTrue(groups[0].isBatch)
+        XCTAssertEqual(groups[0].jobs.map(\.id), ["a", "b", "c"])
+    }
+
+    /// A single-take render is one card with no header, exactly as before.
+    func testSingleTakeJobsStandAlone() {
+        let groups = QueueBatches.of([job("a", takeOf: 1), job("b", takeOf: 1)])
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertFalse(groups[0].isBatch)
+    }
+
+    func testTwoSubmissionsAreTwoGroups() {
+        let groups = QueueBatches.of([
+            job("a", group: "one", takeIndex: 0, takeOf: 2),
+            job("b", group: "one", takeIndex: 1, takeOf: 2),
+            job("c", group: "two", takeIndex: 0, takeOf: 2),
+            job("d", group: "two", takeIndex: 1, takeOf: 2),
+        ])
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups.map(\.groupId), ["one", "two"])
+    }
+
+    /// A batch really can be broken up — a job dragged into the middle of one
+    /// runs in the middle of it (§5.8) — and the list must say so rather than
+    /// quietly regrouping the takes and lying about the run order.
+    func testAnInterleavedJobSplitsTheBatch() {
+        let groups = QueueBatches.of([
+            job("a", takeIndex: 0, takeOf: 3),
+            job("other", group: "elsewhere", takeOf: 1),
+            job("b", takeIndex: 1, takeOf: 3),
+        ])
+        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.map(\.id), ["a", "other", "b"])
+    }
+
+    func testAGroupKnowsWhatIsLeftToCancel() {
+        let done = QueueBatches.of([
+            job("a", takeIndex: 0, takeOf: 2, status: .succeeded),
+            job("b", takeIndex: 1, takeOf: 2, status: .canceled),
+        ])
+        XCTAssertFalse(done[0].hasUnfinished)
+        XCTAssertFalse(done[0].isActive)
+        let running = QueueBatches.of([
+            job("a", takeIndex: 0, takeOf: 2, status: .succeeded),
+            job("b", takeIndex: 1, takeOf: 2, status: .generating),
+        ])
+        XCTAssertTrue(running[0].hasUnfinished)
+        XCTAssertTrue(running[0].isActive)
     }
 }
 

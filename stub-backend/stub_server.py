@@ -775,9 +775,15 @@ class Download:
 class Job:
     def __init__(self, group_id: str, model_id: str, body: dict,
                  duration_s: float | None, params: dict,
-                 task: str = "generate", preview: bool = False) -> None:
+                 task: str = "generate", preview: bool = False,
+                 take_index: int = 0, take_of: int = 1) -> None:
         self.id = f"job_{uuid.uuid4().hex[:12]}"
         self.group_id = group_id
+        # Which take of its submission this job is (contract 5.1). A `count: N`
+        # submit is expanded into N sibling jobs sharing a group_id, so the
+        # stub has to hand the app the same batch shape the engine does.
+        self.take_index = take_index
+        self.take_of = take_of
         self.model_id = model_id
         self.task = task
         self.preview = preview
@@ -786,7 +792,8 @@ class Job:
         self.prompt = (body.get("prompt") or "").strip()
         self.lyrics = body.get("lyrics")
         self.duration_s = duration_s
-        self.count = int(body.get("count", 1))
+        # 1 on everything the API creates: the fan-out happens at submit.
+        self.count = 1
         self.params = params
         self.status = "queued"
         self.progress: dict | None = None
@@ -802,7 +809,9 @@ class Job:
                 "priority": self.priority,
                 "status": self.status, "queue_position": queue_position,
                 "prompt": self.prompt, "lyrics": self.lyrics,
-                "duration_s": self.duration_s, "count": self.count, "params": self.params,
+                "duration_s": self.duration_s, "count": self.count,
+                "take_index": self.take_index, "take_of": self.take_of,
+                "params": self.params,
                 "created_at": self.created_at, "progress": self.progress,
                 "result": self.result, "error": self.error}
 
@@ -1305,8 +1314,9 @@ async def run_one_job(job: Job, model: dict) -> None:
         outputs = []
         for i in range(job.count):
             path = os.path.join(out_dir, f"take-{i}.wav")
-            await asyncio.to_thread(write_wav, path, job.duration_s, sr,
-                                    base_freq * (1 + 0.25 * i))
+            await asyncio.to_thread(
+                write_wav, path, job.duration_s, sr,
+                base_freq * (1 + 0.25 * (job.take_index + i)))
             seed = job.params.get("seed")
             output = {"path": path, "format": "wav", "sample_rate": sr,
                       "duration_s": float(job.duration_s),
@@ -2203,17 +2213,26 @@ async def jobs_submit(body: dict):
                     and params.get(p["key"]) is None):
                 return err(422, "VALIDATION",
                            f"missing required input '{p['key']}'")
-    job = Job(group_id, mid, body, dur, params, task=task, preview=preview)
-    st.jobs[job.id] = job
-    st.job_order.append(job.id)
-    st.bus.emit("job.queued", {"job_id": job.id, "group_id": group_id,
-                               "model_id": mid,
-                               "queue_position": st.queue_position(job.id)})
-    for k in dropped:
-        st.bus.emit("job.log", {"job_id": job.id,
-                                "line": f"dropped unknown param '{k}' for {mid}"})
+    # One job per take, sharing the group (contract 5.1): the queue is a list
+    # of takes, and the app groups them back by group_id.
+    takes = int(body.get("count", 1))
+    jobs = [Job(group_id, mid, body, dur, params, task=task, preview=preview,
+                take_index=i, take_of=takes)
+            for i in range(takes)]
+    for job in jobs:
+        st.jobs[job.id] = job
+        st.job_order.append(job.id)
+    for job in jobs:
+        st.bus.emit("job.queued", {"job_id": job.id, "group_id": group_id,
+                                   "model_id": mid,
+                                   "queue_position": st.queue_position(job.id)})
+        for k in dropped:
+            st.bus.emit("job.log",
+                        {"job_id": job.id,
+                         "line": f"dropped unknown param '{k}' for {mid}"})
     st.wake.set()
-    return {"group_id": group_id, "jobs": [{"job_id": job.id, "model_id": mid}]}
+    return {"group_id": group_id,
+            "jobs": [{"job_id": job.id, "model_id": mid} for job in jobs]}
 
 
 @app.get("/v1/jobs")

@@ -647,7 +647,9 @@ other, never half of one, and the terminal event names which went.
   "lyrics": null,                     // 422 VALIDATION if the model lacks supports_lyrics
   "duration_s": 20,                   // clamped to capabilities.duration — to
                                       // unlocked_max_s where declared, else max_s
-  "count": 1,                         // takes per job, ≤ outputs_per_job_max
+  "count": 1,                         // takes asked for, ≤ outputs_per_job_max.
+                                       // N>1 is expanded into N sibling jobs,
+                                       // one per take — see below
   "params": {"guidance_scale": 3.0, "seed": null},   // validated against the model's
                                        // ParamSpecs; unknown keys dropped with a job.log note
   "force": false,                     // override INSUFFICIENT_RAM refusal
@@ -661,7 +663,21 @@ other, never half of one, and the terminal event names which went.
 ```
 
 → `202 {"group_id": "grp_...", "jobs": [{"job_id": "job_...", "model_id": "..."}]}`
-(one job; `group_id` remains the stable grouping key in responses and events)
+(`group_id` is the stable grouping key in responses and events)
+
+**`count` fans out.** A submission asking for N takes creates **N jobs**, one
+per take, sharing the `group_id` and listed in `jobs` in take order. Each
+carries `count: 1` plus `take_index` (0-based) and `take_of` (N), so a take is
+a queue entry in its own right: its own `queue_position`, its own cancel, its
+own progress and its own error. A client that wants the batch back groups by
+`group_id` and orders by `take_index`. Single-take submissions are unchanged
+in every respect and report `take_index: 0, take_of: 1`; task jobs (5.4) run
+exactly one take and report the same pair.
+
+The takes still run one after another on the same warm worker — the runner is
+serial and a worker keeps its loaded model between jobs — but they are no
+longer welded together: another job may be reordered (5.8) between two takes of
+a batch, and a take that fails no longer takes its siblings down with it.
 
 Refusals: `409 MODEL_NOT_INSTALLED`, `409 INSUFFICIENT_RAM` (unless `force`),
 `422 VALIDATION`.
@@ -690,6 +706,8 @@ JobInfo = {
   "priority": 0,                      // explicit run order; 0 = no opinion (5.8)
   "queue_position": 0,                // 0 = running/next; null once terminal
   "prompt": "...", "lyrics": null, "duration_s": 20, "count": 1, "params": {},
+  "take_index": 0, "take_of": 1,      // which take of its submission this job
+                                       // is, and how many were asked for (5.1)
   "created_at": "2026-08-16T20:00:00Z",
   // null until started; `fraction` may be null (indeterminate) and
   // take/phase/step/steps are optional staged detail — see 5.5
@@ -725,7 +743,7 @@ skip the LM.
 
 Output files are written complete (`.part` + rename) under `--output-dir/<job_id>/`
 **before** `job.completed` fires. The app moves them into its library (same volume →
-atomic rename). As each take of a `count > 1` generate job finishes, the engine
+atomic rename). As each take of a generate job finishes, the engine
 also emits **`job.take_done`** — `{"job_id", "take", "output"}`, where `output`
 is the same object that will appear at that index in the completed job's
 `outputs` — so a client can land finished takes while later ones still render.
@@ -1057,15 +1075,19 @@ model is actually doing inside it:
              "steps": 8}             // total steps in that phase
 ```
 
-**`take`** is the index of the take the job has reached, `0 ≤ take < count`. A
-`count: 4` submission is one job that renders four takes one after another, and
-`fraction` is the average across all of them — so without `take` a client can
-only *infer* the position by multiplying, which fails outright whenever
-`fraction` is null. It is null before the first take starts (during a cold load)
-and for task jobs, which render nothing. During the final `encoding` stage it
-stays at the last take rather than dropping to null: every take is finished by
-then, and blanking it would flicker the readout out a frame before the job
-completes.
+**`take`** is the index of the take the job has reached, `0 ≤ take < count`,
+and is about the job's *own* takes — not the batch's. Since a `count: N`
+submission is expanded into N single-take jobs (5.1), it is `0` throughout a
+current engine's generate job; **which take of the batch this is comes from
+`take_index`/`take_of` on JobInfo**, and a client naming the take on screen
+reads those. The field stays because it is what a job with `count > 1` reports
+(`fraction` is then the average across every take, so the position cannot be
+inferred by multiplying whenever `fraction` is null), and because the
+per-take events below are keyed by it. It is null before the first take starts
+(during a cold load) and for task jobs, which render nothing. During the final
+`encoding` stage it stays at the last take rather than dropping to null: every
+take is finished by then, and blanking it would flicker the readout out a frame
+before the job completes.
 
 **`fraction` is nullable**, and null means the model genuinely does not know —
 draw an indeterminate bar. It is null throughout a cold load, and for any phase

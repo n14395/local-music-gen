@@ -199,3 +199,77 @@ final class TrackNamingTests: XCTestCase {
         XCTAssertEqual(view.promptSuffix, " - verse one verse two")
     }
 }
+
+/// Takes of one submission are separate jobs now (contract §5.1), and the
+/// names have to survive that: they are allocated once for the batch, not once
+/// per job.
+///
+/// Per job, each take would have read the library's high-water mark *after*
+/// the previous take was already in it — so four takes of one press would have
+/// landed as track001a, track002a, track003a, track004a: four numbers, four
+/// unrelated tracks, and no letters.
+@MainActor
+final class BatchTakeIngestTests: XCTestCase {
+    private var scratch: URL?
+    private var createdFiles: [URL] = []
+
+    override func tearDown() {
+        for url in createdFiles { try? FileManager.default.removeItem(at: url) }
+        createdFiles = []
+        if let scratch { try? FileManager.default.removeItem(at: scratch) }
+        scratch = nil
+        super.tearDown()
+    }
+
+    private func info(_ id: String, take: Int, of takes: Int,
+                      result: JobResult? = nil) -> JobInfo {
+        JobInfo(jobId: id, groupId: "grp_batch", modelId: "m", task: "generate",
+                status: .succeeded, queuePosition: nil, prompt: "a tune",
+                lyrics: nil, durationS: 4, count: 1, params: [:],
+                createdAt: "2026-08-28T10:00:00Z", progress: nil,
+                result: result, error: nil, takeIndex: take, takeOf: takes)
+    }
+
+    private func output() throws -> JobOutput {
+        let dir = try XCTUnwrap(scratch)
+        let file = dir.appendingPathComponent("take-\(UUID().uuidString).wav")
+        try Data(repeating: 7, count: 128).write(to: file)
+        return JobOutput(path: file.path, format: "wav", sampleRate: 48000,
+                         durationS: 4, seedUsed: 1)
+    }
+
+    func testFourSiblingJobsLandAsOneLetteredBatch() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("batch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir,
+                                                withIntermediateDirectories: true)
+        scratch = dir
+
+        let db = try DatabaseManager.inMemory()
+        let library = LibraryRepository(db: db)
+        let jobs = JobsStore(repo: library, partsRepo: PartsRepository(db: db))
+
+        // The whole batch is tracked from submit, as the app tracks it: the
+        // takes still to come are what keeps the shared name alive.
+        let infos = (0..<4).map { info("job_\($0)", take: $0, of: 4) }
+        for info in infos {
+            jobs.adopt(JobsStore.ActiveJob(info: info, status: .generating))
+        }
+        for info in infos {
+            let result = JobResult(outputs: [try output()], artifacts: nil,
+                                   meta: nil, timings: [:])
+            jobs.ingestGenerate(job: info, result: result)
+        }
+        let songs = try library.recent(limit: 10)
+        createdFiles += songs.map(\.fileURL)
+
+        XCTAssertEqual(Set(songs.map(\.title)),
+                       ["track001a", "track001b", "track001c", "track001d"])
+        for info in infos {
+            let row = try XCTUnwrap(jobs.active[info.jobId])
+            XCTAssertEqual(row.status, .succeeded)
+            XCTAssertEqual(row.producedSongIds.count, 1,
+                           "one job, one take, one track")
+        }
+    }
+}

@@ -55,17 +55,45 @@ enum ModelListLayout {
         Set(models.filter(\.isFeatured).map(\.id))
     }
 
-    /// The base each of these models hangs off, since the list nests variants
-    /// under a base row and a variant is never drawn as a section of its own.
-    /// A variant whose base is not in the catalog stands for itself.
+    /// The row a model is drawn under: the ROOT of its variant chain, not its
+    /// immediate parent.
+    ///
+    /// The list draws one level of nesting — it loops over the bases and asks
+    /// each for its variants — so the only ids that can carry a row are the
+    /// ones with no base of their own. Two rules follow, and they are the same
+    /// rule:
+    ///
+    /// - A variant whose base is missing from the catalog stands for itself.
+    ///   Nesting it under an id nobody has would make it unreachable: no
+    ///   header would ever be drawn to hang it from.
+    /// - A variant whose base is present but is *itself* a variant hangs off
+    ///   that base's base. Keyed by the immediate parent, its bucket would be
+    ///   filled and never read — which is exactly what happened: the Models
+    ///   screen could draw only 125 of 129 models, and the four it could not
+    ///   (SCNet XL, two MOSS-Music quants, Anticipation medium) were
+    ///   undrawable at any filter setting, with only the sidebar's count to
+    ///   say they existed. Beside its parent is also where a grandchild
+    ///   belongs: an XL checkpoint of SCNet is another build of the same
+    ///   separator.
+    ///
+    /// The `seen` guard is for a catalog that names a cycle. It cannot be
+    /// right, but a hang is worse than a model promoted to a base.
+    static func rootId(of model: ModelInfo, in byId: [String: ModelInfo]) -> String {
+        var current = model
+        var seen: Set<String> = [model.id]
+        while let parent = current.variantOf, let next = byId[parent],
+              seen.insert(parent).inserted {
+            current = next
+        }
+        return current.id
+    }
+
+    /// The base each of these models hangs off — `rootId` for a set of ids.
     static func baseIds(of ids: Set<String>, in models: [ModelInfo]) -> Set<String> {
-        let known = Set(models.map(\.id))
-        return Set(models.filter { ids.contains($0.id) }.map { model in
-            guard let base = model.variantOf, known.contains(base) else {
-                return model.id
-            }
-            return base
-        })
+        let byId = Dictionary(models.map { ($0.id, $0) },
+                              uniquingKeysWith: { first, _ in first })
+        return Set(models.filter { ids.contains($0.id) }
+            .map { rootId(of: $0, in: byId) })
     }
 
     /// Whether the disclosure must stay open whatever the stored preference
@@ -84,12 +112,11 @@ enum ModelListLayout {
                      expanded: Bool) -> ModelListPlan {
         let byId = Dictionary(models.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // A variant whose base is missing from the catalog is promoted to a
-        // base of its own. Nesting it under an id nobody has would make it
-        // unreachable — no header would ever be drawn to hang it from.
+        // The root of the variant chain, so a grandchild hangs off the row
+        // that is actually drawn rather than off a bucket nobody reads. See
+        // `rootId`.
         func baseId(of model: ModelInfo) -> String {
-            guard let parent = model.variantOf, byId[parent] != nil else { return model.id }
-            return parent
+            rootId(of: model, in: byId)
         }
 
         var variantsByBase: [String: [ModelInfo]] = [:]

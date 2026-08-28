@@ -680,8 +680,12 @@ struct StyleTransferScreen: View {
                             .buttonStyle(.bench(.quiet))
                         }
                     }
+                    // Ungrouped so the knobs do not grow a second layer of
+                    // cards inside this one — but with the explanations kept,
+                    // which is the whole difference between "Full control"
+                    // and a column of unlabelled sliders.
                     ParameterFormView(state: formState, grouped: false,
-                                      labelWidth: 130,
+                                      showsHelp: true, labelWidth: 130,
                                       materialPicker: MaterialPickerContext(
                                           catalog: catalog, library: library,
                                           parts: parts, jobs: jobs,

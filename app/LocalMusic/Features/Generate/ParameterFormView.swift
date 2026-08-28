@@ -94,6 +94,17 @@ struct ParameterFormView: View {
     /// Off for the compact forms inside action sheets, which have no room for
     /// group cards and only ever show a handful of params.
     var grouped = true
+    /// Whether each control carries its explanation underneath. Follows
+    /// `grouped` unless it is set.
+    ///
+    /// The two were the same switch until Style Transfer needed them apart.
+    /// A sheet's form is ungrouped *because* it is cramped, so dropping the
+    /// prose with the group cards is right there. Style Transfer's "Full
+    /// control" panel is ungrouped for an unrelated reason — it already sits
+    /// inside a card and a second layer of them reads as a mistake — and it
+    /// has the width, and exactly the reader, the explanations were written
+    /// for.
+    var showsHelp: Bool?
     var labelWidth: CGFloat = 112
     /// Lay the group cards out two-across when the container is wide enough.
     /// Only the inline form asks for it — a fixed-width inspector has room
@@ -121,6 +132,8 @@ struct ParameterFormView: View {
     private var visibleSpecs: [ParamSpec] {
         state.specs.filter { $0.isInternal != true }
     }
+
+    private var rendersHelp: Bool { showsHelp ?? grouped }
 
     /// The width one column of group cards needs before a second is worth
     /// having: a card is a label column plus a slider plus its number, and
@@ -242,9 +255,10 @@ struct ParameterFormView: View {
     ///
     /// The explanation used to be a `.help` tooltip and nothing else, which is
     /// no use to the person who needs it: you have to already suspect a
-    /// control is worth understanding before you hover over it, and Studio's
-    /// "Full control" is precisely the screen where you don't. It stays as a
-    /// tooltip too, for the compact ungrouped forms that have no room for it.
+    /// control is worth understanding before you hover over it, and a
+    /// "Full control" panel is precisely the screen where you don't. It stays
+    /// as a tooltip too, for the compact sheet forms that have no room to
+    /// print it.
     @ViewBuilder
     private func row(_ spec: ParamSpec) -> some View {
         let applicable = ParameterGroups.isApplicable(spec, values: state.values)
@@ -258,7 +272,7 @@ struct ParameterFormView: View {
             }
             // Bools already print their help beside the switch — the label
             // there is the sentence — so printing it again would double it.
-            if grouped, spec.type != .bool, let help = spec.help {
+            if rendersHelp, spec.type != .bool, let help = spec.help {
                 Text(help)
                     .font(Bench.Typo.caption)
                     .foregroundStyle(Bench.Palette.textFaintest)

@@ -120,9 +120,18 @@ class Job:
     def __init__(self, group_id: str, model_id: str, prompt: str,
                  lyrics: str | None, duration_s: float | None, count: int,
                  params: dict, task: str = "generate",
-                 preview: bool = False) -> None:
+                 preview: bool = False, take_index: int = 0,
+                 take_of: int = 1) -> None:
         self.id = f"job_{uuid.uuid4().hex[:12]}"
         self.group_id = group_id
+        # Which take of its submission this job is, and how many there were.
+        # A `count: 4` submit is expanded at submit into four sibling jobs
+        # (5.1) that share a group_id and differ only by this pair, so the
+        # queue is a list of takes rather than a list of batches: each take
+        # gets its own position, its own cancel and its own error. `0 of 1`
+        # for an ordinary single-take render and for every task job.
+        self.take_index = take_index
+        self.take_of = take_of
         self.model_id = model_id
         self.task = task
         self.preview = preview
@@ -283,22 +292,34 @@ class JobQueue:
                             and params.get(spec["key"]) is None):
                         raise SubmitError(422, "VALIDATION",
                                           f"missing required input '{spec['key']}'")
-            job = Job(group_id, mid, prompt, lyrics, dur,
-                      int(body.get("count", 1)), params, task=task,
-                      preview=preview)
-            self.jobs[job.id] = job
-            self.order.append(job.id)
-            self.bus.emit_threadsafe(
-                "job.queued", {"job_id": job.id, "group_id": group_id,
-                               "model_id": mid,
-                               "queue_position": self._position_locked(job.id)})
-            for k in dropped:
+            # `count: 4` is four jobs, not one job that loops four times.
+            # They share the group_id and differ by take_index, so every take
+            # is its own row in the queue with its own position, cancel and
+            # error — and the app can group them back together by group_id.
+            # They still run one after another on the same warm worker (the
+            # runner is serial and the worker keeps its loaded model), so the
+            # split costs nothing but honesty.
+            takes = int(body.get("count", 1))
+            jobs = [Job(group_id, mid, prompt, lyrics, dur, 1, params,
+                        task=task, preview=preview, take_index=i,
+                        take_of=takes)
+                    for i in range(takes)]
+            for job in jobs:
+                self.jobs[job.id] = job
+                self.order.append(job.id)
+            for job in jobs:
                 self.bus.emit_threadsafe(
-                    "job.log", {"job_id": job.id,
-                                "line": f"dropped unknown param '{k}'"})
+                    "job.queued",
+                    {"job_id": job.id, "group_id": group_id, "model_id": mid,
+                     "queue_position": self._position_locked(job.id)})
+                for k in dropped:
+                    self.bus.emit_threadsafe(
+                        "job.log", {"job_id": job.id,
+                                    "line": f"dropped unknown param '{k}'"})
             self._trim_history_locked()
         self.wake.set()
-        return {"group_id": group_id, "jobs": [{"job_id": job.id, "model_id": mid}]}
+        return {"group_id": group_id,
+                "jobs": [{"job_id": job.id, "model_id": mid} for job in jobs]}
 
     def _trim_history_locked(self) -> None:
         """Evict the oldest terminal jobs past JOB_HISTORY_CAP total.
@@ -450,6 +471,7 @@ class JobQueue:
                 "queue_position": pos, "prompt": job.prompt,
                 "lyrics": job.lyrics, "duration_s": job.duration_s,
                 "count": job.count, "params": job.params,
+                "take_index": job.take_index, "take_of": job.take_of,
                 "created_at": job.created_at, "progress": job.progress,
                 "result": job.result, "error": job.error}
 
@@ -843,6 +865,11 @@ class JobQueue:
 
             outputs = []
             meta: dict = {}
+            # `count` is 1 on every job the API can now create: a multi-take
+            # submission is expanded into sibling jobs at submit (5.1). The
+            # loop stays because the per-take bookkeeping below — seeds, the
+            # preview sweep, `job.take_done` — is what it always was, and a
+            # job built with count > 1 by anything else still renders.
             for i in range(job.count):
                 if job.cancel_requested:
                     self._canceled(job)

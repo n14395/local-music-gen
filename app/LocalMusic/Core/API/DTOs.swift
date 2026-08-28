@@ -589,6 +589,42 @@ struct JobInfo: Codable, Identifiable, Sendable {
     let progress: JobProgress?
     let result: JobResult?
     let error: APIErrorBody?
+
+    /// Which take of its submission this job is, 0-based, and how many takes
+    /// that submission asked for (contract §5.1).
+    ///
+    /// A render of four takes is four *jobs* sharing a `groupId` — one queue
+    /// row each, one cancel each, one error each — so `count` is 1 on all of
+    /// them and this pair is the only thing that says "take 2 of 4". Read
+    /// them through `takeIndexInBatch` / `takesInBatch`, which fall back to
+    /// the pre-fan-out shape (`count` + `progress.take`) rather than calling
+    /// every job a single take.
+    ///
+    /// `var`, like `preview`, so the synthesized memberwise initialiser
+    /// defaults them to nil for every hand-built fixture that predates them.
+    var takeIndex: Int?
+    var takeOf: Int?
+
+    /// How many takes the submission this job belongs to asked for. 1 for an
+    /// ordinary render and for every task job.
+    var takesInBatch: Int { max(1, takeOf ?? count) }
+
+    /// This job's place in that batch, 0-based and clamped into it — a stray
+    /// index is not worth "take 5 of 4", never mind a crash.
+    var takeIndexInBatch: Int {
+        min(max(takeIndex ?? 0, 0), takesInBatch - 1)
+    }
+
+    /// Where this job's own take `offset` sits in the batch — which is what
+    /// names it (`track042c`) and what dedups the two ways a take is offered
+    /// for ingest.
+    ///
+    /// The two shapes it spans: a fanned-out job carries one take and its
+    /// place is `takeIndex`, while a job from an engine that predates the
+    /// fan-out carries the whole batch and its takes are its own 0…count-1.
+    func batchIndex(of offset: Int) -> Int {
+        takeOf == nil ? offset : takeIndexInBatch + offset
+    }
 }
 
 struct JobProgress: Codable, Sendable {

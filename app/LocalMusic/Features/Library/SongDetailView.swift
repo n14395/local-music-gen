@@ -538,10 +538,17 @@ struct SongDetailView: View {
 
     // MARK: actions
 
-    /// Two rows of three. Six plain buttons in a single row left only the first
-    /// few characters of each title readable in this pane's width.
+    /// Three rows of three, grouped by what the row is for: make something new
+    /// from this track, work on the track itself, then the file it lives in.
+    ///
+    /// Nine tiles over two rows (five and four) is 66 pt each in this pane's
+    /// 364 pt, which is not a width a label survives — the panel read "Reuse
+    /// p…", "Split int…", "Reveal in Fi…". Three to a row is 116 pt, and the
+    /// grouping is what makes three rows scannable rather than just shorter:
+    /// you look for the row before you look for the tile.
     private var actionGrid: some View {
         VStack(spacing: 8) {
+            // Make something new from it.
             HStack(spacing: 8) {
                 LibraryActionTile(
                     title: "Reuse prompt",
@@ -551,27 +558,33 @@ struct SongDetailView: View {
                         : "Only generated tracks carry a prompt to reuse"
                 ) { actions.reusePrompt(song) }
                 LibraryActionTile(
-                    title: "Edit…",
-                    help: "Trim, cut, fade and level this track"
-                ) { actions.edit(song) }
-                LibraryActionTile(
                     title: "Restyle…",
                     help: "Open this track in Style Transfer"
                 ) { actions.restyle(song) }
-                LibraryActionTile(
-                    title: "Split into…",
-                    help: "Split this track into stems, notes or features"
-                ) { actions.split(song) }
                 LibraryActionTile(
                     title: "Find matches",
                     help: "Find library tracks that combine well with this one"
                 ) { actions.findMatches(song) }
             }
+            // Work on the track itself.
             HStack(spacing: 8) {
+                LibraryActionTile(
+                    title: "Edit…",
+                    help: "Trim, cut, fade and level this track"
+                ) { actions.edit(song) }
+                LibraryActionTile(
+                    title: "Split into…",
+                    help: "Split this track into stems, notes or features"
+                ) { actions.split(song) }
                 LibraryActionTile(
                     title: "Describe…",
                     help: "A model listens and writes the track down"
                 ) { actions.describe(song) }
+            }
+            // The file on disk. Delete belongs here rather than alone: it is
+            // an act on the file, and it is the row you are already in when
+            // you have decided the track is not worth keeping.
+            HStack(spacing: 8) {
                 LibraryActionTile(title: "Export…",
                                   help: "Save a copy of the audio file") {
                     exportSong()
