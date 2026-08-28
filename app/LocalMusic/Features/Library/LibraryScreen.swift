@@ -34,6 +34,10 @@ struct LibraryScreen: View {
     /// that bar lives outside this screen. Left nil the comparison still works,
     /// it just has no representation down there.
     var compare: LibraryCompare?
+    /// How far each scope was scrolled last time. Owned by the window, because
+    /// this screen is torn down and rebuilt every time you navigate away from
+    /// it — which is precisely the trip the position has to survive.
+    var scrollMemory: LibraryScrollMemory?
 
     @State private var selectedSongId: String?
     @State private var selectedPartId: String?
@@ -446,7 +450,8 @@ struct LibraryScreen: View {
                     checked: $checked,
                     onPlay: playPart, onSeek: seekPart,
                     onAddToWorkbench: onAddToWorkbench,
-                    onRenderNotes: onRenderNotes)
+                    onRenderNotes: onRenderNotes,
+                    scroll: scrollSlot)
             }
         } else if songs.isEmpty {
             LibraryEmptyState(title: emptyTitle, message: emptyMessage)
@@ -455,14 +460,29 @@ struct LibraryScreen: View {
                 songs: songs, partCounts: partCounts, splitting: splittingSongs,
                 playback: playback, showsCheckboxes: true,
                 selectedId: $selectedSongId, checked: $checked,
-                actions: actions, onPlay: playSong, onSeek: seekSong)
+                actions: actions, onPlay: playSong, onSeek: seekSong,
+                scroll: scrollSlot)
         }
+    }
+
+    /// This scope's place in the window's scroll memory. Per scope rather than
+    /// per screen: the scope you were in survives the trip too, so landing at
+    /// the top of Parts because you last scrolled Generated would be the same
+    /// bug in a smaller room.
+    private var scrollSlot: LibraryScrollSlot? {
+        scrollMemory.map { LibraryScrollSlot(memory: $0, scope: scope) }
     }
 
     /// Favourites is the one scope that spans both tables, so it composes the
     /// two row types itself instead of handing off to one of the lists — two
     /// scroll views stacked would each scroll on their own.
     private var favouritesList: some View {
+        ScrollViewReader { proxy in
+            favouritesScroll.remembersLibraryScroll(scrollSlot, proxy: proxy)
+        }
+    }
+
+    private var favouritesScroll: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if !songs.isEmpty {
@@ -492,6 +512,8 @@ struct LibraryScreen: View {
                                 selectedPartId = nil
                             },
                             onSeek: { seekSong(song, $0) })
+                            .id(song.id)
+                            .libraryScrollAnchor(song.id)
                     }
                 }
                 if !parts.results.isEmpty {
@@ -535,6 +557,8 @@ struct LibraryScreen: View {
                                     .disabled(onRenderNotes == nil)
                                 }
                             }
+                            .id(part.id)
+                            .libraryScrollAnchor(part.id)
                     }
                 }
             }
@@ -711,6 +735,9 @@ struct LibraryScreen: View {
         scope = reveal.scope
         selectedPartId = nil
         selectedSongId = reveal.songId
+        // The row you were sent here to see is where this scope is now, as far
+        // as the scroll memory is concerned — see `LibraryScrollMemory.pin`.
+        scrollMemory?.pin(reveal.songId, for: reveal.scope)
     }
 
     private func startCompare() {

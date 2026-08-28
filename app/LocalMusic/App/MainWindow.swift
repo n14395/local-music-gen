@@ -31,6 +31,10 @@ struct MainWindow: View {
     /// in the Library because the transport bar — which is where you switch
     /// sides — sits outside the screen.
     @State private var libraryCompare = LibraryCompare()
+    /// How far each library scope was scrolled, kept out here because the
+    /// screen itself is rebuilt on every navigation. Dies with the window, as
+    /// asked: a scroll position is where you just were, not a preference.
+    @State private var libraryScroll = LibraryScrollMemory()
     /// A track the user asked to revert, held until they confirm.
     @State private var pendingRevert: SongRecord?
     /// Set when a revert could not run because a render was in flight —
@@ -610,7 +614,8 @@ struct MainWindow: View {
                           onEditPart: { part in
                               env.studio.pending = .edit(materialId: part.id)
                           },
-                          compare: libraryCompare)
+                          compare: libraryCompare,
+                          scrollMemory: libraryScroll)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
@@ -698,12 +703,9 @@ struct MainWindow: View {
     /// wherever it is opened from.
     private var songActions: SongActions {
         SongActions(
-            reusePrompt: { song in
-                env.prefill.pending = .init(prompt: song.prompt,
-                                            lyrics: song.lyrics,
-                                            modelId: song.modelId)
-                destination = .generate
-            },
+            reusePrompt: { song in reuse(song, scope: .prompt) },
+            reuseAll: { song in reuse(song, scope: .all) },
+            reuseAllWithSeed: { song in reuse(song, scope: .allWithSeed) },
             split: { song in
                 env.studio.pending = .split(songId: song.id)
             },
@@ -821,6 +823,17 @@ struct MainWindow: View {
                                     durationS: preset.durationS,
                                     takes: preset.takes,
                                     notice: notice)
+        destination = .generate
+    }
+
+    /// Fill the composer from a finished take and go there.
+    ///
+    /// The three scopes differ only in how much of the render they carry, so
+    /// they share this: `GenerationSettings` decides what each one means, and
+    /// the composer applies whatever arrives.
+    private func reuse(_ song: SongRecord, scope: ReuseScope) {
+        env.prefill.pending = GenerationSettings.prefill(for: song,
+                                                         scope: scope)
         destination = .generate
     }
 

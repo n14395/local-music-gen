@@ -88,3 +88,98 @@ final class LibraryTests: XCTestCase {
         XCTAssertNotNil(try repo.song(id: "g2"))
     }
 }
+
+/// Where a library list was scrolled to, and the two ways that has to survive:
+/// the trip to another screen and back, and something else asking for a row.
+@MainActor
+final class LibraryScrollMemoryTests: XCTestCase {
+
+    // MARK: which row is "where the list is"
+
+    private func anchor(_ id: String, _ y: CGFloat) -> LibraryScrollAnchor {
+        LibraryScrollAnchor(id: id, y: y)
+    }
+
+    /// The row covering the top edge is the one you are looking at, however
+    /// many rows are on screen below it.
+    func testTopmostIsTheRowCoveringTheTopEdge() {
+        var value: LibraryScrollAnchor?
+        for row in [anchor("a", -120), anchor("b", -18), anchor("c", 44),
+                    anchor("d", 106)] {
+            LibraryScrollAnchorKey.reduce(value: &value) { row }
+        }
+        XCTAssertEqual(value, anchor("b", -18))
+    }
+
+    /// Scrolled right to the top there is no row past the edge, so the first
+    /// one below it is the answer rather than nothing at all.
+    func testTopmostFallsBackToTheFirstRowBelowTheEdge() {
+        var value: LibraryScrollAnchor?
+        for row in [anchor("a", 8), anchor("b", 70), anchor("c", 132)] {
+            LibraryScrollAnchorKey.reduce(value: &value) { row }
+        }
+        XCTAssertEqual(value, anchor("a", 8))
+    }
+
+    /// The reduce runs over the rows in whatever order the lazy stack holds
+    /// them, so the answer must not depend on that order.
+    func testTopmostIsOrderIndependent() {
+        let rows = [anchor("a", -120), anchor("b", -18), anchor("c", 44)]
+        for permutation in [rows, rows.reversed(), [rows[2], rows[0], rows[1]]] {
+            var value: LibraryScrollAnchor?
+            for row in permutation {
+                LibraryScrollAnchorKey.reduce(value: &value) { row }
+            }
+            XCTAssertEqual(value, anchor("b", -18))
+        }
+    }
+
+    // MARK: what is remembered
+
+    /// The bug the recording gate exists for: a list is built at the top and
+    /// reports row 0 before the restore has had a frame to run, which would
+    /// overwrite the very anchor it is on its way back to.
+    func testReportsBeforeTheRestoreAreIgnored() {
+        let memory = LibraryScrollMemory()
+        memory.beginRecording(.songs)
+        memory.record("row-40", for: .songs)
+        memory.endRecording(.songs)
+
+        memory.record("row-0", for: .songs)
+        XCTAssertEqual(memory.anchor(for: .songs), "row-40")
+
+        memory.beginRecording(.songs)
+        memory.record("row-12", for: .songs)
+        XCTAssertEqual(memory.anchor(for: .songs), "row-12")
+    }
+
+    /// Each scope is scrolled where it is scrolled. Coming back to Parts must
+    /// not land where Generated was left.
+    func testScopesAreRememberedApart() {
+        let memory = LibraryScrollMemory()
+        for scope in [LibraryScope.songs, .parts] { memory.beginRecording(scope) }
+        memory.record("song-9", for: .songs)
+        memory.record("part-3", for: .parts)
+        XCTAssertEqual(memory.anchor(for: .songs), "song-9")
+        XCTAssertEqual(memory.anchor(for: .parts), "part-3")
+        XCTAssertNil(memory.anchor(for: .imported))
+    }
+
+    /// A reveal outranks the memory — you pressed a button to see that row —
+    /// and it lands even though no list is recording at the time.
+    func testAPinnedRowOutranksWhatWasRecorded() {
+        let memory = LibraryScrollMemory()
+        memory.beginRecording(.songs)
+        memory.record("row-40", for: .songs)
+        memory.endRecording(.songs)
+        memory.pin("revealed", for: .songs)
+        XCTAssertEqual(memory.anchor(for: .songs), "revealed")
+    }
+
+    /// Nothing to restore before anything has been scrolled: a first visit
+    /// starts at the top, not at a row picked by accident.
+    func testAFreshMemoryRestoresNothing() {
+        XCTAssertNil(LibraryScrollMemory().anchor(for: .songs))
+    }
+}
+

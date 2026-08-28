@@ -28,10 +28,18 @@ final class PrefillBox {
         /// changed. Without it a card that quietly set four fields looks like
         /// a screen that changed its mind on its own.
         var notice: String?
+        /// Parameter values to pour into the arriving model's form (param key
+        /// → value), which is how "Reuse all parameters" carries a whole Full
+        /// control panel across. Applied after the form is rebuilt, and only
+        /// for keys the chosen model declares — unlike an audio file, a number
+        /// from another model's form means nothing here, so an unmatched key
+        /// is dropped rather than held.
+        var params: [String: JSONValue]
 
         init(prompt: String, lyrics: String? = nil, modelId: String? = nil,
              audioParams: [String: URL] = [:], durationS: Double? = nil,
-             takes: Int? = nil, notice: String? = nil) {
+             takes: Int? = nil, notice: String? = nil,
+             params: [String: JSONValue] = [:]) {
             self.prompt = prompt
             self.lyrics = lyrics
             self.modelId = modelId
@@ -39,6 +47,7 @@ final class PrefillBox {
             self.durationS = durationS
             self.takes = takes
             self.notice = notice
+            self.params = params
         }
     }
     var pending: Prefill?

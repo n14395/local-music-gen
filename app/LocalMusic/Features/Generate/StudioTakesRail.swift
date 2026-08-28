@@ -12,7 +12,7 @@ struct StudioTakesRail: View {
     let playback: PlaybackController
     let catalog: ModelCatalogStore
     let actions: SongActions
-    let onReusePrompt: (SongRecord) -> Void
+    let onReuse: (SongRecord, ReuseScope) -> Void
 
     /// Only what this Studio made. `library.recent` is every recent row of any
     /// origin, so without the filter an album you imported this morning would
@@ -76,7 +76,7 @@ struct StudioTakesRail: View {
                                      actions: actions,
                                      onPlay: { play(song) },
                                      onSeek: { seek(song, to: $0) },
-                                     onReusePrompt: { onReusePrompt(song) })
+                                     onReuse: { onReuse(song, $0) })
                                 // The rail is a history: the further down, the
                                 // quieter, bottoming out rather than vanishing.
                                 .opacity(index >= 3 ? 0.62 : 1)
@@ -114,7 +114,7 @@ private struct TakeCard: View {
     let actions: SongActions
     let onPlay: () -> Void
     let onSeek: (Double) -> Void
-    let onReusePrompt: () -> Void
+    let onReuse: (ReuseScope) -> Void
 
     @State private var showingDetails = false
 
@@ -155,23 +155,43 @@ private struct TakeCard: View {
                                 onSeek: onSeek)
                 .frame(height: isLead ? 46 : 38)
 
-            HStack(spacing: 8) {
-                if isLead {
+            if isLead {
+                HStack(spacing: 8) {
                     RatingStars(rating: song.rating, size: 13, spacing: 2) { rating in
                         var updated = song
                         updated.rating = rating
                         library.update(updated)
                     }
+                    Spacer()
                 }
-                Spacer()
-                Button("Reuse prompt", action: onReusePrompt)
-                    .buttonStyle(.bench(.quiet))
+            }
+            // Their own row rather than the stars' — three of them and a
+            // rating do not fit across a 392 pt rail, and the reuse buttons
+            // are what the card is for.
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                reuseButton(.prompt)
+                reuseButton(.all)
+                reuseButton(.allWithSeed)
             }
         }
         .padding(14)
         .benchCard(fill: isCurrent ? Bench.Palette.cardSelected : Bench.Palette.card,
                    stroke: isCurrent ? Bench.Palette.accent.opacity(0.28)
                                      : Bench.Palette.cardStrokeSoft)
+    }
+
+    /// A take rendered by a model with no seed of its own has nothing to pin,
+    /// so "+ seed" dims and says why rather than repeating the other button.
+    @ViewBuilder
+    private func reuseButton(_ scope: ReuseScope) -> some View {
+        let isEnabled = scope != .allWithSeed || song.seedUsed != nil
+        Button(scope.shortTitle) { onReuse(scope) }
+            .buttonStyle(.bench(.quiet))
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.45)
+            .help(isEnabled ? scope.help
+                : "This take was rendered by a model that has no seed")
     }
 
     private var metaLine: String {

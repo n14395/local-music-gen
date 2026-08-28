@@ -25,6 +25,7 @@
 		1000187B776145EC1EC1461E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10198AE815427EFD3A1D9AA /* SettingsView.swift */; };
 		10F89031C586F0D1EAB794C8 /* MixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E11DBD3293CF864A85F7C3 /* MixModels.swift */; };
 		11C0B993BD75F01B3925CEBA /* TextCompareActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3DFAD343BFDAC5E84777903 /* TextCompareActionView.swift */; };
+		12A84FFBAA8595384580AEAE /* GenerationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F975585C0A1ADA86DBC42A3C /* GenerationSettings.swift */; };
 		1360864A64527E56AA574AF7 /* PartNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30708CFCEBF81A90CB64771 /* PartNaming.swift */; };
 		13A982C0EDCC69BD5F11C44E /* RenderStatusPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26A75A7D4C605DF42D92C7FB /* RenderStatusPill.swift */; };
 		14B1C26ED2925F033D06390D /* SimilarActionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76415D36A4C3DA47FE626EBE /* SimilarActionView.swift */; };
@@ -540,6 +541,7 @@
 		F7ED4857F5CF532B639405AB /* RecombineFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecombineFlowTests.swift; sourceTree = "<group>"; };
 		F807ECF15D3E30E20FAD9302 /* FittingWidthReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FittingWidthReaderTests.swift; sourceTree = "<group>"; };
 		F8DEF1EDF639F076D5FF5369 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		F975585C0A1ADA86DBC42A3C /* GenerationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenerationSettings.swift; sourceTree = "<group>"; };
 		F99CEF74BA74B2D02F299B4D /* LyricsEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsEditor.swift; sourceTree = "<group>"; };
 		FAED2D76DF9A95B85F559BC6 /* TrackTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackTitle.swift; sourceTree = "<group>"; };
 		FBEF3C5EAA343441EA9CB9AA /* ClipInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipInspector.swift; sourceTree = "<group>"; };
@@ -945,6 +947,7 @@
 			isa = PBXGroup;
 			children = (
 				436048663812F65E87DA3EBA /* GeneratePreset.swift */,
+				F975585C0A1ADA86DBC42A3C /* GenerationSettings.swift */,
 				F99CEF74BA74B2D02F299B4D /* LyricsEditor.swift */,
 				A28798B17CE2280BCC07F59B /* ModelChooser.swift */,
 				23DA3CC437A510185AD90101 /* ParameterFormView.swift */,
@@ -1198,6 +1201,7 @@
 				3A6F5B8AEF44CD8274B69CAB /* FittingWidthReader.swift in Sources */,
 				B23CC74BA1E7E41EEBD500AD /* FlowLayout.swift in Sources */,
 				941EB7F20A753334CF440C4F /* GeneratePreset.swift in Sources */,
+				12A84FFBAA8595384580AEAE /* GenerationSettings.swift in Sources */,
 				3F39AD2ECD2C7BE7E34BB56B /* JobQueueSection.swift in Sources */,
 				DD4CF4C08BA8E6E1BAF44675 /* JobsStore.swift in Sources */,
 				8101BB1BF04262F7EE4287D7 /* Keychain.swift in Sources */,

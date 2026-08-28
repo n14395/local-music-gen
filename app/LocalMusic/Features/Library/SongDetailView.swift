@@ -6,6 +6,13 @@ import SwiftUI
 /// place the pane appears, so they all offer the same actions.
 struct SongActions {
     var reusePrompt: (SongRecord) -> Void = { _ in }
+    /// Start a new generation from everything the track was made with —
+    /// model, length, take count and every Full control value — on a fresh
+    /// seed, so it is the same recipe rather than the same render.
+    var reuseAll: (SongRecord) -> Void = { _ in }
+    /// The same with the seed the engine actually used, which makes the
+    /// render repeat instead of vary.
+    var reuseAllWithSeed: (SongRecord) -> Void = { _ in }
     var split: (SongRecord) -> Void = { _ in }
     var findMatches: (SongRecord) -> Void = { _ in }
     /// Open "Describe it by listening" on this track.
@@ -538,25 +545,51 @@ struct SongDetailView: View {
 
     // MARK: actions
 
-    /// Three rows of three, grouped by what the row is for: make something new
-    /// from this track, work on the track itself, then the file it lives in.
+    /// One of the three reuse tiles.
     ///
-    /// Nine tiles over two rows (five and four) is 66 pt each in this pane's
+    /// All three are refused on an import for the same reason: there is no
+    /// render to repeat. "+ seed" is refused on one more — a take from a model
+    /// with no seed of its own has nothing to pin, and the tile says so rather
+    /// than pretending to offer it.
+    private func reuseTile(_ scope: ReuseScope,
+                           action: @escaping () -> Void) -> some View {
+        let isGenerated = song.originKind == .generated
+        let hasSeed = song.seedUsed != nil
+        let isEnabled = isGenerated && (scope != .allWithSeed || hasSeed)
+        return LibraryActionTile(
+            title: scope.shortTitle,
+            isEnabled: isEnabled,
+            help: isEnabled ? scope.help
+                : isGenerated
+                    ? "This track was rendered by a model that has no seed"
+                    : "Only generated tracks carry settings to reuse",
+            action: action)
+    }
+
+    /// Four rows of three, grouped by what the row is for: generate again
+    /// from this track, make something else from it, work on the track
+    /// itself, then the file it lives in.
+    ///
+    /// Nine tiles over two rows (five and four) was 66 pt each in this pane's
     /// 364 pt, which is not a width a label survives — the panel read "Reuse
     /// p…", "Split int…", "Reveal in Fi…". Three to a row is 116 pt, and the
-    /// grouping is what makes three rows scannable rather than just shorter:
-    /// you look for the row before you look for the tile.
+    /// grouping is what makes the rows scannable rather than just shorter:
+    /// you look for the row before you look for the tile. That 116 pt is also
+    /// why the reuse tiles read "Reuse all" where a menu says "Reuse all
+    /// parameters" — the longer label only fits by shrinking to a size that
+    /// looks like a rendering fault.
     private var actionGrid: some View {
         VStack(spacing: 8) {
-            // Make something new from it.
+            // Generate again from it, in three sizes.
             HStack(spacing: 8) {
-                LibraryActionTile(
-                    title: "Reuse prompt",
-                    isEnabled: song.originKind == .generated,
-                    help: song.originKind == .generated
-                        ? "Start a new generation from this track's prompt"
-                        : "Only generated tracks carry a prompt to reuse"
-                ) { actions.reusePrompt(song) }
+                reuseTile(.prompt) { actions.reusePrompt(song) }
+                reuseTile(.all) { actions.reuseAll(song) }
+                reuseTile(.allWithSeed) { actions.reuseAllWithSeed(song) }
+            }
+            // Make something new from it. Two tiles and a held-open third
+            // slot, so this row's buttons are the same width as every other
+            // row's rather than stretching to fill it.
+            HStack(spacing: 8) {
                 LibraryActionTile(
                     title: "Restyle…",
                     help: "Open this track in Style Transfer"
@@ -565,6 +598,7 @@ struct SongDetailView: View {
                     title: "Find matches",
                     help: "Find library tracks that combine well with this one"
                 ) { actions.findMatches(song) }
+                Spacer().frame(maxWidth: .infinity)
             }
             // Work on the track itself.
             HStack(spacing: 8) {

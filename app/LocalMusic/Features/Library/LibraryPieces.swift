@@ -439,3 +439,164 @@ final class LibraryCompare {
             : "A · SWITCH TO B WITH \(Self.switchKey)"
     }
 }
+
+// MARK: - Where a list was scrolled to
+
+/// How far down each library scope was scrolled, so leaving the Library and
+/// coming back lands where you left it instead of at the top.
+///
+/// Session-scoped by construction: the window holds it in `@State`, so it
+/// lives exactly as long as the window does and the next launch starts at the
+/// top of the list. That is the ask — where you were a minute ago is worth
+/// remembering, where you were last Tuesday is not.
+///
+/// Deliberately a plain class rather than `@Observable`: the anchor is written
+/// on every scroll tick and read once per visit, so observing it would rebuild
+/// the window's body at 60 Hz to store a string that nothing on screen draws.
+@MainActor
+final class LibraryScrollMemory {
+    private var anchors: [LibraryScope: String] = [:]
+    /// Scopes whose list has finished restoring and may now record.
+    ///
+    /// Without this the feature undoes itself: a list is built at the top,
+    /// SwiftUI delivers "you are at row 0" before the restore has had a frame
+    /// to run, and the anchor being restored to is overwritten by the anchor
+    /// it was restored *from*.
+    private var recording: Set<LibraryScope> = []
+
+    func anchor(for scope: LibraryScope) -> String? { anchors[scope] }
+
+    func record(_ id: String, for scope: LibraryScope) {
+        guard recording.contains(scope) else { return }
+        anchors[scope] = id
+    }
+
+    /// The list is settled where it belongs; what it reports from here is the
+    /// user scrolling.
+    func beginRecording(_ scope: LibraryScope) { recording.insert(scope) }
+
+    /// The list is going away. Its parting reports are teardown, not scrolling.
+    func endRecording(_ scope: LibraryScope) { recording.remove(scope) }
+
+    /// Put the memory on a row whatever it last recorded: something outside
+    /// the Library asked for that row to be shown.
+    ///
+    /// Otherwise the two mechanisms fight and the wrong one wins. A "Show in
+    /// library" from a queue card arrives, selects the track and scrolls to
+    /// it — and a frame later the restore scheduled when the list appeared
+    /// puts the list back where it was yesterday, over the top of the row the
+    /// user pressed a button to see. Pointed at the same row, both land in the
+    /// same place and the memory is left correct for next time.
+    func pin(_ id: String, for scope: LibraryScope) { anchors[scope] = id }
+}
+
+/// One list's slot in that memory — the pair every call site needs, kept
+/// together so a list cannot be handed a memory without the scope to file it
+/// under.
+struct LibraryScrollSlot {
+    let memory: LibraryScrollMemory
+    let scope: LibraryScope
+}
+
+/// The row a list is scrolled to.
+struct LibraryScrollAnchor: Equatable {
+    let id: String
+    /// The row's top edge, in the scroll view's own coordinate space: 0 is the
+    /// top of the viewport, negative is scrolled past.
+    let y: CGFloat
+}
+
+/// Collects every built row's position and keeps the one at the top.
+///
+/// A single value rather than an array of all of them: the reduce runs on
+/// every scroll tick over every row the lazy stack is holding, and the answer
+/// is one row either way.
+struct LibraryScrollAnchorKey: PreferenceKey {
+    static let defaultValue: LibraryScrollAnchor? = nil
+
+    static let space = "library.list"
+
+    static func reduce(value: inout LibraryScrollAnchor?,
+                       nextValue: () -> LibraryScrollAnchor?) {
+        guard let next = nextValue() else { return }
+        guard let current = value else { value = next; return }
+        value = topmost(current, next)
+    }
+
+    /// The row covering the top edge of the viewport — the one you are looking
+    /// at — or, when the list is scrolled right to the top and every row is
+    /// below the edge, the first of them.
+    static func topmost(_ a: LibraryScrollAnchor,
+                        _ b: LibraryScrollAnchor) -> LibraryScrollAnchor {
+        switch (a.y <= 0, b.y <= 0) {
+        case (true, true): a.y >= b.y ? a : b     // the lowest one still past it
+        case (true, false): a
+        case (false, true): b
+        case (false, false): a.y <= b.y ? a : b   // the highest one below it
+        }
+    }
+}
+
+extension View {
+    /// Marks this row as a candidate for "where the list is scrolled to". Goes
+    /// on the same rows that carry `.id()`, since that is what scrolls back.
+    func libraryScrollAnchor(_ id: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(
+                key: LibraryScrollAnchorKey.self,
+                value: LibraryScrollAnchor(
+                    id: id,
+                    y: geometry.frame(
+                        in: .named(LibraryScrollAnchorKey.space)).minY))
+        })
+    }
+
+    /// Remembers where this scroll view is, and puts it back there next time.
+    ///
+    /// Restores to the top of the row that was covering the top edge, which is
+    /// row-granular rather than pixel-perfect: `ScrollViewProxy` scrolls to
+    /// views, not to offsets, and there is no offset API on this deployment
+    /// target. Landing on the row you were reading is the part that matters.
+    func remembersLibraryScroll(_ slot: LibraryScrollSlot?,
+                                proxy: ScrollViewProxy) -> some View {
+        modifier(RemembersLibraryScroll(slot: slot, proxy: proxy))
+    }
+}
+
+private struct RemembersLibraryScroll: ViewModifier {
+    let slot: LibraryScrollSlot?
+    let proxy: ScrollViewProxy
+
+    func body(content: Content) -> some View {
+        if let slot {
+            content
+                .coordinateSpace(.named(LibraryScrollAnchorKey.space))
+                .onPreferenceChange(LibraryScrollAnchorKey.self) { anchor in
+                    // SwiftUI delivers this on the main actor; the closure is
+                    // `@Sendable` all the same, so the isolation is stated
+                    // rather than hopped — a `Task` per scroll tick to store
+                    // one string is a lot of allocation for nothing.
+                    MainActor.assumeIsolated {
+                        guard let anchor else { return }
+                        slot.memory.record(anchor.id, for: slot.scope)
+                    }
+                }
+                .onAppear {
+                    guard let id = slot.memory.anchor(for: slot.scope) else {
+                        slot.memory.beginRecording(slot.scope)
+                        return
+                    }
+                    // A turn late on purpose: the lazy stack builds its rows
+                    // during the layout pass this fires in, and `scrollTo` for
+                    // a row that does not exist yet does nothing at all.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(id, anchor: .top)
+                        slot.memory.beginRecording(slot.scope)
+                    }
+                }
+                .onDisappear { slot.memory.endRecording(slot.scope) }
+        } else {
+            content
+        }
+    }
+}

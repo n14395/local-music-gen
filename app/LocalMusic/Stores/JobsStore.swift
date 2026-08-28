@@ -1517,8 +1517,16 @@ final class JobsStore {
         // everything-about-this-render, and only these cards read it.
         var stored = job.params
         if let meta = output.meta ?? job.result?.meta, !meta.isEmpty {
-            stored["meta"] = .object(meta)
+            stored[GenerationSettings.metaKey] = .object(meta)
         }
+        // Length and take count are arguments of the submission rather than
+        // params, so without this the bag remembers every knob and neither of
+        // the two numbers the composer asks for first. `job.durationS` is what
+        // was *asked for*: the row's own `durationS` is what came back, and a
+        // model that pads or trims to its own frame size does not return the
+        // length it was given.
+        stored[GenerationSettings.requestKey] = GenerationSettings
+            .requestEnvelope(durationS: job.durationS, takes: job.takesInBatch)
         let paramsJSON = (try? String(
             decoding: BackendClient.encoder.encode(stored),
             as: UTF8.self)) ?? "{}"

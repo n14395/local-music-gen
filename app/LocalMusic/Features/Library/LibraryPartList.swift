@@ -34,6 +34,8 @@ struct LibraryPartList: View {
     let onSeek: (PartRecord, Double) -> Void
     let onAddToWorkbench: (PartRecord) -> Void
     let onRenderNotes: ((PartRecord) -> Void)?
+    /// Where this list files its scroll position — see `LibraryScrollMemory`.
+    var scroll: LibraryScrollSlot?
 
     /// Flattened once so arrow keys can step across group boundaries.
     private var flat: [PartRecord] { groups.flatMap(\.parts) }
@@ -59,6 +61,7 @@ struct LibraryPartList: View {
                                 onSelect: { selectedId = part.id },
                                 onSeek: { onSeek(part, $0) })
                                 .id(part.id)
+                                .libraryScrollAnchor(part.id)
                                 .contextMenu { menu(for: part) }
                         }
                     }
@@ -66,6 +69,7 @@ struct LibraryPartList: View {
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .remembersLibraryScroll(scroll, proxy: proxy)
             .focusable()
             .focusEffectDisabled()
             .onMoveCommand(perform: move)

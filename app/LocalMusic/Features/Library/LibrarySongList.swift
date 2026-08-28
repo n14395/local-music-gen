@@ -28,6 +28,10 @@ struct LibrarySongList: View {
     /// point you clicked, which is two calls into the transport rather than
     /// one.
     let onSeek: (SongRecord, Double) -> Void
+    /// Where this list files its scroll position, so coming back to the
+    /// Library lands where you left it. Optional: a list drawn somewhere with
+    /// no "coming back" has nothing to remember.
+    var scroll: LibraryScrollSlot?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -48,11 +52,13 @@ struct LibrarySongList: View {
                             onSelect: { selectedId = song.id },
                             onSeek: { onSeek(song, $0) })
                             .id(song.id)
+                            .libraryScrollAnchor(song.id)
                             .contextMenu { menu(for: song) }
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
+            .remembersLibraryScroll(scroll, proxy: proxy)
             .focusable()
             .focusEffectDisabled()
             .onMoveCommand(perform: move)
@@ -94,8 +100,14 @@ struct LibrarySongList: View {
             }
         }
         Divider()
-        Button("Reuse prompt") { actions.reusePrompt(song) }
+        Button(ReuseScope.prompt.title) { actions.reusePrompt(song) }
             .disabled(song.originKind != .generated)
+        Button(ReuseScope.all.title) { actions.reuseAll(song) }
+            .disabled(song.originKind != .generated)
+        // A model with no seed of its own reports none, and there is nothing
+        // to pin — the item dims rather than offering a repeat it cannot make.
+        Button(ReuseScope.allWithSeed.title) { actions.reuseAllWithSeed(song) }
+            .disabled(song.originKind != .generated || song.seedUsed == nil)
         Button("Restyle…") { actions.restyle(song) }
         Button("Split into…") { actions.split(song) }
         Button("Find matches") { actions.findMatches(song) }

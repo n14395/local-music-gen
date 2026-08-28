@@ -51,6 +51,16 @@ struct StudioView: View {
     @State private var formState = ParameterFormState(specs: [])
     /// Reference audio waiting to land in the (possibly not-yet-rebuilt) form.
     @State private var pendingAudio: [String: URL] = [:]
+    /// Reused parameter values waiting for the same rebuild. Same deferral as
+    /// `pendingAudio` and for the same reason — see the note over the state
+    /// plumbing below.
+    @State private var pendingParams: [String: JSONValue] = [:]
+    /// A reused length, held until the model it was measured against is the
+    /// one on screen. Deferred rather than assigned because it is the only
+    /// value here that can need `unlockLength` turned on to survive
+    /// `clampToModel`, and that decision needs the arriving model, not the
+    /// outgoing one.
+    @State private var pendingDurationS: Double?
     /// Set when the user asks to go back to composing while a render runs.
     @State private var showingComposer = false
     @State private var showingModelChooser = false
@@ -226,12 +236,15 @@ struct StudioView: View {
             BenchInspector(width: Bench.Metrics.Inspector.takes) {
                 StudioTakesRail(library: library, playback: playback,
                                 catalog: catalog, actions: actions,
-                                onReusePrompt: { song in
-                                    prompt = song.prompt
-                                    lyrics = song.lyrics ?? ""
-                                    if installed.contains(where: { $0.id == song.modelId }) {
-                                        selectedModelId = song.modelId
-                                    }
+                                // Through the prefill mailbox rather than by
+                                // setting the fields here: the rail's three
+                                // buttons and the Library's three menu items
+                                // are the same three actions, and one of them
+                                // has an ordering dance around the form
+                                // rebuild that is not worth having twice.
+                                onReuse: { song, scope in
+                                    prefill.pending = GenerationSettings
+                                        .prefill(for: song, scope: scope)
                                 })
             }
         }
@@ -740,20 +753,20 @@ struct StudioView: View {
         prompt = request.prompt
         lyrics = request.lyrics ?? ""
         pendingAudio = request.audioParams
+        pendingParams = request.params
         notice = request.notice
         // Asked for, not imposed: `clampToModel` below reduces both to what
         // the chosen model actually allows, so a card wanting two minutes
         // lands on thirty seconds of MusicGen rather than on a length it
         // would refuse.
-        if let durationS = request.durationS { self.durationS = durationS }
+        pendingDurationS = request.durationS
         if let takes = request.takes { count = takes }
         if let modelId = request.modelId,
            installed.contains(where: { $0.id == modelId }),
            selectedModelId != modelId {
             selectedModelId = modelId   // onChange rebuilds the form
         } else {
-            clampToModel()
-            consumePendingAudio()
+            consumeArrivals()
         }
         prefill.pending = nil
     }
@@ -761,7 +774,19 @@ struct StudioView: View {
     private func rebuildForm() {
         guard let model else { return }
         formState = ParameterFormState(specs: model.capabilities.params)
+        consumeArrivals()
+    }
+
+    /// Everything a prefill left waiting for the form it belongs to, in the
+    /// order the values depend on each other: the length decides whether the
+    /// unlock is needed, the clamp then holds both length and take count to
+    /// what the model allows, and the params go into a form that exists.
+    private func consumeArrivals() {
+        consumePendingLength()
         clampToModel()
+        // Params before audio: pouring a reuse resets the form first, which
+        // would otherwise throw away the files the same prefill just landed.
+        consumePendingParams()
         consumePendingAudio()
     }
 
@@ -804,6 +829,63 @@ struct StudioView: View {
                 pendingAudio.removeValue(forKey: key)
             }
         }
+    }
+
+    /// Pour a reused take's parameter values into the rebuilt form.
+    ///
+    /// Dropped rather than held, unlike `pendingAudio`: a file is the user's
+    /// material and belongs to whichever model can take it, but a number from
+    /// another model's form has no meaning here — `guidance_scale 3` on a
+    /// model whose range starts at 5 is not a setting anyone chose.
+    ///
+    /// Audio params are skipped even where the key matches. What the row
+    /// stored for one is an engine upload id, and an upload does not outlive
+    /// the job that used it; re-submitting the id would name nothing. The
+    /// slot is left empty for the user to fill, which is visible, rather than
+    /// filled with a reference that fails at submit.
+    private func consumePendingParams() {
+        guard !pendingParams.isEmpty, let model else { return }
+        let arriving = pendingParams
+        pendingParams = [:]
+        // From the model's defaults, not from whatever the panel was left on.
+        // The arriving dict is the whole submitted param bag, so anything it
+        // does not name is something the reused take did NOT set — and a knob
+        // the user had moved half an hour ago surviving into "reuse all" would
+        // make it a different render, which is the one thing it must not be.
+        // A no-op when the model changed, since that rebuilt the form already.
+        formState.reset()
+        for (key, value) in arriving {
+            guard let spec = model.capabilities.params.first(
+                where: { $0.key == key }), spec.isInternal != true,
+                  spec.type != .audio, spec.type != .midi, spec.type != .json
+            else { continue }
+            switch value {
+            case .int(let v): formState.setDouble(spec, Double(v))
+            case .double(let v): formState.setDouble(spec, v)
+            case .bool(let v): formState.setBool(spec, v)
+            case .string(let v): formState.setString(spec, v)
+            case .null: formState.setNull(spec)
+            default: continue
+            }
+        }
+    }
+
+    /// Take a reused length, unlocking the slider first where the take was
+    /// rendered past the model's own recommendation.
+    ///
+    /// Without the unlock `clampToModel` would pull the length back down and
+    /// "reuse all" would quietly be a different render — the one failure this
+    /// whole path exists to avoid. The unlock is only ever turned ON here: a
+    /// shorter reuse leaves it where the user had it, and `clampToModel`
+    /// clears it whenever the model cannot offer it at all.
+    private func consumePendingLength() {
+        guard let want = pendingDurationS, let model else { return }
+        pendingDurationS = nil
+        if want > model.capabilities.duration.maxS(unlocked: false),
+           model.capabilities.duration.canUnlock {
+            unlockLength = true
+        }
+        durationS = want
     }
 
     private func applyPreset(_ preset: StudioPreset) {
