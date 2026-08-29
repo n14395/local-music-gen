@@ -8,10 +8,71 @@ final class PartsStore {
     private(set) var results: [PartRecord] = []
     /// Analysis attachments for the current results, keyed by part id.
     private(set) var analyses: [String: AnalysisRecord] = [:]
+    /// How many parts are hearted — the sidebar's "Favourites" count, which
+    /// spans both tables and so cannot be read off `results`. Cached for the
+    /// reason `LibraryStore.editedCount` is: the sidebar was running the
+    /// query from inside its body.
+    private(set) var favouriteCount = 0
     var filters = PartsRepository.Filters() {
-        didSet { refresh() }
+        didSet { filtersChanged(from: oldValue) }
     }
     var lastError: String?
+
+    private var searchTask: Task<Void, Never>?
+
+    /// As `LibraryStore.filtersChanged(from:)`, and for the same reason: a
+    /// chip is a click and lands at once, the search text is a keystroke and
+    /// settles first. Worse here than there, historically — this refresh was
+    /// N+1 queries deep, so a typed word cost five round trips per part in
+    /// the list.
+    private func filtersChanged(from oldValue: PartsRepository.Filters) {
+        guard filters != oldValue else { return }
+        var exceptQuery = filters
+        exceptQuery.query = oldValue.query
+        if exceptQuery == oldValue {
+            scheduleRefresh()
+        } else {
+            searchTask?.cancel()
+            searchTask = nil
+            refresh()
+        }
+    }
+
+    private func scheduleRefresh() {
+        searchTask?.cancel()
+        let wanted = filters
+        let repo = self.repo
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: LibraryStore.searchDebounce)
+            guard !Task.isCancelled else { return }
+            let answer = await Task.detached(priority: .userInitiated) {
+                Self.read(filters: wanted, from: repo)
+            }.value
+            guard !Task.isCancelled, let self, self.filters == wanted else {
+                return
+            }
+            self.results = answer.parts
+            self.analyses = answer.analyses
+            if self.favouriteCount != answer.favourites {
+                self.favouriteCount = answer.favourites
+            }
+        }
+    }
+
+    /// The list and its analyses, in two queries rather than one per row.
+    ///
+    /// `nonisolated` so the debounced path can run it off this actor; the
+    /// repository is a `Sendable` value over a serial database queue, so
+    /// there is nothing here that wanted the main thread in the first place.
+    nonisolated private static func read(filters: PartsRepository.Filters,
+                                         from repo: PartsRepository)
+        -> (parts: [PartRecord], analyses: [String: AnalysisRecord],
+            favourites: Int) {
+        let parts = (try? repo.parts(filters)) ?? []
+        let analyses = (try? repo.analyses(ownerIds: parts.map(\.id))) ?? [:]
+        let favourites = ((try? repo.favorites()) ?? []).count
+        return (parts, analyses, favourites)
+    }
 
     /// Whether deletions send the user's files to the Trash — see
     /// `LibraryStore.usesTrash`.
@@ -25,14 +86,14 @@ final class PartsStore {
     var repository: PartsRepository { repo }
 
     func refresh() {
-        results = (try? repo.parts(filters)) ?? []
-        var map: [String: AnalysisRecord] = [:]
-        for part in results {
-            if let record = try? repo.analysis(ownerId: part.id) {
-                map[part.id] = record
-            }
+        searchTask?.cancel()
+        searchTask = nil
+        let answer = Self.read(filters: filters, from: repo)
+        results = answer.parts
+        analyses = answer.analyses
+        if favouriteCount != answer.favourites {
+            favouriteCount = answer.favourites
         }
-        analyses = map
     }
 
     /// As `LibraryStore.noteEdits` — keep the cached rows in step with the

@@ -9,10 +9,73 @@ final class LibraryStore {
     private(set) var recent: [SongRecord] = []
     private(set) var results: [SongRecord] = []
     private(set) var allTags: [String] = []
+    /// How many tracks carry an applied edit — the sidebar's "Edited" count.
+    ///
+    /// Cached here because the sidebar drew it by calling
+    /// `repository.editedCount()` from inside its own body, which is a
+    /// synchronous `SELECT COUNT(*)` on every render pass of the window's
+    /// navigation column. Unfiltered on purpose: it counts the scope, not the
+    /// list currently on screen.
+    private(set) var editedCount = 0
     var filters = LibraryRepository.Filters() {
-        didSet { refreshSearch() }
+        didSet { filtersChanged(from: oldValue) }
     }
     var lastError: String?
+
+    /// How long the search text settles for before the database is asked.
+    /// Long enough that a typed word is one query rather than five, short
+    /// enough that stopping typing and reading the list feels immediate.
+    static let searchDebounce = Duration.milliseconds(140)
+
+    private var searchTask: Task<Void, Never>?
+
+    /// A filter moved. Which one decides whether the database is asked now or
+    /// in a moment.
+    ///
+    /// Everything except the search text is a click — a chip, a sort, a scope
+    /// — and a click should land at once, so those still run the query inline.
+    /// `query` is bound to a text field, and running it inline meant one FTS5
+    /// MATCH, one FTS join over the text documents and an `allTags()` between
+    /// one keystroke and the next, all synchronously on the actor drawing the
+    /// results. That one is debounced, and the query itself runs off this
+    /// actor.
+    private func filtersChanged(from oldValue: LibraryRepository.Filters) {
+        guard filters != oldValue else { return }
+        var exceptQuery = filters
+        exceptQuery.query = oldValue.query
+        if exceptQuery == oldValue {
+            scheduleSearch()
+        } else {
+            searchTask?.cancel()
+            searchTask = nil
+            refreshSearch()
+        }
+    }
+
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        let wanted = filters
+        let repo = self.repo
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.searchDebounce)
+            guard !Task.isCancelled else { return }
+            let answer = await Task.detached(priority: .userInitiated) {
+                (results: (try? repo.search(wanted)) ?? [],
+                 tags: (try? repo.allTags()) ?? [],
+                 edited: (try? repo.editedCount()) ?? 0)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            // The filters may have moved on while this was in the database —
+            // only the newest question's answer may be published, or a slow
+            // query would overwrite a faster one that came after it.
+            guard self.filters == wanted else { return }
+            self.results = answer.results
+            self.allTags = answer.tags
+            if self.editedCount != answer.edited {
+                self.editedCount = answer.edited
+            }
+        }
+    }
 
     init(repo: LibraryRepository, partsRepo: PartsRepository? = nil) {
         self.repo = repo
@@ -78,8 +141,12 @@ final class LibraryStore {
     }
 
     func refreshSearch() {
+        searchTask?.cancel()
+        searchTask = nil
         results = (try? repo.search(filters)) ?? []
         allTags = (try? repo.allTags()) ?? []
+        let edited = (try? repo.editedCount()) ?? 0
+        if editedCount != edited { editedCount = edited }
     }
 
     /// Re-read one song. Editors target an id rather than the snapshot they

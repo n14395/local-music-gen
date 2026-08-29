@@ -336,10 +336,39 @@ struct LibrarySongRow: View {
     /// none. Reads `editedAt` first: a pending program is not something the
     /// file carries yet, and a row must not claim edits it cannot play.
     static func editCount(of song: SongRecord) -> Int? {
-        guard song.editedAt != nil, let json = song.editsJSON,
-              let document = try? JSONDecoder().decode(
-                EditDocument.self, from: Data(json.utf8)) else { return nil }
-        return document.editCount
+        guard song.editedAt != nil, let json = song.editsJSON else { return nil }
+        return EditCountMemo.count(of: json)
+    }
+}
+
+/// `editsJSON` → how many steps are in it.
+///
+/// The badge this feeds is drawn per row, and a row is rebuilt whenever its
+/// list is, so the count used to mean allocating a `JSONDecoder` and decoding
+/// a whole edit document — every op, every effect — once per edited row per
+/// pass, to print one number.
+///
+/// The JSON *is* the identity of the answer: a program that has changed is a
+/// different string. So memoising on it is exact rather than a guess about
+/// when to invalidate.
+@MainActor
+enum EditCountMemo {
+    private static var counts: [String: Int?] = [:]
+
+    /// Enough for every edited track in a large library. Past it the memo
+    /// starts over rather than growing for the rest of the session — an apply
+    /// writes a *new* document, so a long editing session would otherwise
+    /// keep every version of it the list had ever drawn.
+    private static let capacity = 512
+
+    static func count(of json: String) -> Int? {
+        if let known = counts[json] { return known }
+        let document = try? JSONDecoder().decode(EditDocument.self,
+                                                 from: Data(json.utf8))
+        let answer = document?.editCount
+        if counts.count >= capacity { counts.removeAll(keepingCapacity: true) }
+        counts[json] = answer
+        return answer
     }
 }
 

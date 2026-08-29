@@ -41,7 +41,7 @@ struct QueueRail: View {
                     } else {
                         JobQueueSection(jobs: jobs, downloads: downloads,
                                         modelName: { id in
-                                            catalog.models.first { $0.id == id }?.displayName ?? id
+                                            catalog.model(id: id)?.displayName ?? id
                                         },
                                         reorderable: true,
                                         onShowInLibrary: onShowInLibrary)

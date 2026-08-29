@@ -77,6 +77,21 @@ struct QueueLoad: Equatable {
         return load
     }
 
+    /// The same load with a transfers summary folded in.
+    ///
+    /// The shell reads cached summaries rather than the two stores' raw
+    /// dictionaries — see `JobsStore.load` and `DownloadsStore.transfers` —
+    /// and this is where the halves meet. Identical arithmetic to
+    /// `of(jobs:downloads:)` below, which is still what the queue rail uses:
+    /// the rail is already drawing every row, so it has nothing to save.
+    func adding(_ transfers: DownloadsStore.Transfers) -> QueueLoad {
+        var out = self
+        out.downloads = transfers.active
+        out.finished += transfers.finished
+        out.failed += transfers.failed
+        return out
+    }
+
     /// The same count, taken straight off the downloads store — the two
     /// places that draw the whole queue both need all three of its numbers,
     /// and picking them apart at each call site is how they drift.

@@ -117,7 +117,7 @@ struct SplitActionView: View {
         }
         .onAppear(perform: restore)
         .onChange(of: selectedModelId) { rebuildForm() }
-        .onChange(of: catalog.models.map(\.id)) { rebuildForm() }
+        .onChange(of: catalog.version) { rebuildForm() }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: recipe.slots.first?.label ?? "Song",

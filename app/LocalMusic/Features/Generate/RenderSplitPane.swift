@@ -16,6 +16,11 @@ import SwiftUI
 /// them.
 struct RenderSplitPane: View {
     let job: JobsStore.ActiveJob
+    /// The job's log box rather than its lines — see `JobLog`. Handed
+    /// straight to the pane below without being read here, so a line arriving
+    /// redraws the log pane and not this card, its stage list or the render
+    /// screen around it.
+    let log: JobLog
     let stages: [PipelineStage]?
     let timing: RenderStageTiming
     let timings: RenderTimingStore
@@ -34,7 +39,7 @@ struct RenderSplitPane: View {
                             status: job.status, timing: timing,
                             timings: timings, modelId: modelId)
                 .frame(width: Self.stageColumnWidth)
-            EngineLogPane(lines: job.log, telemetry: telemetry,
+            EngineLogPane(log: log, telemetry: telemetry,
                           timing: timing, progress: job.progress,
                           estimateS: estimateS, isLive: !job.status.isTerminal)
         }
@@ -248,7 +253,9 @@ struct RenderStageList: View {
 /// interpreted: the lines are the model's own words, timestamped when the app
 /// heard them.
 struct EngineLogPane: View {
-    let lines: [RenderLogLine]
+    /// The only view in the app that observes a job's log lines. Everything
+    /// else takes the box and never reads it — see `JobLog`.
+    let log: JobLog
     let telemetry: TelemetryStore
     let timing: RenderStageTiming
     let progress: JobProgress?
@@ -260,7 +267,7 @@ struct EngineLogPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            body(of: lines)
+            body(of: log.lines)
             footer
         }
         .padding(.horizontal, 15).padding(.vertical, 13)
@@ -314,7 +321,11 @@ struct EngineLogPane: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 7) {
+                    // Lazy: the buffer holds `JobsStore.logCap` lines and a
+                    // line arrives every step near the end of a render, so an
+                    // eager stack rebuilt two hundred rows to add one — and
+                    // scrolled to the bottom of them afterwards.
+                    LazyVStack(alignment: .leading, spacing: 7) {
                         ForEach(Array(lines.enumerated()), id: \.element.id) {
                             index, line in
                             row(line, fromEnd: lines.count - 1 - index)

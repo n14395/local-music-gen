@@ -176,7 +176,7 @@ final class AppEnvironment {
 
         self.backendManager = BackendProcessManager(status: status, onEvent: { [weak self] item in
             Task { @MainActor in
-                self?.route(item)
+                self?.enqueue(item)
             }
         }, modeOverride: modeOverride,
            launchConfig: { [settings = self.settings] in
@@ -237,7 +237,7 @@ final class AppEnvironment {
         }
 
         jobsStore.modelName = { [weak self] id in
-            self?.catalog.models.first { $0.id == id }?.displayName ?? id
+            self?.catalog.model(id: id)?.displayName ?? id
         }
         // These two are single-assignment properties, not a multicast — a
         // second feature that claims one silently deletes the auto-analyze
@@ -431,6 +431,36 @@ final class AppEnvironment {
         autoRun(song: song)
     }
 
+    /// Engine events that have arrived and not been routed yet.
+    private var pendingEvents: [EventStreamClient.StreamItem] = []
+    /// Whether a drain is already queued behind them.
+    private var drainScheduled = false
+
+    /// Take one event off the stream and route the whole burst at once.
+    ///
+    /// The stream hands events over one at a time, and each one used to be
+    /// routed by its own hop onto this actor. A render mid-flight emits
+    /// progress and stderr together, several times a second, so that was
+    /// several independent rounds of store mutations — and therefore several
+    /// independent SwiftUI passes — for one moment's worth of news.
+    ///
+    /// Each arrival now only appends; the first of a burst also queues the
+    /// drain, which lands *behind* every sibling that was already waiting and
+    /// so routes all of them together. No debounce and no added latency: the
+    /// drain runs in the same round the events did, it just runs once.
+    private func enqueue(_ item: EventStreamClient.StreamItem) {
+        pendingEvents.append(item)
+        guard !drainScheduled else { return }
+        drainScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.drainScheduled = false
+            let batch = self.pendingEvents
+            self.pendingEvents.removeAll(keepingCapacity: true)
+            for item in batch { self.route(item) }
+        }
+    }
+
     private func route(_ item: EventStreamClient.StreamItem) {
         switch item {
         case .connected:
@@ -523,9 +553,7 @@ final class AppEnvironment {
         return chosen == shared ? nil : chosen
     }
 
-    var hasRunningJob: Bool {
-        jobsStore.active.values.contains { !$0.status.isTerminal }
-    }
+    var hasRunningJob: Bool { jobsStore.load.jobs > 0 }
 
     /// Keeps the sidebar's engine card live.
     ///

@@ -147,14 +147,15 @@ struct EditorWellView: View {
         ZStack(alignment: .topLeading) {
             Bench.Palette.sidebar
             Canvas { context, size in
+                // One path for every tick — see `beatGrid`.
+                var ticks = Path()
                 for tick in store.grid.barTicks {
                     let x = geometry.x(at: tick.timelineS)
                     guard x >= -1, x <= size.width + 1 else { continue }
-                    context.fill(
-                        Path(CGRect(x: x, y: size.height - 8, width: 1,
-                                    height: 8)),
-                        with: .color(.white.opacity(0.18)))
+                    ticks.addRect(CGRect(x: x, y: size.height - 8, width: 1,
+                                         height: 8))
                 }
+                context.fill(ticks, with: .color(.white.opacity(0.18)))
             }
             barLabels(geometry)
             playheadFlag(geometry)
@@ -251,21 +252,35 @@ struct EditorWellView: View {
         .onChange(of: store.stereoView) { refetch(width: geometry.width) }
     }
 
+    /// Two paths and two fills, not one fill per beat.
+    ///
+    /// A three-minute track at 120 BPM is some three hundred and sixty beats,
+    /// and this used to issue a separate `context.fill` for each of them —
+    /// every one its own `Path`, its own `GraphicsContext` call, on every
+    /// redraw of a view that redraws on scroll, on zoom and on every edit. The
+    /// grid only ever has two colours in it, so it only ever needs two fills.
+    /// `ClipTimelineLanes` has always drawn its rules this way.
     private func beatGrid(_ geometry: EditorGeometry) -> some View {
         Canvas { context, size in
             guard geometry.pxPerSecond > 2 else { return }
             let barXs = Set(store.grid.barTicks.map {
                 (geometry.x(at: $0.timelineS) * 2).rounded() / 2
             })
+            var bars = Path()
+            var beats = Path()
             for beat in store.grid.beats {
                 let x = geometry.x(at: beat)
                 guard x >= 0, x <= size.width else { continue }
                 let snapped = (x * 2).rounded() / 2
-                let isBar = barXs.contains(snapped)
-                context.fill(
-                    Path(CGRect(x: x, y: 0, width: 1, height: size.height)),
-                    with: .color(.white.opacity(isBar ? 0.09 : 0.04)))
+                let rect = CGRect(x: x, y: 0, width: 1, height: size.height)
+                if barXs.contains(snapped) {
+                    bars.addRect(rect)
+                } else {
+                    beats.addRect(rect)
+                }
             }
+            context.fill(beats, with: .color(.white.opacity(0.04)))
+            context.fill(bars, with: .color(.white.opacity(0.09)))
         }
     }
 

@@ -129,7 +129,7 @@ struct StudioView: View {
             }
         }
         .onAppear { syncSelection(); applyPrefill() }
-        .onChange(of: catalog.models.map(\.id)) { syncSelection() }
+        .onChange(of: catalog.version) { syncSelection() }
         .onChange(of: selectedModelId) { rebuildForm() }
         // Re-locking has to pull the length back down with it, or the slider
         // would keep a value the model no longer offers and the engine would

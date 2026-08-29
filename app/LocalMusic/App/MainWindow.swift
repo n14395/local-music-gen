@@ -86,7 +86,18 @@ struct MainWindow: View {
     /// The window's own width, kept so the sidebar's fit can be recomputed
     /// when the *content's* requirement changes rather than only when the
     /// window is dragged.
-    @State private var windowWidth: CGFloat = 0
+    ///
+    /// In a reference box rather than in `@State` because nothing in the body
+    /// reads it — only `refitSidebar` does, and only to decide a boolean that
+    /// flips at one width. Held as state, every frame of a window drag wrote
+    /// it, and every write rebuilt this view and the whole screen inside it,
+    /// to discover that the sidebar still fits. `sidebarFit` is the state; the
+    /// width is just the input.
+    @State private var measuredWidth = WidthBox()
+
+    /// Mutable storage that is deliberately invisible to SwiftUI — see
+    /// `measuredWidth`.
+    private final class WidthBox { var value: CGFloat = 0 }
 
     /// Bump when the recommended set changes enough to be worth re-offering.
     private static let onboardingVersionCurrent = 1
@@ -98,7 +109,9 @@ struct MainWindow: View {
                     // Slides out to the left rather than fading: the sidebar
                     // is a column of the window, and a column that dissolves
                     // in place reads as a drawing bug.
-                    sidebar.transition(.move(edge: .leading))
+                    ShellSidebar(env: env, destination: $destination,
+                                 libraryScope: $libraryScope)
+                        .transition(.move(edge: .leading))
                 }
                 FittingWidthReader(onChange: { contentMinWidth = $0 }) {
                     content
@@ -128,16 +141,14 @@ struct MainWindow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
-            TransportBar(playback: env.playback, slot: transportSlot,
-                         queue: transportQueue,
-                         engine: env.engineStatus,
-                         isQueueOpen: queuePanel.isOpen,
-                         onToggleQueue: {
-                             withAnimation(panelMotion) { queuePanel.toggle() }
-                         },
-                         onToggleCompare: {
-                             libraryCompare.toggle(playback: env.playback)
-                         })
+            ShellTransport(env: env, slot: transportSlot,
+                           isQueueOpen: queuePanel.isOpen,
+                           onToggleQueue: {
+                               withAnimation(panelMotion) { queuePanel.toggle() }
+                           },
+                           onToggleCompare: {
+                               libraryCompare.toggle(playback: env.playback)
+                           })
         }
         .background(Bench.Palette.windowBackground)
         // `.hiddenTitleBar` gives the window a full-size content view but
@@ -187,7 +198,7 @@ struct MainWindow: View {
             GeometryReader { proxy in
                 Color.clear
                     .onChange(of: proxy.size.width, initial: true) {
-                        windowWidth = proxy.size.width
+                        measuredWidth.value = proxy.size.width
                         refitSidebar()
                     }
             }
@@ -294,157 +305,6 @@ struct MainWindow: View {
 
     // MARK: - Sidebar
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            // Reserved for the traffic lights, which the system draws over the
-            // top-left of the window content.
-            Color.clear.frame(height: Bench.Metrics.topBarHeight)
-
-            // Scrolls only when it has to. The footer below is two cards
-            // tall on most screens, and at the window's 700 pt floor the nav
-            // and the footer together no longer fit — without this the stack
-            // squeezes whatever it can reach and the cards clip.
-            // Indicators stay on their macOS default — when the nav *does*
-            // overflow, the overlay bar is the only thing saying there is
-            // more of it below.
-            ScrollView(.vertical) { navList }
-                .scrollBounceBehavior(.basedOnSize)
-
-            SidebarFooterCard(env: env, destination: destination,
-                              libraryScope: libraryScope)
-        }
-        .frame(width: Bench.Metrics.sidebarWidth)
-        .frame(maxHeight: .infinity)
-        .background(Bench.Palette.sidebar)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Bench.Palette.hairline).frame(width: 1)
-        }
-    }
-
-    private var navList: some View {
-        VStack(spacing: 2) {
-                ForEach(Destination.Section.allCases, id: \.self) { section in
-                    BenchSidebarHeading(text: section.rawValue,
-                                        topPadding: section == .make ? 14 : 18)
-                    ForEach(Destination.inSection(section)) { item in
-                        BenchSidebarRow(destination: item,
-                                        title: item.title,
-                                        glyph: glyph(for: item),
-                                        count: count(for: item),
-                                        isBusy: isBusy(item),
-                                        selection: $destination)
-                        // The Library's scopes live under it rather than in the
-                        // screen, and stay open from every destination: they
-                        // are five places you can go, and a list that only
-                        // appears once you are already there cannot take you
-                        // anywhere. Picking one from elsewhere goes to the
-                        // Library rather than quietly re-aiming a screen you
-                        // are not looking at — which is also why none of them
-                        // reads as selected until you are on it.
-                        if item == .library {
-                            ForEach(LibraryScope.allCases) { scope in
-                                BenchSidebarSubRow(
-                                    scope: scope, title: scope.title,
-                                    symbol: scope.symbol,
-                                    showsSelection: destination == .library,
-                                    count: subRowCount(scope),
-                                    selection: Binding(
-                                        get: { libraryScope },
-                                        set: {
-                                            libraryScope = $0
-                                            destination = .library
-                                        }))
-                            }
-                        }
-                    }
-                }
-            }
-        .padding(.horizontal, 10).padding(.top, 4)
-    }
-
-    /// The one scope whose size is what it is for: how many tracks carry
-    /// applied edits. The others are read by name.
-    private func subRowCount(_ scope: LibraryScope) -> String? {
-        guard scope == .edited else { return nil }
-        let count = (try? env.library.repository.editedCount()) ?? 0
-        return count > 0 ? "\(count)" : nil
-    }
-
-    private func glyph(for destination: Destination) -> BenchNavGlyph.Kind {
-        switch destination {
-        case .generate: .generate
-        case .styleTransfer: .styleTransfer
-        case .actions: .actions
-        case .workbench: .workbench
-        case .editor: .editor
-        case .library: .library
-        case .models: .models
-        }
-    }
-
-    private func count(for destination: Destination) -> String? {
-        switch destination {
-        case .library:
-            // How many rows the Library is showing right now — so it tracks
-            // the scope switch and any active filter rather than claiming a
-            // fixed size the list may not be displaying.
-            let total: Int
-            switch libraryScope {
-            case .parts: total = env.partsStore.results.count
-            // Favourites is one view over two tables, so its count is both.
-            case .favourites: total = env.library.results.count
-                + env.partsStore.favorites().count
-            case .songs, .imported, .renders, .edited:
-                total = env.library.results.count
-            }
-            return total > 0 ? "\(total)" : nil
-        case .models:
-            let installed = env.catalog.models.filter { $0.installState == .installed }
-            guard !env.catalog.models.isEmpty else { return nil }
-            return "\(installed.count)/\(env.catalog.models.count)"
-        case .workbench:
-            let clips = env.workbench.clips.count
-            return clips > 0 ? "\(clips)" : nil
-        default:
-            return nil
-        }
-    }
-
-    /// A spinner on the destination that owns the running work, so leaving a
-    /// screen mid-job does not hide that the job is still going.
-    private var styleTransferJobs: Set<String> {
-        env.styleTransfer.outstandingJobIds
-    }
-
-    private func isBusy(_ destination: Destination) -> Bool {
-        switch destination {
-        case .generate, .actions:
-            // One rule for both rows, so a job can only ever spin one of them
-            // and neither can be reached by a predicate that forgot the other.
-            // Minus the two destinations that own their own work: Style
-            // Transfer reports the ids it started, and an Editor render is a
-            // `mix` job that belongs to the Editor row.
-            return env.jobsStore.active.values.contains {
-                !$0.status.isTerminal
-                    && Destination.busyOwner(task: $0.info.task) == destination
-                    && !styleTransferJobs.contains($0.info.jobId)
-                    && !env.jobsStore.isEditorJob($0.info.jobId)
-            }
-        case .styleTransfer:
-            // Style Transfer's jobs are ordinary generate/separate/mix jobs, so
-            // neither arm above can tell them apart by shape — the workspace
-            // reports the ids it started instead, and the other two subtract
-            // them so one job never spins two destinations.
-            return env.styleTransfer.isWaitingOnWork
-        case .models:
-            return !env.downloadsStore.downloads.isEmpty
-        case .editor:
-            return env.editor.applyStage.isBusy
-        default:
-            return false
-        }
-    }
-
     // MARK: - Transport corner
 
     /// What the transport has to say *besides* the queue, which is always
@@ -457,45 +317,18 @@ struct MainWindow: View {
         return .none
     }
 
-    /// A transfer beats a render in the capsule, because a download is the
-    /// slower and less visible of the two — both are in the panel it opens, so
-    /// the one that loses here is not hidden, only unmentioned.
-    private var transportQueue: TransportBar.Queue {
-        let downloading = env.downloadsStore.downloads.values
-            .filter { $0.state == .downloading }
-        if let download = downloading.first, download.bytesTotal > 0 {
-            let percent = Int(Double(download.bytesDone)
-                              / Double(download.bytesTotal) * 100)
-            return .downloading(percent: percent)
-        }
-        // Takes, not jobs: one submission of four takes is four tracks being
-        // made, and reading "QUEUE 1" beside it was the counter disagreeing
-        // with the number the user typed.
-        let load = QueueLoad.of(jobs: Array(env.jobsStore.active.values))
-        if load.jobs > 0 { return .working(takes: load.takesLeft) }
-        // Running work outranks a failure, because the render in front of you
-        // is the more useful thing to watch — but with nothing running, a
-        // failure nobody has dismissed is the truth about the queue and
-        // "QUEUE EMPTY" is not.
-        if load.failed > 0 { return .failed(count: load.failed) }
-        return .idle
-    }
-
     // MARK: - Queue panel
 
     /// Renders, not transfers. A download is started from the Models screen
     /// with its progress already in front of you; a render is started and then
     /// waited on, which is the wait this panel exists to fill.
-    private var isRenderingWork: Bool {
-        env.jobsStore.active.values.contains { !$0.status.isTerminal }
-    }
+    private var isRenderingWork: Bool { env.jobsStore.isWorking }
 
     /// Nothing left to draw — no work, no transfers, and no finished rows still
     /// waiting to be dismissed. Deliberately not the same as "nothing running":
     /// the take that just landed is still a row, and still worth reading.
     private var queueIsEmpty: Bool {
-        QueueLoad.of(jobs: Array(env.jobsStore.active.values),
-                     downloads: env.downloadsStore).isEmpty
+        env.jobsStore.load.adding(env.downloadsStore.transfers).isEmpty
     }
 
     /// nil (no animation at all) under Settings' reduce-motion; every use
@@ -533,11 +366,14 @@ struct MainWindow: View {
                                  contentMinWidth: contentMinWidth)
     }
 
+    /// Only touches `sidebarFit`, and `SidebarFit` is `Equatable`, so a drag
+    /// that does not cross the threshold writes the same value back and
+    /// SwiftUI has nothing to redraw.
     private func refitSidebar() {
-        withAnimation(panelMotion) {
-            sidebarFit.widthChanged(windowWidth,
-                                    contentMinWidth: contentMinWidth)
-        }
+        var next = sidebarFit
+        next.widthChanged(measuredWidth.value, contentMinWidth: contentMinWidth)
+        guard next != sidebarFit else { return }
+        withAnimation(panelMotion) { sidebarFit = next }
     }
 
     /// Take the user to a track a finished queue row made.
@@ -1063,7 +899,7 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
 
 /// The contextual card at the bottom of the sidebar. Same rectangle on every
 /// screen, different contents: whatever you need while you are *there*.
-private struct SidebarFooterCard: View {
+struct SidebarFooterCard: View {
     let env: AppEnvironment
     let destination: Destination
     let libraryScope: LibraryScope
@@ -1134,9 +970,7 @@ private struct SidebarFooterCard: View {
 
     // MARK: engine
 
-    private var isRendering: Bool {
-        env.jobsStore.active.values.contains { !$0.status.isTerminal }
-    }
+    private var isRendering: Bool { env.jobsStore.load.jobs > 0 }
 
     private var engineCard: some View {
         EngineStatusButton(engine: env.engineStatus, arrowEdge: .trailing) {

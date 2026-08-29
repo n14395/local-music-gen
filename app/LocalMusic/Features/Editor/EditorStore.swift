@@ -1060,6 +1060,7 @@ final class EditorStore {
         case .playing:
             player.pause()
             cursorS = player.currentPosition()
+            stopLoopWatcher()
         case .paused:
             pauseGlobalPlayback()
             player.resume()
@@ -1086,8 +1087,7 @@ final class EditorStore {
     }
 
     func stopPreview() {
-        loopWatcher?.invalidate()
-        loopWatcher = nil
+        stopLoopWatcher()
         stopAtS = nil
         auditioningOriginal = false
         player.stop()
@@ -1122,6 +1122,16 @@ final class EditorStore {
         guard player.state == .playing else { return }
         player.pause()
         cursorS = player.currentPosition()
+        // Paused is not stopped, so nothing used to retire this — the watcher
+        // went on waking thirty-three times a second, for the rest of the
+        // session, to find the player paused and return. Every path that
+        // resumes calls `startLoopWatcher` again.
+        stopLoopWatcher()
+    }
+
+    private func stopLoopWatcher() {
+        loopWatcher?.invalidate()
+        loopWatcher = nil
     }
 
     func seekPreview(to t: Double) {
@@ -1132,12 +1142,23 @@ final class EditorStore {
     }
 
     /// Loop and play-selection bounds — checked beside the position tick.
+    ///
+    /// Installed in `.common` rather than through `Timer.scheduledTimer`,
+    /// which uses the default run loop mode only: AppKit leaves that mode
+    /// while it tracks a scroll or a menu, so a loop could overrun its end for
+    /// as long as the user was scrolling the rail beside it.
     private func startLoopWatcher() {
         loopWatcher?.invalidate()
-        loopWatcher = Timer.scheduledTimer(withTimeInterval: 0.03,
-                                           repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.player.state == .playing else { return }
+                // Both bounds are read fresh each tick — the loop toggle and
+                // the selection can move mid-playback — and with neither set
+                // there is nothing to ask the audio clock about. Ordinary
+                // playback needs no timer at all: the playhead reads the clock
+                // itself, on its own redraw.
+                let looping = self.loopSelection && self.selection != nil
+                guard looping || self.stopAtS != nil else { return }
                 let position = self.player.currentPosition()
                 if self.loopSelection, let selection = self.selection,
                    position >= selection.end - 0.015 {
@@ -1151,6 +1172,8 @@ final class EditorStore {
                 }
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        loopWatcher = timer
     }
 
     /// A structural edit rebuilds the schedule; keep playing from the same

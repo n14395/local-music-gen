@@ -51,7 +51,7 @@ struct OnboardingView: View {
     /// silent stare at a spinner.
     private var isComplete: Bool {
         !installingModels.isEmpty && installingModels.allSatisfy { model in
-            catalog.models.first { $0.id == model.id }?.installState == .installed
+            catalog.model(id: model.id)?.installState == .installed
         }
     }
 
@@ -69,7 +69,7 @@ struct OnboardingView: View {
         .preferredColorScheme(.dark)
         .onAppear(perform: primeSelection)
         // The catalog can land a beat after the sheet does.
-        .onChange(of: catalog.models.map(\.id)) { primeSelection() }
+        .onChange(of: catalog.version) { primeSelection() }
     }
 
     /// Tick the defaults once, and only once: re-running it on every catalog

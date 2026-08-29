@@ -132,7 +132,7 @@ final class EngineLogPaneTests: XCTestCase {
                            at: Date().addingTimeInterval(-elapsed + 1))
         }
         return EngineLogPane(
-            lines: [], telemetry: TelemetryStore(), timing: timing,
+            log: JobLog(), telemetry: TelemetryStore(), timing: timing,
             progress: JobProgress(stage: "generating", fraction: 0.5,
                                   etaS: eta, message: nil, take: 0,
                                   phase: nil, step: nil, steps: nil),
@@ -194,7 +194,7 @@ final class RenderLogRetentionTests: XCTestCase {
         let store = try store(jobId: "job_1")
         store.apply(.jobLog(jobId: "job_1", line: "[DiT] Step 1/8"))
         store.apply(.jobLog(jobId: "job_1", line: "  [DiT] Step 2/8  "))
-        let log = store.active["job_1"]?.log ?? []
+        let log = store.log(for: "job_1").lines
         XCTAssertEqual(log.map(\.text), ["[DiT] Step 1/8", "[DiT] Step 2/8"])
         XCTAssertEqual(Set(log.map(\.id)).count, 2, "ids must not collide")
     }
@@ -203,7 +203,8 @@ final class RenderLogRetentionTests: XCTestCase {
         let store = try store(jobId: "job_1")
         store.apply(.jobLog(jobId: "job_1", line: "   "))
         store.apply(.jobLog(jobId: "nobody", line: "orphan"))
-        XCTAssertEqual(store.active["job_1"]?.log.count, 0)
+        XCTAssertEqual(store.log(for: "job_1").lines.count, 0)
+        XCTAssertFalse(store.log(for: "job_1").hasLines)
         XCTAssertNil(store.active["nobody"])
     }
 
@@ -214,7 +215,7 @@ final class RenderLogRetentionTests: XCTestCase {
         for line in 0..<(JobsStore.logCap + 50) {
             store.apply(.jobLog(jobId: "job_1", line: "line \(line)"))
         }
-        let log = store.active["job_1"]?.log ?? []
+        let log = store.log(for: "job_1").lines
         XCTAssertEqual(log.count, JobsStore.logCap)
         XCTAssertEqual(log.last?.text, "line \(JobsStore.logCap + 49)")
         XCTAssertEqual(log.first?.text, "line 50")

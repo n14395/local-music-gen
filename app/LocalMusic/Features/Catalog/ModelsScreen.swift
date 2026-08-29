@@ -442,7 +442,7 @@ struct ModelsScreen: View {
     /// "Installed: yes" without the user touching anything.
     private var inspectedModel: ModelInfo? {
         guard let inspectedId else { return nil }
-        return catalog.models.first { $0.id == inspectedId }
+        return catalog.model(id: inspectedId)
     }
 
     private func requestDownload(_ model: ModelInfo) {

@@ -24,6 +24,14 @@ struct EditorEmptyState: View {
     /// slot in the app fills from `PartPickerSheet`, which searches, auditions
     /// and filters by origin without taking the screen away.
     @State private var picking = false
+    /// The recents list, built off the view update.
+    ///
+    /// This was a computed property read from `body`, and building it runs a
+    /// library search, a parts search and a `JSONDecoder` per row. The field
+    /// above it is a live search box, so that was three synchronous database
+    /// round trips per keystroke — and the same again on every unrelated
+    /// redraw of the panel, for a list that had not changed.
+    @State private var rows: [Row] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +52,19 @@ struct EditorEmptyState: View {
             }
         }
         .contentShape(Rectangle())
+        // Rebuilt when the question changes, not when the panel redraws. The
+        // `id:` restarts the task per keystroke and the sleep is what makes a
+        // typed word one search instead of one per letter.
+        .task(id: query) {
+            if !rows.isEmpty || !query.isEmpty {
+                try? await Task.sleep(for: LibraryStore.searchDebounce)
+                guard !Task.isCancelled else { return }
+            }
+            rows = buildRows()
+        }
+        // A take landing while the Editor sits on its empty state should show
+        // up in RECENT without needing a keystroke to dislodge it.
+        .onChange(of: library.recent) { rows = buildRows() }
         .sheet(isPresented: $picking) {
             PartPickerSheet(
                 slotLabel: "Any part or song",
@@ -148,7 +169,7 @@ struct EditorEmptyState: View {
         var isPart: Bool
     }
 
-    private var rows: [Row] {
+    private func buildRows() -> [Row] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         var songs: [SongRecord]
         if trimmed.isEmpty {

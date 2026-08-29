@@ -109,7 +109,7 @@ struct StyleTransferScreen: View {
         .onAppear(perform: restore)
         .onChange(of: model.mode) { rebuildForm() }
         .onChange(of: model.selectedModelId) { rebuildForm() }
-        .onChange(of: catalog.models.count) { reconcile() }
+        .onChange(of: catalog.version) { reconcile() }
         .onChange(of: parts.results) { model.refreshPlannerInput(parts: parts) }
         // Coming back to a finished run should not leave you stranded on an
         // empty rendering pane — same rule as Generate.

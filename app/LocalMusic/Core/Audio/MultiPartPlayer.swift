@@ -342,7 +342,12 @@ final class MultiPartPlayer {
         tick?.invalidate()
         // 25 Hz is plenty for a numeric readout; the playhead itself reads the
         // audio clock directly on its own redraw.
-        tick = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) {
+        //
+        // Added to `.common` rather than scheduled: `Timer.scheduledTimer`
+        // installs in the default run loop mode only, which AppKit leaves
+        // while it tracks a scroll or a menu — so the position readout froze
+        // for as long as you were scrolling, and lurched when you stopped.
+        let timer = Timer(timeInterval: 0.04, repeats: true) {
             [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -353,6 +358,8 @@ final class MultiPartPlayer {
                 }
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        tick = timer
     }
 
     /// Everything has played out: park the playhead at the end rather than

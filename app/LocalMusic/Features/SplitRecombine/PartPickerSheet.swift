@@ -285,6 +285,14 @@ struct PartPickerSheet: View {
     /// that `opensOn` can be honoured without an `onAppear` that would fight
     /// the user's own choice every time the sheet re-renders.
     @State private var chosenTab: PickerTab?
+    /// Every part in the library, read once when the sheet opens.
+    ///
+    /// The whole table on purpose — see `hasPartsForThisSlot` — but read as
+    /// state rather than as a computed property. Both the tab decision and the
+    /// list itself were fetching it from inside `body`, so opening this sheet
+    /// and typing into its search field re-read the entire parts table on
+    /// every keystroke, twice, and again on every redraw in between.
+    @State private var everyPart: [PartRecord] = []
 
     /// The tab on screen: the user's, or the caller's opening one while it
     /// still has something on it.
@@ -312,8 +320,7 @@ struct PartPickerSheet: View {
     /// asked of the whole table rather than of `matchingParts`, because what
     /// the strip opens on must not move under the user as they type.
     private var hasPartsForThisSlot: Bool {
-        ((try? parts.repository.parts(.init())) ?? [])
-            .contains { part in accepts.contains { $0.matches(part.kind) } }
+        everyPart.contains { part in accepts.contains { $0.matches(part.kind) } }
     }
 
     private var songAccepted: Bool {
@@ -332,9 +339,8 @@ struct PartPickerSheet: View {
     private var showsSongs: Bool { songAccepted || autoDerive != nil }
 
     private var allParts: [PartRecord] {
-        let list = (try? parts.repository.parts(.init())) ?? []
-        guard !query.isEmpty else { return list }
-        return list.filter {
+        guard !query.isEmpty else { return everyPart }
+        return everyPart.filter {
             $0.name.localizedCaseInsensitiveContains(query)
         }
     }
@@ -379,6 +385,18 @@ struct PartPickerSheet: View {
     }
 
     var body: some View {
+        content
+            .task { reloadParts() }
+            // A split started from this sheet lands as new parts, and the list
+            // it lands in is the one in front of the user.
+            .onChange(of: parts.results) { reloadParts() }
+    }
+
+    private func reloadParts() {
+        everyPart = (try? parts.repository.parts(.init())) ?? []
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             BenchPanelHeader {
                 Text(slotLabel)

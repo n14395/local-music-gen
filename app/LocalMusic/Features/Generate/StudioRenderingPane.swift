@@ -99,12 +99,13 @@ struct StudioRenderingPane: View {
     }
 
     private func heroCard(_ job: JobsStore.ActiveJob) -> some View {
-        let model = catalog.models.first { $0.id == job.info.modelId }
+        let model = catalog.model(id: job.info.modelId)
         return VStack(alignment: .leading, spacing: 18) {
             header(job, model: model)
             batchStrip(job)
             RenderSplitPane(
-                job: job, stages: model?.capabilities.pipeline,
+                job: job, log: jobs.log(for: job.id),
+                stages: model?.capabilities.pipeline,
                 timing: timing, timings: timings, telemetry: telemetry,
                 modelId: job.info.modelId,
                 estimateS: ActionEstimate.generativeSeconds(
@@ -301,13 +302,18 @@ struct StudioRenderingPane: View {
     /// bug report, the other means you do not have to keep watching.
     private func actionRow(_ job: JobsStore.ActiveJob) -> some View {
         HStack(spacing: 10) {
+            // `hasLines`, not `lines.isEmpty`: this row sits beside the log
+            // pane and reading the lines would redraw the buttons on every
+            // one of them. The box flips this once, when the first line
+            // arrives, which is all the button needs to know.
+            let printed = jobs.log(for: job.id).hasLines
             Button("Copy log") { copyLog(job) }
                 .buttonStyle(.bench(.quiet))
-                .disabled(job.log.isEmpty)
-                .opacity(job.log.isEmpty ? 0.45 : 1)
-                .help(job.log.isEmpty
-                      ? "This model has printed nothing yet"
-                      : "Copy the engine output for this take")
+                .disabled(!printed)
+                .opacity(printed ? 1 : 0.45)
+                .help(printed
+                      ? "Copy the engine output for this take"
+                      : "This model has printed nothing yet")
             Button(armed(job) ? "Notifying when it lands"
                               : "Notify me when it lands") {
                 let arming = !armed(job)
@@ -375,7 +381,7 @@ struct StudioRenderingPane: View {
     /// Everything the engine has said about this take, timestamped as the app
     /// heard it — the shape you would want pasted into a bug report.
     private func copyLog(_ job: JobsStore.ActiveJob) {
-        let text = job.log
+        let text = jobs.log(for: job.id).lines
             .map { EngineLogPane.clockText($0.at) + "  " + $0.text }
             .joined(separator: "\n")
         NSPasteboard.general.clearContents()

@@ -59,8 +59,25 @@ struct WindowWidthFloor: NSViewRepresentable {
         return view
     }
 
+    /// `updateNSView` runs on every pass of the view above it, and the width
+    /// it is given is the same number on nearly all of them — so this used to
+    /// schedule a main-queue block per render to discover there was nothing to
+    /// do. The coordinator remembers what was last asked for, and only a new
+    /// requirement reaches the window.
+    ///
+    /// Deliberately not "only when it would grow": whether it grows depends on
+    /// the window's current frame, which the user can drag at any time, so
+    /// that test belongs where it already is, in `WindowGrowth.target`.
     func updateNSView(_ view: NSView, context: Context) {
+        guard context.coordinator.lastRequested != width else { return }
+        context.coordinator.lastRequested = width
         DispatchQueue.main.async { grow(around: view) }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var lastRequested: CGFloat?
     }
 
     private func grow(around view: NSView) {

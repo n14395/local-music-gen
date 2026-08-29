@@ -211,6 +211,22 @@ struct PartsRepository: Sendable {
         try db.queue.read { try AnalysisRecord.fetchOne($0, key: ownerId) }
     }
 
+    /// Analyses for many owners in one query.
+    ///
+    /// `PartsStore.refresh()` used to ask for these one part at a time, which
+    /// made republishing the parts list N+1 queries — two hundred parts were
+    /// two hundred and one round trips through the database, on the main
+    /// actor, for every filter change and every write.
+    func analyses(ownerIds: [String]) throws -> [String: AnalysisRecord] {
+        guard !ownerIds.isEmpty else { return [:] }
+        let rows = try db.queue.read { database in
+            try AnalysisRecord
+                .filter(ownerIds.contains(Column("ownerId")))
+                .fetchAll(database)
+        }
+        return Dictionary(rows.map { ($0.ownerId, $0) }) { _, last in last }
+    }
+
     func upsertAnalysis(_ record: AnalysisRecord) throws {
         try db.queue.write { try record.upsert($0) }
     }

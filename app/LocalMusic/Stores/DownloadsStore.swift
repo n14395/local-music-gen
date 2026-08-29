@@ -6,8 +6,45 @@ final class DownloadsStore {
     /// Active downloads by download_id; fed by SSE, reconciled on (re)connect.
     /// Includes the ones still waiting their turn — transfers run one at a time
     /// (contract §4.2) and a queued download announces itself on arrival.
-    private(set) var downloads: [String: DownloadInfo] = [:]
+    private(set) var downloads: [String: DownloadInfo] = [:] {
+        didSet { refreshTransfers() }
+    }
     var client: BackendClient?
+
+    /// What the shell needs to know about transfers, as a small value.
+    ///
+    /// The transport bar used to derive this by scanning `downloads.values`
+    /// in `MainWindow.body`, which subscribed the root view to a dictionary
+    /// the engine rewrites several times a second while bytes move — and the
+    /// percentage it drew changed on maybe one in a hundred of those. The
+    /// percent is rounded here instead, and the whole struct is `Equatable`,
+    /// so the shell redraws when the *number on screen* changes rather than
+    /// when a byte count does.
+    struct Transfers: Equatable, Sendable {
+        /// Transfers moving or waiting.
+        var active = 0
+        /// Stopped rows still on the list, of which `failed` are failures.
+        var finished = 0
+        var failed = 0
+        /// Whole percent of the transfer the transport bar names, nil when
+        /// none is moving or none has reported a total yet.
+        var leadPercent: Int?
+    }
+
+    private(set) var transfers = Transfers()
+
+    private func refreshTransfers() {
+        var next = Transfers()
+        next.active = downloads.count
+        next.finished = finished.count
+        next.failed = finished.filter(\.isFailure).count
+        if let lead = downloads.values.first(where: { $0.state == .downloading }),
+           lead.bytesTotal > 0 {
+            next.leadPercent = Int(Double(lead.bytesDone)
+                                   / Double(lead.bytesTotal) * 100)
+        }
+        if next != transfers { transfers = next }
+    }
 
     /// Why the last download of a model stopped, kept until that model is
     /// downloaded again.
@@ -47,7 +84,9 @@ final class DownloadsStore {
     /// transport capsule, the Models screen's "downloading now" section — is
     /// asking what the machine is *doing*, and a row kept for the reader is
     /// not part of that answer.
-    private(set) var finished: [FinishedDownload] = []
+    private(set) var finished: [FinishedDownload] = [] {
+        didSet { refreshTransfers() }
+    }
 
     /// One stopped transfer, kept after the download it describes is gone.
     struct FinishedDownload: Identifiable, Equatable, Sendable {

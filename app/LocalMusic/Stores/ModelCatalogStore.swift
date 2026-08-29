@@ -3,7 +3,42 @@ import Observation
 
 @MainActor @Observable
 final class ModelCatalogStore {
-    private(set) var models: [ModelInfo] = []
+    private(set) var models: [ModelInfo] = [] {
+        didSet {
+            version &+= 1
+            byId = Dictionary(models.map { ($0.id, $0) }) { _, last in last }
+            installedTasks = Set(models
+                .filter { $0.installState == .installed }
+                .flatMap(\.capabilities.supportedTasks))
+        }
+    }
+
+    /// Bumped whenever the catalog is replaced.
+    ///
+    /// Screens that must react to the catalog arriving were writing
+    /// `.onChange(of: catalog.models.map(\.id))`, which allocates an array of
+    /// a hundred-odd strings on *every* body pass in order to compare it with
+    /// the last one. An integer answers the same question.
+    private(set) var version = 0
+
+    /// The catalog by id, so a lookup is not a scan. `RecipeCatalog` asks this
+    /// question once per card and the Actions gallery has sixty of them.
+    private(set) var byId: [String: ModelInfo] = [:]
+
+    /// Every task some installed model can perform.
+    ///
+    /// "Is a model for task X installed" is the single most-asked question in
+    /// the app, and each asking used to walk the whole catalog doing a string
+    /// search inside a nested array. Answered here in one pass when the
+    /// catalog changes instead.
+    private(set) var installedTasks: Set<String> = []
+
+    /// Whether some installed model can do this task — an O(1) read of
+    /// `installedTasks`.
+    func hasInstalled(task: String) -> Bool { installedTasks.contains(task) }
+
+    func model(id: String) -> ModelInfo? { byId[id] }
+
     var lastError: String?
     var client: BackendClient?
 

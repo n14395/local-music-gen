@@ -1338,9 +1338,14 @@ enum RecipeCatalog {
                engine: .tokenSplice, phase: 2),
     ]
 
-    static func recipe(id: String) -> Recipe? {
-        all.first { $0.id == id }
-    }
+    /// `all`, by id. Built once — `recipe(id:)` is asked from the Actions
+    /// route on every body pass, from `StylePreset`, from `AssistKind` and in
+    /// loops over saved presets, and a linear scan of sixty recipes in each of
+    /// those adds up for a lookup that has an obvious answer.
+    private static let index: [String: Recipe] =
+        Dictionary(all.map { ($0.id, $0) }) { first, _ in first }
+
+    static func recipe(id: String) -> Recipe? { index[id] }
 
     static func inCategory(_ category: RecipeCategory) -> [Recipe] {
         all.filter { $0.category == category }

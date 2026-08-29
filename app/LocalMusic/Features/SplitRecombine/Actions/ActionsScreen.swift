@@ -88,6 +88,13 @@ struct ActionsScreen: View {
                       onOpen: open,
                       onDropAudio: importDropped,
                       onOpenModels: { onOpenModels(nil) })
+            // The gates depend on the catalog and on how much the engine has
+            // told us, and on nothing else — so they are recomputed exactly
+            // when one of those moves. `version` rather than `models` because
+            // comparing the array would cost more than the work it saves.
+            .task { refreshCardStates() }
+            .onChange(of: catalog.version) { refreshCardStates() }
+            .onChange(of: catalog.readiness) { refreshCardStates() }
             .sheet(isPresented: $pickingForEditor) {
                 PartPickerSheet(
                     slotLabel: "Song or part",
@@ -216,8 +223,19 @@ struct ActionsScreen: View {
         }
     }
 
-    private var cardStates: [String: CardState] {
-        Dictionary(uniqueKeysWithValues:
+    /// Every card's gate, computed when the catalog changes rather than when
+    /// the gallery redraws.
+    ///
+    /// This was a computed property read from `body`, and each of its sixty
+    /// entries runs several predicates over a catalog of a hundred and
+    /// twenty-nine models — the gated arms additionally build a "Get X" hint
+    /// by filtering the catalog again. Tens of thousands of iterations, with
+    /// allocations, to answer a question whose inputs are the catalog and the
+    /// engine's readiness and nothing else. So it is keyed on exactly those.
+    @State private var cardStates: [String: CardState] = [:]
+
+    private func refreshCardStates() {
+        cardStates = Dictionary(uniqueKeysWithValues:
             RecipeCatalog.all.map { ($0.id, cardState($0)) })
     }
 
@@ -242,11 +260,11 @@ struct ActionsScreen: View {
         GenerateNeed().eligible(catalog.models)
     }
 
+    /// One `Set` lookup. This used to walk the whole catalog doing a string
+    /// search inside a nested array, and `cardStates` below asks it once per
+    /// card across sixty of them.
     private func installed(task: String) -> Bool {
-        catalog.models.contains {
-            $0.installState == .installed
-                && $0.capabilities.supportedTasks.contains(task)
-        }
+        catalog.hasInstalled(task: task)
     }
 
     private func cardState(_ recipe: Recipe) -> CardState {

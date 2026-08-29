@@ -17,12 +17,6 @@ struct EventStreamClient: Sendable {
     func items() -> AsyncStream<StreamItem> {
         AsyncStream { continuation in
             let task = Task {
-                // SSE streams stay open indefinitely: the default 60 s request timeout
-                // would kill an idle stream between heartbeats.
-                let config = URLSessionConfiguration.ephemeral
-                config.timeoutIntervalForRequest = .infinity
-                config.timeoutIntervalForResource = .infinity
-                let session = URLSession(configuration: config)
                 var lastEventID: String?
                 var attempt = 0
 
@@ -34,51 +28,44 @@ struct EventStreamClient: Sendable {
                         req.setValue(lastEventID, forHTTPHeaderField: "Last-Event-ID")
                     }
                     do {
-                        let (bytes, response) = try await session.bytes(for: req)
-                        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                            throw APIError.notConnected
+                        let connection = SSEChunks(request: req)
+                        var parser = SSEParser()
+                        var opened = false
+                        func markOpened() {
+                            guard !opened else { return }
+                            opened = true
+                            attempt = 0
+                            continuation.yield(.connected)
                         }
-                        attempt = 0
-                        continuation.yield(.connected)
 
-                        var eventName = ""
-                        var dataLines: [String] = []
-                        var lineBuffer: [UInt8] = []
-                        // Manual line splitting: AsyncBytes.lines DROPS empty lines,
-                        // and an empty line is what terminates an SSE frame.
-                        for try await byte in bytes {
+                        for try await chunk in connection.stream {
                             if Task.isCancelled { break }
-                            if byte != UInt8(ascii: "\n") {
-                                lineBuffer.append(byte)
+                            // `.connected` is what makes consumers re-fetch
+                            // the catalog, the downloads and the jobs, so it
+                            // has to fire when the request is *accepted* —
+                            // waiting for a first event would leave a freshly
+                            // launched app with an empty catalog until
+                            // something happened to it. A body is proof of
+                            // acceptance too, so the second call here is belt
+                            // and braces against a response callback that
+                            // never arrives.
+                            guard case .data(let block) = chunk else {
+                                markOpened()
                                 continue
                             }
-                            if lineBuffer.last == UInt8(ascii: "\r") {
-                                lineBuffer.removeLast()
-                            }
-                            let line = String(decoding: lineBuffer, as: UTF8.self)
-                            lineBuffer.removeAll(keepingCapacity: true)
-                            if line.isEmpty {
-                                // dispatch frame
-                                if !dataLines.isEmpty {
-                                    let data = dataLines.joined(separator: "\n")
-                                        .data(using: .utf8) ?? Data()
-                                    if let event = EngineEvent.parse(
-                                        name: eventName, data: data,
-                                        decoder: BackendClient.decoder) {
-                                        continuation.yield(.event(event))
-                                    }
+                            markOpened()
+                            for frame in parser.consume(block) {
+                                if let event = EngineEvent.parse(
+                                    name: frame.name, data: frame.data,
+                                    decoder: BackendClient.decoder) {
+                                    continuation.yield(.event(event))
                                 }
-                                eventName = ""
-                                dataLines = []
-                            } else if line.hasPrefix("id: ") {
-                                lastEventID = String(line.dropFirst(4))
-                            } else if line.hasPrefix("event: ") {
-                                eventName = String(line.dropFirst(7))
-                            } else if line.hasPrefix("data: ") {
-                                dataLines.append(String(line.dropFirst(6)))
                             }
-                            // comment lines (heartbeats) fall through
+                            lastEventID = parser.lastEventID ?? lastEventID
                         }
+                        // The stream ended without an error — the engine hung
+                        // up. Reconnect, as for any other drop.
+                        if !opened { throw APIError.notConnected }
                     } catch {
                         // fall through to reconnect
                     }
@@ -92,5 +79,82 @@ struct EventStreamClient: Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+/// One SSE connection, delivered as the chunks of `Data` the network actually
+/// handed over.
+///
+/// `URLSession.bytes(for:)` is less code and was what this used, but it yields
+/// the body one `UInt8` at a time and **every one of those is an async
+/// suspension**. A model that prints per step sends tens of kilobytes of
+/// stderr through here during a render, which was tens of thousands of
+/// resumptions a second spent reassembling lines the network had already
+/// delivered in blocks. A delegate hands over each block whole.
+///
+/// `@unchecked Sendable`: `session` and `task` are written once during `init`,
+/// before the task is resumed and before the stream can be iterated, and only
+/// read afterwards.
+private final class SSEChunks: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    /// The response being accepted is itself news — see `.connected` in the
+    /// caller — so it travels in the same stream as the body rather than
+    /// through a second channel that would have to be ordered against it.
+    enum Chunk: Sendable {
+        case opened
+        case data(Data)
+    }
+
+    let stream: AsyncThrowingStream<Chunk, any Error>
+    private let continuation: AsyncThrowingStream<Chunk, any Error>.Continuation
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+
+    init(request: URLRequest) {
+        var handle: AsyncThrowingStream<Chunk, any Error>.Continuation!
+        stream = AsyncThrowingStream { handle = $0 }
+        continuation = handle
+        super.init()
+
+        // SSE streams stay open indefinitely: the default 60 s request timeout
+        // would kill an idle stream between heartbeats.
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = .infinity
+        config.timeoutIntervalForResource = .infinity
+        // A nil queue gets a serial one of URLSession's own, so the callbacks
+        // below never overlap and the buffer above stays in order.
+        let session = URLSession(configuration: config, delegate: self,
+                                 delegateQueue: nil)
+        self.session = session
+        let task = session.dataTask(with: request)
+        self.task = task
+        // Covers cancellation and normal completion alike — a session with a
+        // delegate holds it until invalidated, so this is also what lets both
+        // of them go.
+        continuation.onTermination = { [weak self] _ in
+            self?.task?.cancel()
+            self?.session?.invalidateAndCancel()
+        }
+        task.resume()
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse) async
+        -> URLSession.ResponseDisposition {
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            continuation.finish(throwing: APIError.notConnected)
+            return .cancel
+        }
+        continuation.yield(.opened)
+        return .allow
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive data: Data) {
+        continuation.yield(.data(data))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didCompleteWithError error: (any Error)?) {
+        continuation.finish(throwing: error)
     }
 }

@@ -221,6 +221,37 @@ struct RenderLogLine: Identifiable, Equatable, Sendable {
     let text: String
 }
 
+/// One job's mirrored stderr, in an observable box of its own.
+///
+/// Deliberately **not** a field on `ActiveJob`. `active` is a single
+/// observable property, so appending a line to a job inside it invalidated
+/// every view that had read *anything* from this store — the sidebar's busy
+/// dots, the transport's queue readout, and the shell's `content` switch,
+/// which rebuilds the whole screen. A worker printing per step (ggml prints
+/// dozens while it mmaps a GGUF) therefore redrew the entire window several
+/// times a second, for lines only the render card was looking at.
+///
+/// The same lesson as `PeaksStore.Handle`, and for the same reason: give the
+/// churning thing its own observable object, and only the view that reads it
+/// redraws.
+@MainActor @Observable
+final class JobLog {
+    private(set) var lines: [RenderLogLine] = []
+
+    /// Whether anything has been printed — as a property that changes *once*.
+    ///
+    /// `lines.isEmpty` is the same answer, but reading it in a body subscribes
+    /// that body to every append, which is exactly what the "Copy log" button
+    /// beside the pane must not do. This flips false→true and then stays put.
+    private(set) var hasLines = false
+
+    func append(_ line: RenderLogLine, cap: Int) {
+        lines.append(line)
+        if lines.count > cap { lines.removeFirst(lines.count - cap) }
+        if !hasLines { hasLines = true }
+    }
+}
+
 /// Active generation jobs: submission, SSE-fed progress, cancellation, and ingest of
 /// finished audio into the library.
 @MainActor @Observable
@@ -234,14 +265,6 @@ final class JobsStore {
         /// Each frame replaces the last; the engine deletes them all when the
         /// take succeeds, so this is only ever worth keeping on a cancel.
         var preview: JobPreview?
-        /// The tail of this job's worker stderr, newest last.
-        ///
-        /// Capped at `logCap`: an adapter that prints a line per step is the
-        /// quiet case, and ggml prints dozens while it mmaps a GGUF. The
-        /// render panel draws the last handful and a cancel throws the rest
-        /// away, so keeping a whole render's output would be holding megabytes
-        /// nobody reads.
-        var log: [RenderLogLine] = []
         /// What this job put in the library, recorded at ingest so a finished
         /// row can offer to show it. In submission order, so `first` is take
         /// a. Empty for the jobs that produce parts or an analysis rather
@@ -251,7 +274,54 @@ final class JobsStore {
     }
 
     var client: BackendClient?
-    private(set) var active: [String: ActiveJob] = [:]
+    private(set) var active: [String: ActiveJob] = [:] {
+        didSet { refreshShellState() }
+    }
+
+    /// The queue as the *shell* reads it — the transport's readout, the queue
+    /// panel's "is there anything here", the sidebar's spinners.
+    ///
+    /// Recomputed once per mutation of `active` rather than by five separate
+    /// `active.values` scans inside `MainWindow.body`. The scans were the
+    /// cheap half of the problem; the expensive half was that reading `active`
+    /// from the root view subscribed the root view to it, so a progress tick
+    /// — or a log line, back when those lived in `ActiveJob` — rebuilt the
+    /// whole window. `QueueLoad` is `Equatable` and only reassigned when it
+    /// actually differs, so a tick that changes nothing the shell shows now
+    /// invalidates nothing.
+    private(set) var load = QueueLoad()
+
+    /// One unfinished row, in the little the shell needs to decide which
+    /// destination gets a spinner. Deliberately not the whole `ActiveJob`:
+    /// this must not change when a job's progress, preview or produced-song
+    /// list does.
+    struct BusyJob: Equatable, Identifiable, Sendable {
+        let id: String
+        let task: String
+    }
+
+    private(set) var busy: [BusyJob] = []
+
+    /// Is anything at all still running. Its own `Bool` rather than
+    /// `load.jobs > 0`, because a reader of `load` is subscribed to all of it
+    /// — including `takesLeft`, which moves during a render. The shell only
+    /// wants to know when work starts and stops, and this flips exactly then.
+    private(set) var isWorking = false
+
+    private func refreshShellState() {
+        displayJobs = Self.ordered(active.values)
+        let next = QueueLoad.of(jobs: Array(active.values))
+        if next != load { load = next }
+        if (next.jobs > 0) != isWorking { isWorking = next.jobs > 0 }
+        let nextBusy = displayJobs
+            .filter { !$0.status.isTerminal }
+            .map { BusyJob(id: $0.id, task: $0.info.effectiveTask) }
+        if nextBusy != busy { busy = nextBusy }
+    }
+    /// One log box per tracked job — see `JobLog`. The *dictionary* changes
+    /// only when a row appears or is dismissed; the lines inside a box change
+    /// constantly, and nothing outside the render card observes those.
+    private(set) var logs: [String: JobLog] = [:]
     var pendingContext: [String: JobContext] = [:]
     var lastError: String?
 
@@ -323,7 +393,14 @@ final class JobsStore {
         self.partsRepo = partsRepo
     }
 
-    var displayJobs: [ActiveJob] { Self.ordered(active.values) }
+    /// Work first, in the order it will run; then what has finished, newest
+    /// first — see `ordered(_:)`.
+    ///
+    /// Stored rather than computed. Six views read this, several of them on
+    /// every pass, and each read used to run two filters and two sorts over
+    /// the whole queue. Kept in step from `refreshShellState`, which is the
+    /// one place `active` is observed changing.
+    private(set) var displayJobs: [ActiveJob] = []
 
     /// Work first, in the order it will run; then what has finished, newest
     /// first.
@@ -1112,19 +1189,26 @@ final class JobsStore {
     /// report rather than the last screenful.
     static let logCap = 200
 
+    /// This job's log box.
+    ///
+    /// Never creates one: boxes are made with the row in `adopt`, because the
+    /// caller is a view body and filling a dictionary lazily from inside one
+    /// is a "modifying state during view update" report waiting to happen. A
+    /// job with no row shares one permanently-empty box, which is the honest
+    /// answer — there is nothing to show and nothing that will arrive.
+    func log(for jobId: String) -> JobLog { logs[jobId] ?? Self.noLog }
+
+    private static let noLog = JobLog()
+
     private func appendLog(jobId: String, line: String) {
         let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
         // A job the app is not tracking has no panel to draw this in, and
         // holding lines against an id that will never be looked up is a leak
         // with extra steps.
-        guard !text.isEmpty, active[jobId] != nil else { return }
+        guard !text.isEmpty, let box = logs[jobId] else { return }
         logSequence += 1
-        active[jobId]?.log.append(
-            RenderLogLine(id: logSequence, at: Date(), text: text))
-        if let overflow = active[jobId].map({ $0.log.count - Self.logCap }),
-           overflow > 0 {
-            active[jobId]?.log.removeFirst(overflow)
-        }
+        box.append(RenderLogLine(id: logSequence, at: Date(), text: text),
+                   cap: Self.logCap)
     }
 
     /// "Keep partial": stop the take, and adopt the last preview frame it sent
@@ -1196,6 +1280,7 @@ final class JobsStore {
     /// would sit there afterwards under a blank name.
     func dismiss(_ jobId: String) {
         active.removeValue(forKey: jobId)
+        logs.removeValue(forKey: jobId)
         pendingContext.removeValue(forKey: jobId)
         canceling.remove(jobId)
         // And the auto-clear stamp: a row dismissed by hand and somehow
@@ -1263,6 +1348,8 @@ final class JobsStore {
     /// remains the whole list of ways a row can appear.
     func adopt(_ job: ActiveJob) {
         active[job.id] = job
+        // Made with the row, not on first read — see `log(for:)`.
+        if logs[job.id] == nil { logs[job.id] = JobLog() }
     }
 
     func reconcile() async {
@@ -1277,8 +1364,8 @@ final class JobsStore {
 
     private func track(jobId: String) async {
         guard let client, let info = try? await client.job(jobId) else { return }
-        active[jobId] = ActiveJob(info: info, progress: info.progress,
-                                  status: info.status)
+        adopt(ActiveJob(info: info, progress: info.progress,
+                        status: info.status))
     }
 
     // MARK: event routing

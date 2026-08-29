@@ -46,13 +46,23 @@ private struct FittingWidthLayout: Layout {
     struct Cache {
         var height: CGFloat?
         var fitting: CGFloat?
+        /// The last answer, kept *across* invalidations as a starting guess —
+        /// see `fittingWidth(of:height:hint:)`. Not an answer to reuse: it
+        /// survives precisely so the next real measurement can be cheap.
+        var hint: CGFloat?
     }
 
     func makeCache(subviews: Subviews) -> Cache { Cache() }
 
     /// Subviews changing means a different screen, and a different answer.
+    ///
+    /// It also means every ordinary rebuild of the screen already on show,
+    /// which is most of the calls — SwiftUI hands this layout fresh subviews
+    /// whenever the content re-renders, and the bisection below is a dozen
+    /// measuring passes over the whole window. So the answer is dropped, as it
+    /// must be, and the *guess* is kept.
     func updateCache(_ cache: inout Cache, subviews: Subviews) {
-        cache = Cache()
+        cache = Cache(hint: cache.hint ?? cache.fitting)
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
@@ -61,8 +71,11 @@ private struct FittingWidthLayout: Layout {
         // Memoised on height: the bisection is a dozen measuring passes over
         // the whole screen, and a resize drags the layout through many.
         if cache.height != proposal.height {
-            let fitting = Self.fittingWidth(of: subview, height: proposal.height)
+            let fitting = Self.fittingWidth(of: subview,
+                                            height: proposal.height,
+                                            hint: cache.hint)
             cache.height = proposal.height
+            cache.hint = fitting
             if cache.fitting != fitting {
                 cache.fitting = fitting
                 // Off this layout pass: touching observable state inside one
@@ -85,8 +98,16 @@ private struct FittingWidthLayout: Layout {
     /// Monotone in the offer — squeezing a layout never makes it want *less*
     /// room — which is what makes bisection valid and what stops the window
     /// growing round in a circle.
+    ///
+    /// `hint` is the previous answer, if there is one. Screens are measured
+    /// again on every rebuild, and the overwhelmingly common outcome is the
+    /// number they gave last time — a rebuild is usually a value changing
+    /// inside a layout whose shape did not. Two probes confirm that, against
+    /// the fourteen a cold bisection costs; anything else falls through to the
+    /// full search, so the answer is never the hint's word for it.
     private static func fittingWidth(of subview: LayoutSubview,
-                                     height: CGFloat?) -> CGFloat {
+                                     height: CGFloat?,
+                                     hint: CGFloat? = nil) -> CGFloat {
         func fits(_ width: CGFloat) -> Bool {
             subview.sizeThatFits(
                 ProposedViewSize(width: width, height: height)).width
@@ -95,6 +116,15 @@ private struct FittingWidthLayout: Layout {
         // Almost everything fits at nothing at all, by truncating. Answering
         // that in one call keeps the common case free.
         if fits(0) { return 0 }
+
+        // The bisection's own resolution, so confirming the hint can never
+        // return a width a cold run would have disagreed with.
+        let grain = ceiling / pow(2, CGFloat(steps))
+        if let hint, hint > grain, hint < ceiling,
+           fits(hint), !fits(hint - grain) {
+            return hint
+        }
+
         // Nothing fits even here: report the ceiling rather than bisect
         // towards an answer that does not exist.
         guard fits(ceiling) else { return ceiling }
