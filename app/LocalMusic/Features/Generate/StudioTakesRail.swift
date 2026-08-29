@@ -167,9 +167,10 @@ private struct TakeCard: View {
             }
             // Their own row rather than the stars' — three of them and a
             // rating do not fit across a 392 pt rail, and the reuse buttons
-            // are what the card is for.
+            // are what the card is for. They share the whole row instead of
+            // huddling at its trailing edge: the rail has the width, and a
+            // wider target is a better one.
             HStack(spacing: 8) {
-                Spacer(minLength: 0)
                 reuseButton(.prompt)
                 reuseButton(.all)
                 reuseButton(.allWithSeed)
@@ -186,7 +187,16 @@ private struct TakeCard: View {
     @ViewBuilder
     private func reuseButton(_ scope: ReuseScope) -> some View {
         let isEnabled = scope != .allWithSeed || song.seedUsed != nil
-        Button(scope.shortTitle) { onReuse(scope) }
+        Button { onReuse(scope) } label: {
+            // `fixedSize` under `maxWidth: .infinity` is what keeps "Reuse
+            // all + seed" on one line: the text holds its ideal width as the
+            // button's floor, and only the slack left over is shared out. An
+            // equal-thirds split would give it 116 pt and break it in two.
+            Text(scope.shortTitle)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(maxWidth: .infinity)
+        }
             .buttonStyle(.bench(.quiet))
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : 0.45)

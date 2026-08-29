@@ -192,6 +192,19 @@ enum RecipeCategory: String, CaseIterable, Identifiable {
 
 struct Recipe: Identifiable, Equatable {
     let id: String
+    /// What the card is called.
+    ///
+    /// A card the user passes *through* — one that pauses, asks them to
+    /// choose, or hands its own output to the next stage — names its stages
+    /// with arrows: `Music → text → music`, `ABC: extract → edit →
+    /// generate`. The name is the only place the shape of the run is legible
+    /// before you open it, and prose ("Caption, generate, caption again")
+    /// reads as a description of one job rather than a count of them.
+    ///
+    /// Everything else is named for what you get, not how it is made:
+    /// separating a song is one job however many models it loads, and an
+    /// arrow over a card with no stopping point in it would promise a
+    /// hand-off that never comes.
     let name: String
     let tagline: String
     let mode: RecipeMode
@@ -405,7 +418,7 @@ enum RecipeCatalog {
         // intends before the expensive half starts. They sit on the Generate
         // shelf because that is what they lead to.
         Recipe(id: "plan-choose",
-               name: "Pick the plan before the sound",
+               name: "Plan → choose → render",
                tagline: "Three quick plans — choose one before the slow part",
                mode: .invent, category: .generate, icon: "list.bullet.rectangle",
                slots: [], engine: .songPlan(mode: .choose), phase: 1),
@@ -535,9 +548,9 @@ enum RecipeCatalog {
                icon: "rectangle.on.rectangle",
                slots: [wordsSlot()], engine: .textCompare, phase: 1),
         Recipe(id: "transcribe-lyrics",
-               name: "Transcribe the lyrics",
-               tagline: "The words as sung — isolating the vocal first "
-                   + "if you ask",
+               name: "Lyrics: isolate → transcribe",
+               tagline: "The words as sung — cleaner when the vocal "
+                   + "is pulled out first",
                mode: .analyse, category: .words, icon: "music.mic",
                slots: [wordsSlot()], engine: .textPipeline(.lyrics),
                phase: 1,
@@ -588,8 +601,9 @@ enum RecipeCatalog {
                slots: [wordsSlot()],
                engine: .textPipeline(.roundTripEdited), phase: 1),
         Recipe(id: "telephone-game",
-               name: "Telephone game",
-               tagline: "Caption, generate, caption again — rounds of drift",
+               name: "Telephone: music → text → music → …",
+               tagline: "Each round drifts further from the track you "
+                   + "started with",
                mode: .reimagine, category: .words,
                icon: "phone.and.waveform",
                slots: [wordsSlot()], engine: .textPipeline(.telephone),
@@ -969,8 +983,9 @@ enum RecipeCatalog {
                             arity: 1...1, autoDerive: nil)],
                engine: .arrange, phase: 2),
         Recipe(id: "notes-instrument",
-               name: "Notes into a new instrument",
-               tagline: "Render a MIDI part to audio, then restyle it",
+               name: "Notes → audio → restyle",
+               tagline: "A silent notes part becomes something you can "
+                   + "hear",
                mode: .exact, category: .recombine, icon: "pianokeys",
                slots: [Slot(id: "notes", label: "Notes",
                             accepts: [KindPattern(pattern: "notes.*")],
@@ -1051,7 +1066,7 @@ enum RecipeCatalog {
                    id: "sound-like", mode: .reference)),
                phase: 2),
         Recipe(id: "keep-stems",
-               name: "Keep the vocal, replace the band",
+               name: "Keep the vocal: split → restyle → mix back",
                tagline: "The stems you keep are the original recording",
                mode: .reimagine, category: .reimagine,
                icon: "square.stack.3d.up",

@@ -12,7 +12,7 @@ import SwiftUI
 
 // MARK: - Notes → audio
 
-/// "Notes into a new instrument": a SoundFont render of a notes part back into
+/// "Notes → audio → restyle": a SoundFont render of a notes part back into
 /// audio, which lands as a `layer.*` part of the same song.
 struct RenderActionView: View {
     let recipe: Recipe

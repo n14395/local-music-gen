@@ -35,6 +35,18 @@ struct MainWindow: View {
     /// screen itself is rebuilt on every navigation. Dies with the window, as
     /// asked: a scroll position is where you just were, not a preference.
     @State private var libraryScroll = LibraryScrollMemory()
+    /// What was picked in the Library — the inspected row of each kind, and
+    /// the ticked set beside them. Out here for the same reason as the scroll
+    /// position: the screen is rebuilt on every navigation, so a selection it
+    /// owned itself would not survive a trip to Models and back. Dies with the
+    /// window, like the scroll position — what you had picked a minute ago is
+    /// worth remembering, what you had picked last Tuesday is not.
+    @State private var librarySelectedSongId: String?
+    @State private var librarySelectedPartId: String?
+    @State private var libraryChecked: Set<String> = []
+    /// The model whose properties rail was open, held out here for the same
+    /// reason and with the same lifetime.
+    @State private var modelInspectedId: String?
     /// A track the user asked to revert, held until they confirm.
     @State private var pendingRevert: SongRecord?
     /// Set when a revert could not run because a render was in flight —
@@ -615,7 +627,10 @@ struct MainWindow: View {
                               env.studio.pending = .edit(materialId: part.id)
                           },
                           compare: libraryCompare,
-                          scrollMemory: libraryScroll)
+                          scrollMemory: libraryScroll,
+                          selectedSongId: $librarySelectedSongId,
+                          selectedPartId: $librarySelectedPartId,
+                          checked: $libraryChecked)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
@@ -678,6 +693,7 @@ struct MainWindow: View {
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,
                          telemetry: env.telemetry,
                          requirement: $modelRequirement,
+                         inspectedId: $modelInspectedId,
                          // An action named in the properties rail opens on
                          // the Actions shelf, with no source picked — the
                          // errand was "show me this card", not "run it".

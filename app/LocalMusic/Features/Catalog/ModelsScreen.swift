@@ -20,17 +20,21 @@ struct ModelsScreen: View {
     /// models that would ungate it, and says so. A binding because dismissing
     /// the chip has to clear it for whoever routed you.
     @Binding var requirement: ModelRequirement?
+    /// The row whose properties the rail is showing. By id rather than by
+    /// value: the catalog is refetched on every install-state change, and a
+    /// stored `ModelInfo` would go stale the moment the model it describes
+    /// finished downloading.
+    ///
+    /// Bound to the window rather than held here, because this screen is
+    /// rebuilt from scratch on every navigation — kept as local state, the
+    /// rail would shut itself every time you nipped over to the Library.
+    @Binding var inspectedId: String?
     /// Open an Actions card named in the properties rail. Absent where the
     /// screen has no route to Actions — the rail then just lists them.
     var onOpenAction: ((Recipe) -> Void)?
 
     @State private var licenseTarget: ModelInfo?
     @State private var deleteTarget: ModelInfo?
-    /// The row whose properties the rail is showing. By id rather than by
-    /// value: the catalog is refetched on every install-state change, and a
-    /// stored `ModelInfo` would go stale the moment the model it describes
-    /// finished downloading.
-    @State private var inspectedId: String?
     @State private var showAddModel = false
     @State private var filter = ""
     @FocusState private var filterFocused: Bool

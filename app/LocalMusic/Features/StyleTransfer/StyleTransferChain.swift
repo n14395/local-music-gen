@@ -1,6 +1,7 @@
 import Foundation
 
-/// "Keep the vocal, replace the band" — planned as a sequence of ordinary jobs.
+/// "Keep the vocal: split → restyle → mix back" — planned as a sequence of
+/// ordinary jobs.
 ///
 /// This is the only mode in Style Transfer whose preservation is *literal*
 /// rather than statistical: the stems you keep are the original recording,

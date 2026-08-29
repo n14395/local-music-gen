@@ -148,7 +148,7 @@ struct StudioRenderingPane: View {
                 // engine card is: something you read at a glance has to be
                 // where you last found it, and a label that comes and goes is
                 // one you stop looking for.
-                if let eyebrow = eyebrowLine(job, landing: landing) {
+                if let eyebrow = eyebrowLine(landing: landing) {
                     Text(eyebrow)
                         .eyebrow()
                         .lineLimit(1)
@@ -188,19 +188,16 @@ struct StudioRenderingPane: View {
         }
     }
 
-    /// `TAKE 2 OF 4 · TRACK042B` — which take is on screen, over what it will
-    /// be called when it lands.
+    /// `TRACK042B` — what the take on screen will be called when it lands.
     ///
-    /// The take leads, because a batch is four jobs now and this pane draws
-    /// them one at a time: without it the same card, with the same prompt and
-    /// a bar starting from zero, comes back four times looking like a render
-    /// that restarted itself.
-    private func eyebrowLine(_ job: JobsStore.ActiveJob,
-                             landing: String?) -> String? {
-        let parts = [job.takeLabel, landing]
-            .compactMap { $0?.uppercased() }
-            .filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    /// Which take it is stays off this line: the title under it already says
+    /// "Take 2 of 4", and saying it twice, one line apart, only reads as two
+    /// different facts that happen to agree.
+    private func eyebrowLine(landing: String?) -> String? {
+        guard let landing = landing?.uppercased(), !landing.isEmpty else {
+            return nil
+        }
+        return landing
     }
 
     /// Every take of this submission, as one chip each: what is done, what is

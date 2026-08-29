@@ -39,10 +39,16 @@ struct LibraryScreen: View {
     /// it — which is precisely the trip the position has to survive.
     var scrollMemory: LibraryScrollMemory?
 
-    @State private var selectedSongId: String?
-    @State private var selectedPartId: String?
-    /// Ticked rows. Two of them is what reveals the A/B affordance.
-    @State private var checked: Set<String> = []
+    /// The row the inspector is showing — one id per kind, because the two
+    /// lists come from different tables. Owned by the window for the same
+    /// reason as the scroll position above: this screen is torn down and
+    /// rebuilt every time you navigate away, so a selection kept here alone is
+    /// lost the moment you step out to look something up on another screen.
+    @Binding var selectedSongId: String?
+    @Binding var selectedPartId: String?
+    /// Ticked rows. Two of them is what reveals the A/B affordance. Held
+    /// outside as well, so a bulk selection survives the same trip.
+    @Binding var checked: Set<String>
     @State private var showImporter = false
     @State private var isDropTargeted = false
     @State private var groupBySong = true
@@ -127,7 +133,10 @@ struct LibraryScreen: View {
         // switches to this screen, so the first body evaluation is already
         // carrying it and there is no change left to observe.
         .onChange(of: reveal, initial: true) { consumeReveal() }
-        .onChange(of: scope) { applyScope() }
+        .onChange(of: scope) {
+            applyScope()
+            resetSelection()
+        }
         .onChange(of: library.results) { refreshDerived() }
         .onChange(of: parts.results) { refreshDerived() }
         .onChange(of: groupBySong) { rebuildGroups() }
@@ -725,9 +734,9 @@ struct LibraryScreen: View {
     /// Move to the scope the track lives in and select it.
     ///
     /// Written the same way `receive(_:)` handles a fresh import, and it works
-    /// for the same reason: `applyScope` clears a *part* selection on the way
-    /// into a song scope but never a song one, so the id set here survives the
-    /// scope change that follows it. Cleared first, so a reveal that names a
+    /// for the same reason: `resetSelection` clears a *part* selection on the
+    /// way into a song scope but never a song one, so the id set here survives
+    /// the scope change that follows it. Cleared first, so a reveal that names a
     /// deleted track cannot be retried on every redraw.
     private func consumeReveal() {
         guard let reveal else { return }
@@ -776,6 +785,16 @@ struct LibraryScreen: View {
         }
         if scope != .imported { library.filters.artist = nil }
         parts.filters.favoritesOnly = scope == .favourites
+    }
+
+    /// Drop what was picked under the scope being left.
+    ///
+    /// Called on a scope change and nowhere else — in particular not when the
+    /// screen reappears, which is the whole of the fix: the scope you come
+    /// back to is the scope you left, so the row you left selected is still in
+    /// its list and re-clearing it here would undo the memory the window is
+    /// holding on this screen's behalf.
+    private func resetSelection() {
         // A selection names a row that the new scope does not contain. Ticks go
         // too, in every direction: the three song scopes are disjoint sets, so a
         // tick carried across would leave "2 SELECTED" showing above a list
