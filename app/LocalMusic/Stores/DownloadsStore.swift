@@ -33,17 +33,27 @@ final class DownloadsStore {
 
     private(set) var transfers = Transfers()
 
+    /// Is there no transfer row at all, moving or stopped.
+    ///
+    /// Separate from `transfers` for the same reason `JobsStore.queueEmpty`
+    /// is separate from `load`: the shell's "is there a panel to open" test
+    /// must not be subscribed to `leadPercent`, which moves right through a
+    /// download.
+    private(set) var transfersEmpty = true
+
     private func refreshTransfers() {
         var next = Transfers()
         next.active = downloads.count
         next.finished = finished.count
-        next.failed = finished.filter(\.isFailure).count
+        next.failed = finished.count(where: \.isFailure)
         if let lead = downloads.values.first(where: { $0.state == .downloading }),
            lead.bytesTotal > 0 {
             next.leadPercent = Int(Double(lead.bytesDone)
                                    / Double(lead.bytesTotal) * 100)
         }
         if next != transfers { transfers = next }
+        let empty = next.active == 0 && next.finished == 0
+        if empty != transfersEmpty { transfersEmpty = empty }
     }
 
     /// Why the last download of a model stopped, kept until that model is
@@ -150,7 +160,13 @@ final class DownloadsStore {
             // does the row the last attempt left behind, which would make one
             // model two rows.
             failures.removeValue(forKey: info.modelId)
-            finished.removeAll { $0.modelId == info.modelId }
+            // Guarded. `finished` has a `didSet` that recomputes the whole
+            // transfers summary, so an unconditional `removeAll` ran it a
+            // second time on every progress frame — and it can only match on
+            // the first frame after a retry.
+            if finished.contains(where: { $0.modelId == info.modelId }) {
+                finished.removeAll { $0.modelId == info.modelId }
+            }
         case .downloadCompleted(let id, let modelId, let runtimeOnly):
             let last = downloads.removeValue(forKey: id)
             failures.removeValue(forKey: modelId)

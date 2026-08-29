@@ -214,6 +214,13 @@ struct EditorGrid: Equatable {
     var beats: [Double] = []
     var sections: [SectionSpan] = []
 
+    /// Nothing mapped — either there is no analysis, or the grid has not been
+    /// built yet. `EditorStore.rebuild` uses it to tell "a gain edit, so the
+    /// grid cannot have moved" from "first build".
+    var isEmpty: Bool {
+        barTicks.isEmpty && beats.isEmpty && sections.isEmpty
+    }
+
     struct BarTick: Equatable {
         var number: Int
         var timelineS: Double

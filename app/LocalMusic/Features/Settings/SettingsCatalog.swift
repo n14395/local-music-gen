@@ -294,8 +294,18 @@ enum SettingsCatalog {
 
     // MARK: Queries
 
+    /// Memoised: `all` is a static catalog of some forty entries and this
+    /// filter never returns a different answer for a given pane, yet it ran
+    /// three times per pass of `SettingsView.body` — twice for the changed
+    /// count and once for the total — and that body re-runs on every
+    /// setting, including per frame of a slider drag.
+    @MainActor private static var entriesByPane: [SettingsPane: [SettingEntry]] = [:]
+
     @MainActor static func entries(in pane: SettingsPane) -> [SettingEntry] {
-        all.filter { $0.pane == pane }
+        if let cached = entriesByPane[pane] { return cached }
+        let made = all.filter { $0.pane == pane }
+        entriesByPane[pane] = made
+        return made
     }
 
     @MainActor

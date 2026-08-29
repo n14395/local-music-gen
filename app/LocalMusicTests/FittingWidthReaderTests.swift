@@ -18,7 +18,8 @@ final class FittingWidthReaderTests: XCTestCase {
         at width: CGFloat,
         @ViewBuilder _ content: @escaping () -> V) -> CGFloat? {
         var reported: CGFloat?
-        let view = FittingWidthReader(onChange: { reported = $0 },
+        let view = FittingWidthReader(version: 0,
+                                      onChange: { reported = $0 },
                                       content: content)
         let host = NSHostingView(rootView: view.frame(width: width, height: 400))
         host.layoutSubtreeIfNeeded()
@@ -98,7 +99,7 @@ final class FittingWidthReaderTests: XCTestCase {
             .frame(minWidth: 468, maxWidth: .infinity, minHeight: 400)
             .frame(width: 1200))
         plain.layoutSubtreeIfNeeded()
-        let wrapped = NSHostingView(rootView: FittingWidthReader(onChange: { _ in }) {
+        let wrapped = NSHostingView(rootView: FittingWidthReader(version: 0, onChange: { _ in }) {
             Color.clear.frame(minWidth: 468, maxWidth: .infinity, minHeight: 400)
         }.frame(width: 1200))
         wrapped.layoutSubtreeIfNeeded()

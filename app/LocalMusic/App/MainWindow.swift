@@ -113,7 +113,8 @@ struct MainWindow: View {
                                  libraryScope: $libraryScope)
                         .transition(.move(edge: .leading))
                 }
-                FittingWidthReader(onChange: { contentMinWidth = $0 }) {
+                FittingWidthReader(version: contentShapeVersion,
+                                   onChange: { contentMinWidth = $0 }) {
                     content
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Bench.Palette.windowBackground)
@@ -327,8 +328,15 @@ struct MainWindow: View {
     /// Nothing left to draw — no work, no transfers, and no finished rows still
     /// waiting to be dismissed. Deliberately not the same as "nothing running":
     /// the take that just landed is still a row, and still worth reading.
+    ///
+    /// Two gated `Bool`s rather than `load.adding(transfers).isEmpty`: a
+    /// reader of `load` is subscribed to `takesLeft` and a reader of
+    /// `transfers` to `leadPercent`, both of which move continuously through
+    /// a render or a download — so asking this question used to invalidate
+    /// the window several times a second while it was being answered "no"
+    /// over and over.
     private var queueIsEmpty: Bool {
-        env.jobsStore.load.adding(env.downloadsStore.transfers).isEmpty
+        env.jobsStore.queueEmpty && env.downloadsStore.transfersEmpty
     }
 
     /// nil (no animation at all) under Settings' reduce-motion; every use
@@ -343,6 +351,17 @@ struct MainWindow: View {
     /// Where the panel is sitting right now: the stored preference, unless it
     /// opened itself for a render, which pins it for that showing.
     private var queueIsPinned: Bool { queuePanel.isPinned(preference: queuePinned) }
+
+    /// What the measured content's width requirement can turn on: which
+    /// screen is up, and whether the pinned queue is taking a gutter out of
+    /// it. Anything else that changes inside a screen is picked up at the
+    /// next screen change or window resize — see `FittingWidthLayout`.
+    private var contentShapeVersion: Int {
+        var hasher = Hasher()
+        hasher.combine(destination)
+        hasher.combine(queueGutter)
+        return hasher.finalize()
+    }
 
     private var queueGutter: CGFloat {
         QueuePanel.gutter(isOpen: queuePanel.isOpen, isPinned: queueIsPinned,
@@ -920,6 +939,14 @@ struct SidebarFooterCard: View {
     /// screen is still arriving long after you have left it; screens that used
     /// to hide either behind their own card were the screens where you were
     /// most likely to be waiting on one.
+    /// The originals' disk cost, read on appear rather than in `backupsCard`.
+    ///
+    /// `LibraryRepository.backupUsage()` enumerates the backups folder and
+    /// `stat`s every file in it. Computed inside the card's body it ran on
+    /// every redraw of this footer — and the footer redraws whenever the
+    /// engine card's telemetry moves, which is every three seconds.
+    @State private var backupUsage = LibraryRepository.BackupUsage()
+
     var body: some View {
         VStack(spacing: 10) {
             contextCard
@@ -927,6 +954,17 @@ struct SidebarFooterCard: View {
             engineCard
         }
         .padding(12)
+        .task(id: showsBackups) {
+            guard showsBackups else { return }
+            let usage = await Task.detached(priority: .utility) {
+                LibraryRepository.backupUsage()
+            }.value
+            if usage != backupUsage { backupUsage = usage }
+        }
+    }
+
+    private var showsBackups: Bool {
+        destination == .library && libraryScope == .edited
     }
 
     /// The local card, or nothing on the screens whose local information *is*
@@ -970,7 +1008,7 @@ struct SidebarFooterCard: View {
 
     // MARK: engine
 
-    private var isRendering: Bool { env.jobsStore.load.jobs > 0 }
+    private var isRendering: Bool { env.jobsStore.isWorking }
 
     private var engineCard: some View {
         EngineStatusButton(engine: env.engineStatus, arrowEdge: .trailing) {
@@ -1039,14 +1077,13 @@ struct SidebarFooterCard: View {
     /// deleting them: the backup file's existence is what makes Revert
     /// offerable, so removing one ends that track's revert forever.
     private var backupsCard: some View {
-        let usage = LibraryRepository.backupUsage()
-        return BenchSidebarCard(margin: 0) {
+        BenchSidebarCard(margin: 0) {
             Text("BACKUPS").eyebrow()
-            Text(TelemetryStore.gigabytes(usage.bytes) + " GB")
+            Text(TelemetryStore.gigabytes(backupUsage.bytes) + " GB")
                 .font(Bench.Typo.valueLarge)
                 .foregroundStyle(Bench.Palette.textPrimary)
-            Text("\(usage.count) ORIGINAL"
-                 + (usage.count == 1 ? "" : "S") + " KEPT\n"
+            Text("\(backupUsage.count) ORIGINAL"
+                 + (backupUsage.count == 1 ? "" : "S") + " KEPT\n"
                  + "DELETING ONE DROPS REVERT")
                 .font(Bench.Typo.mono(11))
                 .lineSpacing(3)

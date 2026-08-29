@@ -256,7 +256,7 @@ final class JobLog {
 /// finished audio into the library.
 @MainActor @Observable
 final class JobsStore {
-    struct ActiveJob: Identifiable {
+    struct ActiveJob: Identifiable, Equatable {
         var info: JobInfo
         var progress: JobProgress?
         var status: JobStatus
@@ -274,9 +274,28 @@ final class JobsStore {
     }
 
     var client: BackendClient?
-    private(set) var active: [String: ActiveJob] = [:] {
+
+    /// The live queue, by job id.
+    ///
+    /// Genuinely private, and it has to stay that way. Under Observation this
+    /// is one property: reading it *anywhere inside a view body* subscribes
+    /// that whole body to every progress frame, every preview frame and every
+    /// produced-song append. Three screens and the settings rail each found
+    /// their own way to do exactly that; the projections below are what they
+    /// read now. `job(_:)` is the accessor for logic that legitimately wants
+    /// one row (it is not a body, so it takes out no subscription).
+    private var active: [String: ActiveJob] = [:] {
         didSet { refreshShellState() }
     }
+
+    /// One row, for callers outside a view body.
+    func job(_ jobId: String) -> ActiveJob? { active[jobId] }
+
+    /// The whole queue, unordered — for tests, and for logic that genuinely
+    /// wants every row. Not for a view body: `displayJobs` is the ordered,
+    /// equality-gated projection, and it is the one views are allowed.
+    var trackedJobs: [ActiveJob] { Array(active.values) }
+    var trackedJobIds: Set<String> { Set(active.keys) }
 
     /// The queue as the *shell* reads it — the transport's readout, the queue
     /// panel's "is there anything here", the sidebar's spinners.
@@ -308,21 +327,92 @@ final class JobsStore {
     /// wants to know when work starts and stops, and this flips exactly then.
     private(set) var isWorking = false
 
+    /// Is the queue empty of *everything*, finished rows included.
+    ///
+    /// Its own `Bool` for the reason `isWorking` is one: the shell's "is there
+    /// a panel to open" test used to read `load`, and a reader of `load` is
+    /// subscribed to `takesLeft`, which moves right through a multi-take
+    /// render. This flips when the first row appears and when the last one
+    /// goes, and not in between.
+    private(set) var queueEmpty = true
+
+    /// Songs a split job is running against.
+    ///
+    /// Maintained here rather than by walking `active` inside the library's
+    /// body, which is what subscribed the entire song grid to every progress
+    /// frame in the app. `Set` is `Equatable`, so it is reassigned only when a
+    /// split actually starts or stops.
+    private(set) var splittingSongIds: Set<String> = []
+
+    /// The take that is running right now — not queued, not finished.
+    ///
+    /// Stored so the settings rail need not sort the whole queue in its body.
+    /// This one *does* carry live progress, because the only thing that reads
+    /// it draws a progress bar; the win is that it no longer subscribes that
+    /// card to previews, produced-song lists or any row but this one.
+    private(set) var runningJob: ActiveJob?
+
+    /// Depth of the current `batched` region, and whether a refresh was asked
+    /// for inside it.
+    ///
+    /// One engine event mutates `active` two or three times — `.jobProgress`
+    /// sets progress and then status, an ingest sets status, progress and the
+    /// produced-song list — and each assignment ran the whole recompute below.
+    /// `batched` collapses a burst into the single refresh that a run of
+    /// mutations actually deserves. It must only ever wrap *synchronous* work:
+    /// holding derived state stale across an `await` would leave the shell
+    /// lying for as long as the network took.
+    private var batchDepth = 0
+    private var refreshDeferred = false
+
+    private func batched<T>(_ body: () -> T) -> T {
+        batchDepth += 1
+        defer {
+            batchDepth -= 1
+            if batchDepth == 0, refreshDeferred {
+                refreshDeferred = false
+                refreshShellState()
+            }
+        }
+        return body()
+    }
+
     private func refreshShellState() {
-        displayJobs = Self.ordered(active.values)
-        let next = QueueLoad.of(jobs: Array(active.values))
+        guard batchDepth == 0 else { refreshDeferred = true; return }
+        let ordered = Self.ordered(active.values)
+        // Gated like the rest: `ActiveJob` is `Equatable` now that the log
+        // lines live in their own box, so a frame that moves nothing anybody
+        // draws invalidates nobody. Six views read this.
+        if ordered != displayJobs { displayJobs = ordered }
+        let next = QueueLoad.of(jobs: ordered)
         if next != load { load = next }
         if (next.jobs > 0) != isWorking { isWorking = next.jobs > 0 }
-        let nextBusy = displayJobs
+        if ordered.isEmpty != queueEmpty { queueEmpty = ordered.isEmpty }
+        let nextBusy = ordered
             .filter { !$0.status.isTerminal }
             .map { BusyJob(id: $0.id, task: $0.info.effectiveTask) }
         if nextBusy != busy { busy = nextBusy }
+        let nextRunning = ordered
+            .first { !$0.status.isTerminal && $0.status != .queued }
+        if nextRunning != runningJob { runningJob = nextRunning }
+        var splitting: Set<String> = []
+        for job in ordered where !job.status.isTerminal {
+            if case .split(let songId, _)? = pendingContext[job.id] {
+                splitting.insert(songId)
+            }
+        }
+        if splitting != splittingSongIds { splittingSongIds = splitting }
     }
     /// One log box per tracked job — see `JobLog`. The *dictionary* changes
     /// only when a row appears or is dismissed; the lines inside a box change
     /// constantly, and nothing outside the render card observes those.
     private(set) var logs: [String: JobLog] = [:]
-    var pendingContext: [String: JobContext] = [:]
+    /// Observed as well as `active`, because `splittingSongIds` is a function
+    /// of both and the two are written in either order — a submit fills this
+    /// in before the row is adopted, a test after.
+    var pendingContext: [String: JobContext] = [:] {
+        didSet { refreshShellState() }
+    }
     var lastError: String?
 
     /// The engine's queue hold (contract §5.7): nothing new starts. It does not
@@ -519,13 +609,13 @@ final class JobsStore {
         guard let client else { return nil }
         let accessing = fileURL.startAccessingSecurityScopedResource()
         defer { if accessing { fileURL.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: fileURL) else {
-            lastError = "Could not read \(fileURL.lastPathComponent)"
-            return nil
-        }
         do {
-            let info = try await client.upload(data: data,
-                                               filename: fileURL.lastPathComponent)
+            // Streamed from disk. Reading the file into a `Data` here first
+            // put a whole WAV — tens of megabytes — into memory on the main
+            // actor, before any suspension point, on every submit that takes
+            // audio; a workbench mix of eight sources did it eight times over.
+            let info = try await client.uploadFile(
+                at: fileURL, filename: fileURL.lastPathComponent)
             return info.uploadId
         } catch {
             lastError = error.localizedDescription
@@ -1181,7 +1271,10 @@ final class JobsStore {
     /// toggle did would otherwise flip the button back under the pointer.
     func applyHold(from system: SystemInfo) {
         guard !holdInFlight else { return }
-        queueHeld = system.queueHeld ?? false
+        // Gated: the telemetry poll calls this every three seconds and the
+        // answer is almost always the one it already had.
+        let next = system.queueHeld ?? false
+        if next != queueHeld { queueHeld = next }
     }
 
     /// How many stderr lines a running job keeps. Ten fit the panel; the rest
@@ -1279,6 +1372,10 @@ final class JobsStore {
     /// it, so a split or a recombination that dropped its context on success
     /// would sit there afterwards under a blank name.
     func dismiss(_ jobId: String) {
+        batched { dismissBody(jobId) }
+    }
+
+    private func dismissBody(_ jobId: String) {
         active.removeValue(forKey: jobId)
         logs.removeValue(forKey: jobId)
         pendingContext.removeValue(forKey: jobId)
@@ -1294,7 +1391,11 @@ final class JobsStore {
     /// timer by default; but a day's work is fifty of them, and "manually
     /// dismissed" should not have to mean fifty clicks.
     func dismissFinished() {
-        for job in active.values where job.status.isTerminal { dismiss(job.id) }
+        batched {
+            for job in active.values where job.status.isTerminal {
+                dismissBody(job.id)
+            }
+        }
     }
 
     // MARK: auto-clear
@@ -1330,14 +1431,16 @@ final class JobsStore {
     /// whether there is anything left to watch.
     @discardableResult
     func sweepFinished(now: Date = Date()) -> Bool {
-        finishedSeenAt = finishedSeenAt.filter { active[$0.key] != nil }
-        guard let after = autoClearAfterS() else { return false }
-        for job in active.values where job.status.isTerminal {
-            let seen = finishedSeenAt[job.id] ?? now
-            finishedSeenAt[job.id] = seen
-            if now.timeIntervalSince(seen) >= after { dismiss(job.id) }
+        batched {
+            finishedSeenAt = finishedSeenAt.filter { active[$0.key] != nil }
+            guard let after = autoClearAfterS() else { return false }
+            for job in active.values where job.status.isTerminal {
+                let seen = finishedSeenAt[job.id] ?? now
+                finishedSeenAt[job.id] = seen
+                if now.timeIntervalSince(seen) >= after { dismissBody(job.id) }
+            }
+            return !active.isEmpty
         }
-        return !active.isEmpty
     }
 
     /// Put a row on the list that this store did not submit.
@@ -1371,6 +1474,10 @@ final class JobsStore {
     // MARK: event routing
 
     func apply(_ event: EngineEvent) {
+        batched { applyEvent(event) }
+    }
+
+    private func applyEvent(_ event: EngineEvent) {
         switch event {
         case .jobQueued(let jobId, _, _, let queuePosition):
             if active[jobId] == nil {
@@ -1446,6 +1553,10 @@ final class JobsStore {
     /// Generate-job ingest (internal for tests): library songs, unless a
     /// generativePart context routes the take into the Parts library.
     func ingestGenerate(job: JobInfo, result: JobResult) {
+        batched { ingestGenerateBody(job: job, result: result) }
+    }
+
+    private func ingestGenerateBody(job: JobInfo, result: JobResult) {
         let jobId = job.jobId
         // Reimagine recipes that produce material, not songs (AI extract,
         // lego layers): route the take into the Parts library.
@@ -1637,6 +1748,10 @@ final class JobsStore {
     /// Route a task job's typed artifacts: stems/notes → parts library,
     /// analysis → the owner's analysis attachment. Internal for tests.
     func ingestArtifacts(job: JobInfo, result: JobResult) {
+        batched { ingestArtifactsBody(job: job, result: result) }
+    }
+
+    private func ingestArtifactsBody(job: JobInfo, result: JobResult) {
         let jobId = job.jobId
         let context = pendingContext[jobId]
         guard let partsRepo else {
@@ -1665,8 +1780,13 @@ final class JobsStore {
                let songAnalysis = ((try? partsRepo.analysis(ownerId: ownerId))
                                    ?? nil),
                let songParts = try? partsRepo.allParts(forSong: ownerId) {
+                // Derived once, not once per stem. The argument is the same
+                // record every time round, so the parse-strip-reserialise of
+                // a whole analysis payload — beat grid, downbeats, structure,
+                // chords — was being repeated identically for each part.
+                let template = propagatedCopy(songAnalysis)
                 for part in songParts where part.format == "wav" {
-                    var copy = propagatedCopy(songAnalysis)
+                    var copy = template
                     copy.ownerId = part.id
                     copy.ownerType = "part"
                     try? partsRepo.upsertAnalysis(copy)
@@ -1810,8 +1930,10 @@ final class JobsStore {
         }
         // A split-time analysis describes the source; stems share its grid.
         if let songAnalysis = try? partsRepo.analysis(ownerId: songId) {
+            // Once, not once per stem — see the same hoist above.
+            let template = propagatedCopy(songAnalysis)
             for part in parts where part.format == "wav" {
-                var copy = propagatedCopy(songAnalysis)
+                var copy = template
                 copy.ownerId = part.id
                 copy.ownerType = "part"
                 try? partsRepo.upsertAnalysis(copy)
@@ -2028,7 +2150,16 @@ final class JobsStore {
             // Specialist analyzers (chords, quality) describe one facet;
             // their payload merges into the owner's stored analysis so the
             // beat grid and key the workbench reads survive the run.
-            if let raw = (try? JSONSerialization.jsonObject(with: data))
+            //
+            // The byte test comes first because the parse is not cheap — an
+            // analysis payload carries the beat grid, downbeats, structure
+            // and often chords for a whole track — and it ran over *every*
+            // artifact, including the ordinary ones that go on to be decoded
+            // properly two lines below. A payload whose bytes contain neither
+            // version key cannot satisfy the condition, so skipping the parse
+            // for it changes nothing but the cost.
+            if Self.mentionsSpecialistVersion(data),
+               let raw = (try? JSONSerialization.jsonObject(with: data))
                 as? [String: Any],
                raw["analysis_version"] == nil,
                raw["chords_version"] != nil || raw["quality_version"] != nil {
@@ -2050,6 +2181,15 @@ final class JobsStore {
             try? repo.upsertAnalysis(record)
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    /// Cheap pre-filter for `ingestAnalysis`: could these bytes possibly be a
+    /// specialist payload? A `false` is conclusive; a `true` only means the
+    /// real parse is worth doing.
+    nonisolated private static func mentionsSpecialistVersion(_ data: Data)
+        -> Bool {
+        data.range(of: Data("chords_version".utf8)) != nil
+            || data.range(of: Data("quality_version".utf8)) != nil
     }
 
     /// A part inherits its song's grid, key, and chords — but not its

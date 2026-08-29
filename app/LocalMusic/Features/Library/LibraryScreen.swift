@@ -57,7 +57,6 @@ struct LibraryScreen: View {
     // Derived database reads, refreshed when the stores change rather than on
     // every redraw: the transport clock ticks four times a second and would
     // otherwise drag a fistful of queries along with it.
-    @State private var counts = ScopeCounts()
     @State private var partCounts: [String: Int] = [:]
     @State private var songTitles: [String: String] = [:]
     /// Which origin each of those songs has, so the parts filter can group them.
@@ -65,21 +64,14 @@ struct LibraryScreen: View {
     /// Read from the whole table rather than from `results`, so picking an
     /// artist doesn't narrow the menu you picked it from down to that one name.
     @State private var artists: [String] = []
+    @State private var models: [ModelChoice] = []
+    @State private var camelotCodes: Set<String> = []
     @State private var partGroups: [LibraryPartGroup] = []
     /// Whether the Edited scope is what set the "recently edited" sort — as
     /// opposed to the user picking it.
     @State private var promotedSort = false
     @State private var siblings: [PartRecord] = []
     @FocusState private var searchFocused: Bool
-
-    private struct ScopeCounts: Equatable {
-        var songs = 0
-        var imported = 0
-        var parts = 0
-        var renders = 0
-        var edited = 0
-        var favourites = 0
-    }
 
     private var box: LibraryCompare { compare ?? ownCompare }
     private var songs: [SongRecord] { library.results }
@@ -831,36 +823,43 @@ struct LibraryScreen: View {
             if !checked.isSubset(of: visible) { checked.formIntersection(visible) }
         }
         partCounts = (try? parts.repository.partCounts()) ?? [:]
-        // Each scope reads its own origin. Counting Generated as "everything
-        // that isn't a render" would fold the imports back into it — the very
-        // thing the Imported scope exists to undo.
-        let byOrigin = (try? library.repository.countsByOrigin()) ?? [:]
         artists = (try? library.repository.distinctArtists()) ?? []
-        let favouriteSongs = (try? library.repository.favoriteCount()) ?? 0
-        let favouriteParts = (try? parts.repository.favorites().count) ?? 0
-        counts = ScopeCounts(songs: byOrigin[SongOrigin.generated.rawValue] ?? 0,
-                             imported: byOrigin[SongOrigin.imported.rawValue] ?? 0,
-                             parts: partCounts.values.reduce(0, +),
-                             renders: byOrigin[SongOrigin.recombined.rawValue] ?? 0,
-                             edited: (try? library.repository.editedCount()) ?? 0,
-                             favourites: favouriteSongs + favouriteParts)
+        rebuildModelChoices()
+        // `countsByOrigin`, `favoriteCount`, the parts' `favorites()` and
+        // `editedCount` used to run here too, to fill a `ScopeCounts` that
+        // nothing ever read — the sidebar draws its badges from the stores'
+        // own cached counts. Four queries per refresh, and a `@State` write
+        // that invalidated the screen again, for a value with no readers.
         rebuildGroups()
         refreshSiblings()
     }
 
     private func rebuildGroups() {
         let results = parts.results
+        // One query per distinct song, not three. The titles pass fetched the
+        // song, and then `groupMeta` fetched the very same row again and an
+        // analysis beside it — so a parts list drawn from fifty songs issued
+        // about a hundred and fifty synchronous queries, on the main actor,
+        // every time either store published.
+        let songIds = Set(results.map(\.songId))
+        var songs: [String: SongRecord] = [:]
+        for id in songIds {
+            if let song = (try? library.repository.song(id: id)) ?? nil {
+                songs[id] = song
+            }
+        }
+        let analyses = (try? parts.repository.analyses(ownerIds: Array(songIds)))
+            ?? [:]
         var titles: [String: String] = [:]
         var origins: [String: SongOrigin] = [:]
-        for id in Set(results.map(\.songId)) {
-            let song = (try? library.repository.song(id: id)) ?? nil
-            titles[id] = song?.title ?? "Unknown"
-            origins[id] = song?.originKind ?? .generated
+        for id in songIds {
+            titles[id] = songs[id]?.title ?? "Unknown"
+            origins[id] = songs[id]?.originKind ?? .generated
         }
-        songTitles = titles
-        songOrigins = origins
+        if titles != songTitles { songTitles = titles }
+        if origins != songOrigins { songOrigins = origins }
         guard !results.isEmpty else {
-            partGroups = []
+            if !partGroups.isEmpty { partGroups = [] }
             return
         }
         guard groupBySong else {
@@ -873,15 +872,19 @@ struct LibraryScreen: View {
         // "＋ Bench".
         let audio = results.filter { $0.format == "wav" }
         let rest = results.filter { $0.format != "wav" }
+        // Grouped in one pass. The inner `audio.filter` this replaces made the
+        // loop quadratic in the number of parts on screen.
+        let bySong = Dictionary(grouping: audio, by: \.songId)
         var groups: [LibraryPartGroup] = []
         var seen: Set<String> = []
         for part in audio where !seen.contains(part.songId) {
             seen.insert(part.songId)
-            let members = audio.filter { $0.songId == part.songId }
+            let members = bySong[part.songId] ?? []
             groups.append(LibraryPartGroup(
                 id: part.songId,
                 header: .song(title: titles[part.songId] ?? "Unknown",
-                              meta: groupMeta(songId: part.songId,
+                              meta: groupMeta(song: songs[part.songId],
+                                              analysis: analyses[part.songId],
                                               members: members)),
                 parts: members))
         }
@@ -897,12 +900,14 @@ struct LibraryScreen: View {
     /// `201 S · 107 BPM · 8B · DEMUCS 6-STEM` — the source's shape and the
     /// separator that produced these parts, so a group header says why the
     /// stems under it sound the way they do.
-    private func groupMeta(songId: String, members: [PartRecord]) -> String {
+    /// Takes the song and its analysis rather than fetching them: both were
+    /// already read once, in one batch, by `rebuildGroups`.
+    private func groupMeta(song: SongRecord?, analysis: AnalysisRecord?,
+                           members: [PartRecord]) -> String {
         var fields: [String] = []
-        if let song = ((try? library.repository.song(id: songId)) ?? nil) {
+        if let song {
             fields.append("\(LibraryFormat.seconds(song.durationS)) S")
         }
-        let analysis = ((try? parts.repository.analysis(ownerId: songId)) ?? nil)
         if let bpm = analysis?.bpm { fields.append("\(Int(bpm.rounded())) BPM") }
         if let camelot = analysis?.camelot { fields.append(camelot) }
         var separators: [String] = []
@@ -926,25 +931,36 @@ struct LibraryScreen: View {
 
     /// Songs a split job is running against, so a row can say it is busy
     /// instead of looking identical to one that has never been split.
-    private var splittingSongs: Set<String> {
-        var out: Set<String> = []
-        for job in jobs.active.values where !job.status.isTerminal {
-            if case .split(let songId, _)? = jobs.pendingContext[job.info.jobId] {
-                out.insert(songId)
-            }
-        }
-        return out
-    }
+    ///
+    /// The store keeps this set. Walking `active` here instead subscribed the
+    /// whole song grid to every progress frame in the app, which is the one
+    /// thing a list of a few hundred rows must not be subscribed to.
+    private var splittingSongs: Set<String> { jobs.splittingSongIds }
 
     // MARK: - Filter labels
 
-    private var models: [(id: String, name: String)] {
+    /// The model filter's menu, built in `refreshDerived` rather than here.
+    ///
+    /// It concatenated the whole search result with the whole recents list,
+    /// built a dictionary and sorted it — and `modelLabel`, which the filter
+    /// bar draws on every pass, read it to resolve one id.
+    struct ModelChoice: Identifiable, Equatable {
+        var id: String
+        var name: String
+    }
+
+    private func rebuildModelChoices() {
         var names: [String: String] = [:]
         for song in library.results + library.recent {
             names[song.modelId] = song.modelName
         }
-        return names.map { (id: $0.key, name: $0.value) }
+        let next = names.map { ModelChoice(id: $0.key, name: $0.value) }
             .sorted { $0.name < $1.name }
+        if next != models { models = next }
+        let camelots = Set(parts.results.compactMap {
+            parts.analyses[$0.id]?.camelot
+        })
+        if camelots != camelotCodes { camelotCodes = camelots }
     }
 
     private var modelLabel: String {
@@ -1003,10 +1019,11 @@ struct LibraryScreen: View {
 
     /// Camelot codes among the currently analyzed parts (plus the active
     /// selection, so a filtered-down list can't strand its own choice).
+    /// The key menu's options. The scan over every part's analysis lives in
+    /// `rebuildModelChoices`; the active filter is folded in here because it
+    /// can be set to a code no visible part carries.
     private var availableCamelots: [String] {
-        var codes = Set(parts.results.compactMap {
-            parts.analyses[$0.id]?.camelot
-        })
+        var codes = camelotCodes
         if let active = parts.filters.camelot { codes.insert(active) }
         return codes.sorted()
     }

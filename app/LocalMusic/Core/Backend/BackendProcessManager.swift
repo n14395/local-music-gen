@@ -129,7 +129,7 @@ actor BackendProcessManager {
             if let text = String(data: data, encoding: .utf8) {
                 let lines = text.split(separator: "\n").map(String.init)
                 Task { @MainActor in
-                    for line in lines { statusStore.appendStderr(line) }
+                    statusStore.appendStderr(lines)
                 }
             }
         }

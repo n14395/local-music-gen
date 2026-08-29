@@ -244,13 +244,17 @@ final class AppEnvironment {
         // wiring above it. Anything else that needs to know a job landed is
         // chained here, in the one place that owns them.
         jobsStore.onSongsIngested = { [weak self] songs in
-            self?.library.refreshRecent()
+            // Coalesced and off the main actor: this fires once per take, and
+            // a synchronous re-read of the whole library between takes is the
+            // hitch you feel while a batch is landing.
+            self?.library.refreshRecentSoon()
             for song in songs { self?.autoRun(song: song) }
             self?.advanceStyleTransfer(songs: songs, parts: [])
             self?.advanceTextChain(songs: songs, parts: [], texts: [])
         }
         jobsStore.onPartsIngested = { [weak self] parts in
-            self?.partsStore.refresh()
+            // Coalesced and off the main actor — see `refreshRecentSoon`.
+            self?.partsStore.refreshSoon()
             if let songId = parts.first?.songId {
                 self?.autoRunSong(id: songId)
             }
@@ -261,7 +265,7 @@ final class AppEnvironment {
             for song in songs { self?.autoRun(song: song) }
         }
         library.onPartsRenamed = { [weak self] in
-            self?.partsStore.refresh()
+            self?.partsStore.refreshSoon()
         }
         // Same single-assignment rule as its two siblings above.
         jobsStore.onTextIngested = { [weak self] docs in
@@ -271,8 +275,8 @@ final class AppEnvironment {
         jobsStore.onEditorArtifact = { [weak self] job, result, purpose in
             self?.editor.handleArtifact(job: job, result: result,
                                         purpose: purpose)
-            self?.library.refreshRecent()
-            self?.partsStore.refresh()
+            self?.library.refreshRecentSoon()
+            self?.partsStore.refreshSoon()
         }
         editor.partsStore = partsStore
         editor.pauseGlobalPlayback = { [weak self] in
@@ -600,7 +604,7 @@ final class AppEnvironment {
             // those are false: the render was not finished. Every take is
             // armed all the same, because any of them may be the last.
             guard jobsStore.isFinalOfBatch(jobId) else { break }
-            let title = jobsStore.active[jobId].map {
+            let title = jobsStore.job(jobId).map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
             // A job the user armed from the render card is told about either
@@ -622,7 +626,7 @@ final class AppEnvironment {
             // (same model, same params), and four identical alerts for one
             // press of Generate is what "tell me when it lands" would become.
             guard jobsStore.isFinalOfBatch(jobId) else { break }
-            let title = jobsStore.active[jobId].map {
+            let title = jobsStore.job(jobId).map {
                 jobsStore.displayTitle(for: $0.info)
             } ?? ""
             let body = "\(title.prefix(50)) — \(error.message)"

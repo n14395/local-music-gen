@@ -108,10 +108,11 @@ struct EditorTransportControls: View {
 /// The preview neither normalises nor limits, so this is the only notice that
 /// a stack of segments has summed past full scale.
 struct EditorPreviewMeter: View {
-    let db: (left: Double, right: Double)?
+    let player: MultiPartPlayer
 
     var body: some View {
-        HStack(spacing: 9) {
+        let db = player.meterDb
+        return HStack(spacing: 9) {
             VStack(alignment: .leading, spacing: 3) {
                 bar("L", db: db?.left)
                 bar("R", db: db?.right)
@@ -200,7 +201,12 @@ struct EditorSeekRow: View {
             EditorSeekBar(store: store)
                 .frame(minWidth: 140, maxWidth: .infinity)
             EditorTransportClock(store: store)
-            EditorPreviewMeter(db: store.player.meterDb)
+            // The player, not `store.player.meterDb`. Reading the level here
+            // subscribed this whole row — transport buttons, seek bar, clock
+            // — to the meter tap, which publishes about twenty times a second
+            // for the length of the preview. Read inside the meter's own body
+            // it invalidates the meter and nothing else.
+            EditorPreviewMeter(player: store.player)
         }
     }
 }

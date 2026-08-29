@@ -50,6 +50,5 @@ struct ClipWaveform: View {
             }
             context.fill(path, with: .color(.white.opacity(0.75)))
         }
-        .drawingGroup()
     }
 }

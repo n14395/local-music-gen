@@ -236,7 +236,7 @@ final class MultiPartPlayerTests: XCTestCase {
     /// Pins the isolation the fix depends on: peak reading is callable from
     /// off the main actor, which is where the audio thread calls it.
     func testPeakDbReadsBothChannelsOffTheMainActor() async throws {
-        let value = await Task.detached { () -> (left: Double, right: Double)? in
+        let value = await Task.detached { () -> MultiPartPlayer.MeterLevel? in
             let format = AVAudioFormat(standardFormatWithSampleRate: 48000,
                                        channels: 2)!
             let buffer = AVAudioPCMBuffer(pcmFormat: format,

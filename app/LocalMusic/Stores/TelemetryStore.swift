@@ -25,18 +25,32 @@ final class TelemetryStore {
     private(set) var freeDiskBytes: Int64?
     private(set) var machine: String?
 
+    /// Each assignment gated.
+    ///
+    /// This is polled every three seconds for the whole session — every three
+    /// seconds *while rendering*, which is when the UI is busiest — and most
+    /// of what it carries never moves at all: the machine's name, its RAM, the
+    /// accelerator, its backend. Assigning them unconditionally republished
+    /// nine observable properties on every poll, and the sidebar's engine card
+    /// and the transport strip read them, so an idle machine redrew its
+    /// chrome twenty times a minute to say nothing had changed.
     func apply(_ system: SystemInfo) {
-        ramBytes = system.ramBytes
-        freeDiskBytes = system.freeDiskBytes
-        machine = system.machine
-        acceleratorName = system.accelerator?.name
-        backend = system.accelerator?.backend
-        workingSetBytes = system.accelerator?.workingSetBytes
-        gpuPercent = system.usage?.gpuPercent
-        acceleratorBytes = system.usage?.acceleratorBytes
+        set(&ramBytes, system.ramBytes)
+        set(&freeDiskBytes, system.freeDiskBytes)
+        set(&machine, system.machine)
+        set(&acceleratorName, system.accelerator?.name)
+        set(&backend, system.accelerator?.backend)
+        set(&workingSetBytes, system.accelerator?.workingSetBytes)
+        set(&gpuPercent, system.usage?.gpuPercent)
+        set(&acceleratorBytes, system.usage?.acceleratorBytes)
         // The memory guard has always carried the worker's bytes; prefer the
         // richer `usage` reading when the engine sends it.
-        workerBytes = system.usage?.workerBytes ?? system.memoryGuard?.workerBytes
+        set(&workerBytes,
+            system.usage?.workerBytes ?? system.memoryGuard?.workerBytes)
+    }
+
+    private func set<T: Equatable>(_ stored: inout T, _ next: T) {
+        if stored != next { stored = next }
     }
 
     /// Memory the engine is using, over the ceiling it can actually reach.

@@ -93,7 +93,7 @@ final class RecombineFlowTests: XCTestCase {
         XCTAssertNotNil(created, env.jobsStore.lastError ?? "")
 
         // job row shows the mix title while running
-        if let active = env.jobsStore.active.values.first(where: {
+        if let active = env.jobsStore.trackedJobs.first(where: {
             ($0.info.task ?? "") == "mix"
         }) {
             XCTAssertEqual(env.jobsStore.displayTitle(for: active.info),

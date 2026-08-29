@@ -61,7 +61,9 @@ struct StyleTransferScreen: View {
     /// Chain-aware: between two chain steps there is a moment with no live
     /// job, and the page must not blink back to the workspace across it.
     private var isRendering: Bool {
-        !renderingJobs.isEmpty || model.isChainRunning
+        let ids = model.outstandingJobIds
+        // Off `busy` rather than `renderingJobs` — see `StudioView`.
+        return jobs.busy.contains { ids.contains($0.id) } || model.isChainRunning
     }
 
     private var showsRendering: Bool { isRendering && !showingWorkspace }
@@ -110,7 +112,12 @@ struct StyleTransferScreen: View {
         .onChange(of: model.mode) { rebuildForm() }
         .onChange(of: model.selectedModelId) { rebuildForm() }
         .onChange(of: catalog.version) { reconcile() }
-        .onChange(of: parts.results) { model.refreshPlannerInput(parts: parts) }
+        // `parts.results.count`, not the array: the planner only needs to
+        // know the pool changed, and observing every record subscribed this
+        // whole screen to each parts search and each ingest.
+        .onChange(of: parts.results.count) {
+            model.refreshPlannerInput(parts: parts)
+        }
         // Coming back to a finished run should not leave you stranded on an
         // empty rendering pane — same rule as Generate.
         .onChange(of: isRendering) { if !isRendering { showingWorkspace = false } }

@@ -45,7 +45,7 @@ final class EditorFittingWidthTests: XCTestCase {
         let screen = EditorScreen(store: env.editor, catalog: env.catalog,
                                   library: env.library, parts: env.partsStore,
                                   jobs: env.jobsStore, playback: env.playback)
-        let view = FittingWidthReader(onChange: { reported = $0 }) { screen }
+        let view = FittingWidthReader(version: 0, onChange: { reported = $0 }) { screen }
         let host = NSHostingView(rootView: view.frame(width: offered, height: 900))
         host.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.4))

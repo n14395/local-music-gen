@@ -92,12 +92,16 @@ final class WorkbenchModel {
 
     // MARK: target grid
 
+    /// `.lazy` so the search stops at the first clip that has a tempo. Eager,
+    /// this mapped every clip's summary to find one value — and it is called
+    /// once per clip by `plan(for:)`, which made reading the target grid
+    /// quadratic in the number of clips on the bench.
     var effectiveTargetBpm: Double? {
-        targetBpm ?? clips.compactMap { $0.summary?.bpm }.first
+        targetBpm ?? clips.lazy.compactMap { $0.summary?.bpm }.first
     }
 
     var effectiveTargetCamelot: String? {
-        targetCamelot ?? clips.compactMap { $0.summary?.camelot }.first
+        targetCamelot ?? clips.lazy.compactMap { $0.summary?.camelot }.first
     }
 
     var targetSummary: AnalysisSummary {
@@ -105,10 +109,44 @@ final class WorkbenchModel {
                         camelot: effectiveTargetCamelot)
     }
 
+    /// Cached inputs and answer for one clip's match plan.
+    private struct CachedPlan {
+        var source: AnalysisSummary
+        var target: AnalysisSummary
+        var isDrums: Bool
+        var plan: MatchPlan
+    }
+
+    /// `@ObservationIgnored` deliberately: this is read *and written* from
+    /// inside a view body, and an observed property doing that is the
+    /// "modifying state during view update" trap — the write would invalidate
+    /// the very body that caused it.
+    @ObservationIgnored private var planCache: [String: CachedPlan] = [:]
+
+    /// The match badges for a clip.
+    ///
+    /// Cached because `Mashability.plan` is a 512-element cosine similarity
+    /// plus chroma and band-energy correlations, and the timeline asks for one
+    /// **per clip inside a `ForEach`** — so once per clip per body pass, and
+    /// the body runs at drag-gesture rate. The answer only moves when the
+    /// clip's own analysis, its drum flag, or the target grid moves; the
+    /// summaries share storage with the stored clip, so validating that is an
+    /// array-identity check rather than a walk.
     func plan(for clip: Clip) -> MatchPlan? {
         guard let summary = clip.summary else { return nil }
-        return Mashability.plan(source: summary, target: targetSummary,
-                                isDrums: clip.isDrums)
+        let target = targetSummary
+        if let hit = planCache[clip.id], hit.isDrums == clip.isDrums,
+           hit.source == summary, hit.target == target {
+            return hit.plan
+        }
+        let made = Mashability.plan(source: summary, target: target,
+                                    isDrums: clip.isDrums)
+        // Keyed by clip id, so it cannot outgrow the bench by much; cleared
+        // outright rather than evicted one by one if it somehow does.
+        if planCache.count > 256 { planCache.removeAll(keepingCapacity: true) }
+        planCache[clip.id] = CachedPlan(source: summary, target: target,
+                                        isDrums: clip.isDrums, plan: made)
+        return made
     }
 
     // MARK: lane folding (pure)

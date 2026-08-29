@@ -137,10 +137,10 @@ struct SettingsSearchField: View {
 struct SettingsFooterCard: View {
     let env: AppEnvironment
 
-    private var rendering: JobsStore.ActiveJob? {
-        JobsStore.ordered(env.jobsStore.active.values)
-            .first { !$0.status.isTerminal && $0.status != .queued }
-    }
+    /// The take in flight. `runningJob` is the same answer the store already
+    /// keeps for its own shell state — sorting the whole queue here instead
+    /// subscribed this card to every row's previews and produced-song lists.
+    private var rendering: JobsStore.ActiveJob? { env.jobsStore.runningJob }
 
     var body: some View {
         BenchSidebarCard(stroke: rendering != nil

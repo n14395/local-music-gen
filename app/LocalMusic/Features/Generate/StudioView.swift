@@ -39,6 +39,9 @@ struct StudioView: View {
     /// it, so it stays visibly a default — it follows the library forward on
     /// its own, and it is never something you have to clear before typing.
     @State private var name = ""
+    /// See `refreshNameCollision` — this is answered off the body.
+    @State private var nameCollision: String?
+    @State private var nameCollisionTask: Task<Void, Never>?
     @State private var durationS: Double
     @State private var count: Int
     /// "Unlock max length", from Full control. Deliberately `@State` and not
@@ -110,7 +113,17 @@ struct StudioView: View {
         }
     }
 
-    private var isRendering: Bool { !renderingJobs.isEmpty }
+    /// Off `busy`, not off `renderingJobs`.
+    ///
+    /// This is read on every pass — the pill tests it, `.onChange` watches it
+    /// — and `renderingJobs` reads `displayJobs`, so asking it here
+    /// resubscribed the whole composer to every progress frame in the app.
+    /// `busy` carries id and task only and is reassigned when work starts or
+    /// stops, which is exactly when this answer changes. The full queue is
+    /// still read below, but only inside the branch that draws the render.
+    private var isRendering: Bool {
+        jobs.busy.contains { $0.task == "generate" }
+    }
     private var showsRendering: Bool { isRendering && !showingComposer }
 
     var body: some View {
@@ -130,6 +143,11 @@ struct StudioView: View {
         }
         .onAppear { syncSelection(); applyPrefill() }
         .onChange(of: catalog.version) { syncSelection() }
+        // The three inputs to the name check, and nothing else — `prompt` is
+        // deliberately not among them.
+        .onChange(of: name, initial: true) { refreshNameCollision() }
+        .onChange(of: count) { refreshNameCollision() }
+        .onChange(of: library.nextTrackName) { refreshNameCollision() }
         .onChange(of: selectedModelId) { rebuildForm() }
         // Re-locking has to pull the length back down with it, or the slider
         // would keep a value the model no longer offers and the engine would
@@ -440,17 +458,38 @@ struct StudioView: View {
     ///
     /// Warn, not error: generating a second "warehouse jam" is a reasonable
     /// thing to do, and the take letters already disambiguate a batch.
-    private var nameCollision: String? {
-        guard !isDefaultName else { return nil }
-        let names = SongRecord.takeNames(base: effectiveName, count: count)
-        let clashes = names.filter { library.titleIsTaken($0, excluding: "") }
-        guard let first = clashes.first else { return nil }
-        if clashes.count == names.count, names.count > 1 {
-            return "Those names are all taken — the takes will land as "
-                + "“\(library.uniqueTitle(first))” and so on."
+    /// Held in state, not computed in the body.
+    ///
+    /// Answering it costs one `SELECT` per take plus a `uniqueTitle` probe
+    /// loop, and the card that draws it lives in the same body as the prompt
+    /// field — so once you had typed a name, every keystroke in the *prompt*
+    /// ran the whole set of queries. It is recomputed when the things it
+    /// actually depends on move, and after the typing settles.
+    private func refreshNameCollision() {
+        nameCollisionTask?.cancel()
+        guard !isDefaultName else {
+            if nameCollision != nil { nameCollision = nil }
+            return
         }
-        return "“\(first)” is taken — it will land as "
-            + "“\(library.uniqueTitle(first))”."
+        let names = SongRecord.takeNames(base: effectiveName, count: count)
+        nameCollisionTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let clashes = names.filter { library.titleIsTaken($0, excluding: "") }
+            let next: String?
+            if let first = clashes.first {
+                if clashes.count == names.count, names.count > 1 {
+                    next = "Those names are all taken — the takes will land as "
+                        + "“\(library.uniqueTitle(first))” and so on."
+                } else {
+                    next = "“\(first)” is taken — it will land as "
+                        + "“\(library.uniqueTitle(first))”."
+                }
+            } else {
+                next = nil
+            }
+            if next != nameCollision { nameCollision = next }
+        }
     }
 
     /// The name a submission right now would use: what you typed, or the

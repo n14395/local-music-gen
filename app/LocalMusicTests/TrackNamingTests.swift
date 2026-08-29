@@ -266,7 +266,7 @@ final class BatchTakeIngestTests: XCTestCase {
         XCTAssertEqual(Set(songs.map(\.title)),
                        ["track001a", "track001b", "track001c", "track001d"])
         for info in infos {
-            let row = try XCTUnwrap(jobs.active[info.jobId])
+            let row = try XCTUnwrap(jobs.job(info.jobId))
             XCTAssertEqual(row.status, .succeeded)
             XCTAssertEqual(row.producedSongIds.count, 1,
                            "one job, one take, one track")

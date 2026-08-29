@@ -158,7 +158,7 @@ final class QueueRetentionTests: XCTestCase {
         }
 
         jobs.dismissFinished()
-        XCTAssertEqual(Set(jobs.active.keys), ["running", "waiting"])
+        XCTAssertEqual(jobs.trackedJobIds, ["running", "waiting"])
     }
 
     // MARK: - What a finished row remembers
@@ -196,7 +196,7 @@ final class QueueRetentionTests: XCTestCase {
         jobs.ingestGenerate(job: info, result: result)
         createdFiles += ((try? library.recent(limit: 10)) ?? []).map(\.fileURL)
 
-        let row = try XCTUnwrap(jobs.active["job_g"])
+        let row = try XCTUnwrap(jobs.job("job_g"))
         XCTAssertEqual(row.status, .succeeded)
         XCTAssertEqual(row.producedSongIds.count, 2,
                        "both takes are recorded, in submission order")

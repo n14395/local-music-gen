@@ -322,7 +322,7 @@ extension StyleTransferModel {
             pendingRuns.removeValue(forKey: jobId)
         }
         guard !songs.isEmpty else { return }
-        let landed = pendingRuns.filter { jobs.active[$0.key]?.status == .succeeded }
+        let landed = pendingRuns.filter { jobs.job($0.key)?.status == .succeeded }
         guard let stamp = landed.values.first else { return }
         for song in songs { recordTake(song: song, stamp: stamp) }
         for jobId in landed.keys { pendingRuns.removeValue(forKey: jobId) }
@@ -351,7 +351,7 @@ extension StyleTransferModel {
         let context = RunContext(jobs: jobs, parts: partsStore,
                                  library: library, models: models)
         let mine = parts.contains { $0.jobId == waitingFor }
-            || (!songs.isEmpty && jobs.active[waitingFor]?.status == .succeeded)
+            || (!songs.isEmpty && jobs.job(waitingFor)?.status == .succeeded)
         guard mine else { return }
 
         run.progress.producedPartIds.append(contentsOf: parts.map(\.id))

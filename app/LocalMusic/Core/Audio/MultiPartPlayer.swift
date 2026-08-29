@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Foundation
 import Observation
@@ -40,17 +41,19 @@ final class MultiPartPlayer {
     /// Peak level of the summed preview per channel, in dBFS, ~20 Hz while
     /// playing; nil otherwise. Opt-in: the tap costs a little per render
     /// cycle and only the Editor draws a meter.
-    private(set) var meterDb: (left: Double, right: Double)?
+    private(set) var meterDb: MeterLevel?
+
+    /// Peak level per channel, in dBFS.
+    struct MeterLevel: Equatable, Sendable {
+        var left: Double
+        var right: Double
+    }
     var metersEnabled = false
     /// The workbench sums its items, so headroom scales with their count.
     /// The Editor's items are one timeline cut into pieces — never more than
     /// two sounding at once (a crossfade) — and scaling by segment count
     /// would make a heavily-cut track quieter with every cut.
     var sumsConcurrently = true
-    /// Coarse mirror of the audio clock for bindings and readouts; the playhead
-    /// itself reads `currentPosition()` so nothing that draws clips is
-    /// invalidated 30 times a second.
-    private(set) var positionS: Double = 0
     private(set) var durationS: Double = 0
     var lastError: String?
 
@@ -133,9 +136,38 @@ final class MultiPartPlayer {
             _ = arm(from: max(0, position))
         } else {
             frozenPosition = max(0, position)
-            positionS = frozenPosition ?? 0
         }
     }
+
+    /// What `arm` actually schedules: every property of an item except how
+    /// loud it is.
+    ///
+    /// Two item lists with equal schedules are already playing the right
+    /// audio at the right time and differ only in volume, so `updateGains`
+    /// is the whole update and the graph never has to stop. Sorted by id so
+    /// the comparison does not depend on the order the caller built them in.
+    struct Schedule: Equatable {
+        struct Entry: Equatable {
+            var id: String
+            var url: URL
+            var offsetS: Double
+            var sourceStartS: Double
+            var sourceEndS: Double?
+        }
+        var entries: [Entry]
+
+        init(_ items: [Item]) {
+            entries = items.map {
+                Entry(id: $0.id, url: $0.url, offsetS: $0.offsetS,
+                      sourceStartS: $0.sourceStartS, sourceEndS: $0.sourceEndS)
+            }
+            .sorted { $0.id < $1.id }
+        }
+    }
+
+    /// The schedule currently armed — what a caller compares against to find
+    /// out whether it needs `play` or only `updateGains`.
+    var armedSchedule: Schedule { Schedule(armedItems) }
 
     /// Live gain/mute updates without restarting (mute = volume 0; a muted
     /// node keeps its schedule so unmute stays in sync).
@@ -150,7 +182,6 @@ final class MultiPartPlayer {
         disarm()
         teardown()
         state = .stopped
-        positionS = 0
         frozenPosition = nil
     }
 
@@ -236,7 +267,6 @@ final class MultiPartPlayer {
             // Past the end of everything: hold the position rather than
             // pretending to play silence forever.
             anchorPosition = position
-            positionS = position
             frozenPosition = position
             state = .paused
             meterDb = nil
@@ -256,7 +286,6 @@ final class MultiPartPlayer {
         }
         frozenPosition = nil
         state = .playing
-        positionS = position
         lastError = nil
         startTick()
         return true
@@ -290,7 +319,12 @@ final class MultiPartPlayer {
             guard let value = Self.peakDb(in: buffer) else { return }
             Task { @MainActor in
                 guard let self, self.state == .playing else { return }
-                self.meterDb = value
+                // Gated: this fires about twenty-one times a second for the
+                // length of the preview, and a level that has not moved is a
+                // redraw of the meter for nothing. `MeterLevel` is a struct
+                // rather than the tuple it was precisely so this comparison
+                // can exist — tuples cannot be `Equatable`.
+                if value != self.meterDb { self.meterDb = value }
             }
         }
     }
@@ -298,22 +332,23 @@ final class MultiPartPlayer {
     /// Peak dBFS per channel for one render buffer. Pure and `nonisolated`:
     /// it runs on the audio thread, which must not touch main-actor state.
     nonisolated static func peakDb(
-        in buffer: AVAudioPCMBuffer) -> (left: Double, right: Double)? {
+        in buffer: AVAudioPCMBuffer) -> MeterLevel? {
         guard let data = buffer.floatChannelData else { return nil }
         let frames = Int(buffer.frameLength)
         let channels = Int(buffer.format.channelCount)
         guard frames > 0, channels > 0 else { return nil }
+        // `vDSP_maxmgv` is the same answer as the scalar loop — the maximum
+        // magnitude — vectorised. This runs on the realtime render thread, so
+        // the cheaper it is the better.
         func peak(_ channel: Int) -> Double {
             var peak: Float = 0
-            for i in 0..<frames {
-                let v = abs(data[channel][i])
-                if v > peak { peak = v }
-            }
+            vDSP_maxmgv(data[channel], 1, &peak, vDSP_Length(frames))
             return Double(peak)
         }
         func db(_ v: Double) -> Double { v > 0 ? max(-80, 20 * log10(v)) : -80 }
         let left = peak(0)
-        return (left: db(left), right: db(channels > 1 ? peak(1) : left))
+        return MeterLevel(left: db(left),
+                          right: db(channels > 1 ? peak(1) : left))
     }
 
     private func teardown() {
@@ -340,20 +375,24 @@ final class MultiPartPlayer {
 
     private func startTick() {
         tick?.invalidate()
-        // 25 Hz is plenty for a numeric readout; the playhead itself reads the
-        // audio clock directly on its own redraw.
+        // This timer's only remaining job is noticing that the timeline has
+        // played out. It used to publish `positionS` at 25 Hz as well — an
+        // observable write, four times a second's worth of registrar traffic,
+        // to a property that a grep of the whole app showed nothing reads:
+        // every playhead reads `currentPosition()` on its own redraw, which
+        // is what the doc comment on it said. So the property is gone and the
+        // tick is as slow as end-detection actually needs; `finish()` parks
+        // exactly at `durationS` regardless of when it notices.
         //
         // Added to `.common` rather than scheduled: `Timer.scheduledTimer`
         // installs in the default run loop mode only, which AppKit leaves
-        // while it tracks a scroll or a menu — so the position readout froze
-        // for as long as you were scrolling, and lurched when you stopped.
-        let timer = Timer(timeInterval: 0.04, repeats: true) {
+        // while it tracks a scroll or a menu.
+        let timer = Timer(timeInterval: 0.2, repeats: true) {
             [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                let now = self.currentPosition()
-                self.positionS = now
-                if self.durationS > 0 && now >= self.durationS {
+                if self.durationS > 0,
+                   self.currentPosition() >= self.durationS {
                     self.finish()
                 }
             }
@@ -367,7 +406,6 @@ final class MultiPartPlayer {
     private func finish() {
         disarm()
         frozenPosition = durationS
-        positionS = durationS
         state = .paused
         meterDb = nil
     }

@@ -16,7 +16,14 @@ final class PeaksStore {
         var failed = false
     }
 
-    private var handles: [String: Handle] = [:]
+    /// `@ObservationIgnored` because `handle(id:…)` is called from inside a
+    /// view body — a timeline of forty clips asks for one per clip — and it
+    /// inserts on first ask. An observed dictionary written during body
+    /// evaluation is the "modifying state during view update" trap: the
+    /// insert would invalidate the body that caused it. Nothing observes this
+    /// dictionary anyway; the *handles* are what redraw a clip, and they are
+    /// observable in their own right, which is the whole design.
+    @ObservationIgnored private var handles: [String: Handle] = [:]
 
     /// The handle for a material, starting the load on first ask.
     func handle(id: String, audioURL: URL, cacheURL: URL) -> Handle {

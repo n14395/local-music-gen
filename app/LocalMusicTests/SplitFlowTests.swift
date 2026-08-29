@@ -92,7 +92,7 @@ final class SplitFlowTests: XCTestCase {
         await env.jobsStore.submitSplit(
             modelId: "separation-stub", songId: song.id,
             sourceTitle: song.title, sourceURL: song.fileURL, params: [:])
-        try await waitFor("split job appears") { !env.jobsStore.active.isEmpty }
+        try await waitFor("split job appears") { !env.jobsStore.trackedJobs.isEmpty }
         try await waitFor("parts ingested") {
             ((try? env.partsStore.repository.allParts(forSong: song.id)) ?? [])
                 .count >= 2
@@ -108,7 +108,7 @@ final class SplitFlowTests: XCTestCase {
         }
 
         // job row title is action-shaped, not the (empty) prompt
-        if let active = env.jobsStore.active.values.first(where: {
+        if let active = env.jobsStore.trackedJobs.first(where: {
             ($0.info.task ?? "") == "separate"
         }) {
             XCTAssertEqual(env.jobsStore.displayTitle(for: active.info),

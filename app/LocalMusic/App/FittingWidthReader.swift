@@ -22,17 +22,22 @@ import SwiftUI
 /// by bisection rather than by asking, because SwiftUI has no call that
 /// returns it.
 struct FittingWidthReader<Content: View>: View {
+    /// Bumped by the caller when the content's *shape* changes — a different
+    /// screen, a gutter that appeared. See `FittingWidthLayout.updateCache`
+    /// for why the layout will not work this out for itself.
+    let version: Int
     let onChange: (CGFloat) -> Void
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        FittingWidthLayout(onChange: onChange) {
+        FittingWidthLayout(version: version, onChange: onChange) {
             content()
         }
     }
 }
 
 private struct FittingWidthLayout: Layout {
+    let version: Int
     let onChange: (CGFloat) -> Void
 
     /// Wider than any display this app will meet, and the bisection's ceiling.
@@ -44,6 +49,7 @@ private struct FittingWidthLayout: Layout {
     private static let steps = 12
 
     struct Cache {
+        var version: Int?
         var height: CGFloat?
         var fitting: CGFloat?
         /// The last answer, kept *across* invalidations as a starting guess —
@@ -54,26 +60,32 @@ private struct FittingWidthLayout: Layout {
 
     func makeCache(subviews: Subviews) -> Cache { Cache() }
 
-    /// Subviews changing means a different screen, and a different answer.
+    /// Deliberately keeps the answer.
     ///
-    /// It also means every ordinary rebuild of the screen already on show,
-    /// which is most of the calls — SwiftUI hands this layout fresh subviews
-    /// whenever the content re-renders, and the bisection below is a dozen
-    /// measuring passes over the whole window. So the answer is dropped, as it
-    /// must be, and the *guess* is kept.
-    func updateCache(_ cache: inout Cache, subviews: Subviews) {
-        cache = Cache(hint: cache.hint ?? cache.fitting)
-    }
+    /// SwiftUI hands this layout fresh subviews whenever the content
+    /// re-renders, which is most of the calls and almost never a change of
+    /// shape. Dropping the answer for those meant every ordinary rebuild of
+    /// the screen already on show re-measured the whole window — two probes
+    /// against a warm hint, the full twelve-step bisection against a cold
+    /// one. `version` is how the shell says the shape really did change.
+    ///
+    /// What it costs to be wrong is worth stating, because it is what makes
+    /// this safe: the number does not lay anything out. It feeds
+    /// `refitSidebar`, which decides whether the sidebar auto-collapses. A
+    /// stale answer delays that decision until the next screen change or
+    /// window resize. Nothing clips, and nothing is mispositioned.
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {}
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
                       cache: inout Cache) -> CGSize {
         guard let subview = subviews.first else { return .zero }
         // Memoised on height: the bisection is a dozen measuring passes over
         // the whole screen, and a resize drags the layout through many.
-        if cache.height != proposal.height {
+        if cache.version != version || cache.height != proposal.height {
             let fitting = Self.fittingWidth(of: subview,
                                             height: proposal.height,
                                             hint: cache.hint)
+            cache.version = version
             cache.height = proposal.height
             cache.hint = fitting
             if cache.fitting != fitting {

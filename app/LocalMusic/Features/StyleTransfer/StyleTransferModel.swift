@@ -186,7 +186,7 @@ final class StyleTransferModel {
     func isChainStranded(jobs: JobsStore) -> Bool {
         guard let chain, isChainRunning, let jobId = chain.progress.jobId
         else { return false }
-        return jobs.active[jobId] == nil
+        return jobs.job(jobId) == nil
     }
 
     /// Whether anything this workspace started is still outstanding. The

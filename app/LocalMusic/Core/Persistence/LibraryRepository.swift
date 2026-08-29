@@ -229,18 +229,28 @@ struct LibraryRepository: Sendable {
     /// Backups card. Read from disk rather than a column: the file's
     /// existence is what makes Revert offerable, so it is also the truth
     /// about what is being kept.
-    static func backupUsage() -> (count: Int, bytes: Int64) {
+    /// A named `Equatable` type rather than a tuple, so the sidebar can hold
+    /// the answer in `@State` and only redraw when it actually moves.
+    struct BackupUsage: Equatable, Sendable {
+        var count = 0
+        var bytes: Int64 = 0
+    }
+
+    /// Enumerates the backups folder and `stat`s every file — call it off the
+    /// main thread, and never from a view body.
+    static func backupUsage() -> BackupUsage {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(
             at: StoragePaths.libraryBackups,
-            includingPropertiesForKeys: [.fileSizeKey]) else { return (0, 0) }
+            includingPropertiesForKeys: [.fileSizeKey])
+        else { return BackupUsage() }
         var bytes: Int64 = 0
         for file in files {
             let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?
                 .fileSize ?? 0
             bytes += Int64(size)
         }
-        return (files.count, bytes)
+        return BackupUsage(count: files.count, bytes: bytes)
     }
 
     /// `title`, or the first `title (2)`, `title (3)`… that no other song

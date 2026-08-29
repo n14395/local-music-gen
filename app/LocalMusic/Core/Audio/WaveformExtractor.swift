@@ -39,16 +39,81 @@ actor WaveformExtractor {
     /// One `Peaks` per channel: `[mono]` for a mono file, `[left, right]`
     /// for stereo (further channels are ignored, matching the mix path).
     /// `mono: true` folds them into one lane by max magnitude.
-    /// Cancellable, and deliberately not detached: a detached task does not
-    /// inherit cancellation, so a window the view has already scrolled past
-    /// would decode to the end anyway — which is the whole cost this is
-    /// meant to avoid. The actor's executor is not the main one, so calling
-    /// it directly still keeps the decode off the main thread.
+    /// Detached, with cancellation forwarded by hand.
+    ///
+    /// It used to run straight on the actor's executor, which kept the decode
+    /// off the main thread but put *every other request* behind it — this is
+    /// a serial executor, and at fit zoom the window is the whole file. So
+    /// while the Editor decoded, every library row's 16 KB cache read and
+    /// every timeline clip's peaks queued up behind it, and waveforms
+    /// arrived one at a time. Only the in-flight bookkeeping needs the actor.
+    ///
+    /// The reason it was not detached before is real and is handled here: a
+    /// detached task does not inherit cancellation, and a window the view has
+    /// already scrolled past must stop rather than decode to the end.
+    /// `extractRange` checks cancellation per chunk; this forwards it.
+    ///
+    /// Windows repeat constantly — press Fit, toggle Mono, resize the window,
+    /// make an edit and the same span is asked for again — so recent answers
+    /// are kept. The cache is small and keyed on everything that changes the
+    /// answer.
     func peaks(for audioURL: URL, startS: Double, endS: Double,
                binCount: Int, mono: Bool) async throws -> [Peaks] {
-        try Self.extractRange(from: audioURL, startS: startS, endS: endS,
-                              binCount: binCount, mono: mono)
+        // The file's modification date is part of the key, so bytes changing
+        // under a path — an apply, a revert — can never serve a stale window.
+        // That is one `stat` per request, against a decode; and it means no
+        // call site has to remember to invalidate this.
+        let modified = (try? audioURL.resourceValues(
+            forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let key = WindowKey(path: audioURL.path,
+                            modified: modified ?? .distantPast,
+                            startS: startS, endS: endS,
+                            binCount: binCount, mono: mono)
+        if let hit = windowCache[key] {
+            windowOrder.removeAll { $0 == key }
+            windowOrder.append(key)
+            return hit
+        }
+        let task = Task<[Peaks], Error>.detached(priority: .userInitiated) {
+            try Self.extractRange(from: audioURL, startS: startS, endS: endS,
+                                  binCount: binCount, mono: mono)
+        }
+        let answer = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        store(answer, for: key)
+        return answer
     }
+
+    /// Everything that changes a window's answer. The file's path rather than
+    /// the URL so an equal path is an equal key.
+    private struct WindowKey: Hashable {
+        var path: String
+        var modified: Date
+        var startS: Double
+        var endS: Double
+        var binCount: Int
+        var mono: Bool
+    }
+
+    /// Small on purpose: this holds decoded PCM peaks, and the point is to
+    /// survive a zoom in and back out, not to hold a session.
+    private static let windowCacheLimit = 24
+    private var windowCache: [WindowKey: [Peaks]] = [:]
+    private var windowOrder: [WindowKey] = []
+
+    private func store(_ peaks: [Peaks], for key: WindowKey) {
+        windowCache[key] = peaks
+        windowOrder.removeAll { $0 == key }
+        windowOrder.append(key)
+        while windowOrder.count > Self.windowCacheLimit {
+            windowCache.removeValue(forKey: windowOrder.removeFirst())
+        }
+    }
+
+
 
     // MARK: extraction
 

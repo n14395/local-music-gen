@@ -232,14 +232,14 @@ final class QueueAutoClearTests: XCTestCase {
         let t0 = Date()
         // First sight stamps the row; nothing is old enough to go.
         jobs.sweepFinished(now: t0)
-        XCTAssertNotNil(jobs.active["done"])
+        XCTAssertNotNil(jobs.job("done"))
 
         jobs.sweepFinished(now: t0.addingTimeInterval(30))
-        XCTAssertNotNil(jobs.active["done"], "half the grace is not the grace")
+        XCTAssertNotNil(jobs.job("done"), "half the grace is not the grace")
 
         jobs.sweepFinished(now: t0.addingTimeInterval(61))
-        XCTAssertNil(jobs.active["done"])
-        XCTAssertNotNil(jobs.active["running"],
+        XCTAssertNil(jobs.job("done"))
+        XCTAssertNotNil(jobs.job("running"),
                         "work is never auto-cleared, only the record")
     }
 
@@ -253,16 +253,16 @@ final class QueueAutoClearTests: XCTestCase {
 
         let t0 = Date()
         jobs.sweepFinished(now: t0)
-        XCTAssertNotNil(jobs.active["old"])
+        XCTAssertNotNil(jobs.job("old"))
         jobs.sweepFinished(now: t0.addingTimeInterval(61))
-        XCTAssertNil(jobs.active["old"])
+        XCTAssertNil(jobs.job("old"))
     }
 
     func testNoPolicyMeansNoClearing() throws {
         let jobs = try store()
         jobs.adopt(job("done", .succeeded))
         jobs.sweepFinished(now: Date.distantFuture)
-        XCTAssertNotNil(jobs.active["done"])
+        XCTAssertNotNil(jobs.job("done"))
     }
 
     /// A row dismissed by hand between ticks must not leave a stamp behind
@@ -278,6 +278,6 @@ final class QueueAutoClearTests: XCTestCase {
         jobs.adopt(job("done", .succeeded))
         // Were the stale stamp kept, this tick would dismiss immediately.
         jobs.sweepFinished(now: t0.addingTimeInterval(120))
-        XCTAssertNotNil(jobs.active["done"])
+        XCTAssertNotNil(jobs.job("done"))
     }
 }

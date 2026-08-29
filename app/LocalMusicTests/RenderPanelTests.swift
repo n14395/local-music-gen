@@ -205,7 +205,7 @@ final class RenderLogRetentionTests: XCTestCase {
         store.apply(.jobLog(jobId: "nobody", line: "orphan"))
         XCTAssertEqual(store.log(for: "job_1").lines.count, 0)
         XCTAssertFalse(store.log(for: "job_1").hasLines)
-        XCTAssertNil(store.active["nobody"])
+        XCTAssertNil(store.job("nobody"))
     }
 
     /// ggml prints dozens of lines while it mmaps a GGUF and one per step

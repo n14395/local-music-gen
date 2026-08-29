@@ -19,12 +19,25 @@ struct BackendClient: Sendable {
         return e
     }()
 
+    /// One session for every client.
+    ///
+    /// Every instance configured it identically and differs only in its base
+    /// URL, so there was never anything per-client about it — while the
+    /// launch handshake builds a client *per attempt*, up to a couple of
+    /// hundred times on a cold first run, and nothing ever called
+    /// `finishTasksAndInvalidate` on any of them. That is a connection pool
+    /// per attempt, none of them reclaimed, at exactly the moment the app is
+    /// trying to start.
+    private static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        return URLSession(configuration: config)
+    }()
+
     init(port: Int, token: String) {
         self.baseURL = URL(string: "http://127.0.0.1:\(port)")!
         self.token = token
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 15
-        self.session = URLSession(configuration: config)
+        self.session = Self.sharedSession
     }
 
     // MARK: endpoints
@@ -133,6 +146,37 @@ struct BackendClient: Sendable {
         catch { throw APIError.decoding(underlying: error) }
     }
 
+    /// The same upload, streamed from disk.
+    ///
+    /// Identical on the wire; the difference is that the sibling above needs
+    /// the whole file in memory before it can start, which for a few minutes
+    /// of WAV is tens of megabytes read synchronously by whoever called it —
+    /// and every submit path that takes audio went through it. Handing
+    /// `URLSession` the path lets it stream the body, so a large source never
+    /// lands in the app's heap at all.
+    func uploadFile(at fileURL: URL, filename: String) async throws
+        -> UploadInfo {
+        var comps = URLComponents(string: "/v1/uploads")!
+        comps.queryItems = [URLQueryItem(name: "filename", value: filename)]
+        var req = URLRequest(
+            url: URL(string: comps.string!, relativeTo: baseURL)!.absoluteURL)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let raw: Data
+        do {
+            let (data, response) = try await session.upload(for: req,
+                                                            fromFile: fileURL)
+            raw = try Self.validated(data: data, response: response)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.transport(underlying: error)
+        }
+        do { return try Self.decoder.decode(UploadInfo.self, from: raw) }
+        catch { throw APIError.decoding(underlying: error) }
+    }
+
     // MARK: model library (contract §4.4)
 
     func library() async throws -> LibraryInfo {
@@ -197,6 +241,12 @@ struct BackendClient: Sendable {
         } catch {
             throw APIError.transport(underlying: error)
         }
+        return try Self.validated(data: data, response: response)
+    }
+
+    /// Status check shared by `request` and the streamed upload.
+    private static func validated(data: Data,
+                                  response: URLResponse) throws -> Data {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let body = (try? Self.decoder.decode(APIErrorEnvelope.self, from: data))?.error

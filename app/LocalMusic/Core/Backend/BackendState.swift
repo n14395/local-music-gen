@@ -37,10 +37,30 @@ final class BackendStatusStore {
     /// for attach mode and for engines launched before Settings had a say.
     var launchedEngineConfig: EngineLaunchConfig?
 
-    func appendStderr(_ line: String) {
-        stderrTail.append(line)
-        if stderrTail.count > 200 { stderrTail.removeFirst(stderrTail.count - 200) }
+    /// One chunk off the pipe, appended as one mutation.
+    ///
+    /// A chunk is usually several lines, and appending them one at a time was
+    /// one observable publish *per line* — plus, once the 200-line buffer was
+    /// full, an array shift per line, and a fresh scan of all 200 for
+    /// `setupLine` per line. That is precisely the first-launch path, where
+    /// the shim narrates itself while it fetches a Python and the log level
+    /// may be `debug`.
+    func appendStderr(_ lines: [String]) {
+        guard !lines.isEmpty else { return }
+        stderrTail.append(contentsOf: lines)
+        if stderrTail.count > Self.stderrCap {
+            stderrTail = Array(stderrTail.suffix(Self.stderrCap))
+        }
+        // Kept in step here rather than scanned on read — see `setupLine`.
+        let marker = "engine-setup: "
+        if let last = lines.last(where: { $0.hasPrefix(marker) }) {
+            setupLine = String(last.dropFirst(marker.count))
+        }
     }
+
+    func appendStderr(_ line: String) { appendStderr([line]) }
+
+    private static let stderrCap = 200
 
     /// What the launcher shim says it is doing, if it has said anything.
     ///
@@ -49,10 +69,8 @@ final class BackendStatusStore {
     /// anything about. `.launching` is the only phase the app has for all of
     /// it, which is why the shim narrates itself — this is the app end of
     /// that.
-    var setupLine: String? {
-        let marker = "engine-setup: "
-        guard let line = stderrTail.last(where: { $0.hasPrefix(marker) })
-        else { return nil }
-        return String(line.dropFirst(marker.count))
-    }
+    ///
+    /// Stored, not a `last(where:)` over the tail: onboarding reads it, and
+    /// reading it re-scanned up to 200 strings for every line printed.
+    private(set) var setupLine: String?
 }

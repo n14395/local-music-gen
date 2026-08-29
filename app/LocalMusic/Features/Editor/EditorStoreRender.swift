@@ -45,11 +45,20 @@ extension EditorStore {
         applyStage = .stashingBackup
         if !hasBackup {
             do {
-                try FileManager.default.createDirectory(
-                    at: StoragePaths.libraryBackups,
-                    withIntermediateDirectories: true)
-                try FileManager.default.copyItem(at: material.fileURL,
-                                                 to: material.backupURL)
+                // Off the main actor: this is a byte-for-byte copy of the
+                // whole track, which for a long WAV is hundreds of megabytes.
+                // Run inline it froze the window for the duration — including
+                // the "Backup stashed" spinner that is meant to be saying why
+                // the app is busy.
+                let from = material.fileURL
+                let to = material.backupURL
+                try await Task.detached(priority: .userInitiated) {
+                    try FileManager.default.createDirectory(
+                        at: StoragePaths.libraryBackups,
+                        withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: from, to: to)
+                }.value
+                refreshBackupState()
             } catch {
                 applyStage = .failed("Could not stash the backup: "
                                      + error.localizedDescription)
@@ -76,7 +85,13 @@ extension EditorStore {
         // for the same reason.
         let documentJSON = (try? JSONEncoder().encode(document))
             .map { String(decoding: $0, as: UTF8.self) }
-        let sourceDepth = sourceURL.flatMap(Self.bitDepth(of:))
+        // Detached: opening an `AVAudioFile` to read its header is a disk
+        // hit, and `bitDepth` is `nonisolated` precisely so it need not be a
+        // main-thread one.
+        let depthSource = sourceURL
+        let sourceDepth = await Task.detached(priority: .userInitiated) {
+            depthSource.flatMap(Self.bitDepth(of:))
+        }.value
         applyStage = .uploading
         guard let sourceId = await uploadSource() else {
             applyStage = .failed(jobs.lastError ?? "Upload failed")
@@ -242,6 +257,7 @@ extension EditorStore {
         for backup in StoragePaths.backups(forId: ownerId) {
             try? fm.removeItem(at: backup)
         }
+        refreshBackupState()
         WaveformExtractor.invalidateCache(
             StoragePaths.libraryWaveforms
                 .appendingPathComponent(ownerId + ".peaks"))
@@ -640,7 +656,7 @@ extension EditorStore {
             while true {
                 try? await Task.sleep(for: .milliseconds(300))
                 guard let self else { return }
-                guard let active = self.jobs.active[jobId] else {
+                guard let active = self.jobs.job(jobId) else {
                     // Dismissed after success — handleArtifact took over.
                     return
                 }
@@ -668,23 +684,29 @@ extension EditorStore {
                 case .succeeded:
                     return
                 default:
+                    // Through the gated setters. This loop runs three times a
+                    // second for the length of a render and most ticks carry
+                    // no new progress at all — the engine's own events are
+                    // slower than the poll — so assigning unconditionally
+                    // republished an identical stage and redrew the apply
+                    // card, the toolbar and the row menus for nothing.
                     if kind == .apply {
                         if active.status == .queued {
-                            self.applyStage = .queued(jobId: jobId)
+                            self.setApplyStage(.queued(jobId: jobId))
                         } else {
-                            self.applyStage = .rendering(
+                            self.setApplyStage(.rendering(
                                 jobId: jobId,
                                 fraction: active.progress?.fraction,
                                 etaS: active.progress?.etaS,
-                                message: active.progress?.message)
+                                message: active.progress?.message))
                         }
                     } else if self.exportStage.isBusy {
                         if active.status != .queued {
-                            self.exportStage = .rendering(
+                            self.setExportStage(.rendering(
                                 jobId: jobId,
                                 fraction: active.progress?.fraction,
                                 etaS: active.progress?.etaS,
-                                message: active.progress?.message)
+                                message: active.progress?.message))
                         }
                     }
                 }

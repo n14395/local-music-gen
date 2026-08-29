@@ -206,7 +206,7 @@ final class TextChainModel {
         let mine = texts.contains { $0.jobId == waitingFor }
             || parts.contains { $0.jobId == waitingFor }
             || (!songs.isEmpty
-                && context.jobs.active[waitingFor]?.status == .succeeded)
+                && context.jobs.job(waitingFor)?.status == .succeeded)
         guard mine else { return }
 
         current.progress.producedDocIds += texts.map(\.id)

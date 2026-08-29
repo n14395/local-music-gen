@@ -140,6 +140,19 @@ struct PartsRepository: Sendable {
         }
     }
 
+    /// How many parts are hearted.
+    ///
+    /// A `COUNT(*)`, not `favorites().count`: the sidebar's badge fetched
+    /// every hearted row — whole records, every column — and then threw all
+    /// of them away but the number.
+    func favoriteCount() throws -> Int {
+        try db.queue.read { database in
+            try Int.fetchOne(
+                database,
+                sql: "SELECT COUNT(*) FROM part WHERE favorite = 1") ?? 0
+        }
+    }
+
     func allParts(forSong songId: String) throws -> [PartRecord] {
         try db.queue.read {
             try PartRecord.filter(Column("songId") == songId)

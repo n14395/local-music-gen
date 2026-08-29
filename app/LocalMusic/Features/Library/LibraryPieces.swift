@@ -29,19 +29,51 @@ enum LibraryFormat {
     /// `TODAY 13:00` · `YESTERDAY` · `17 AUG` · `17 AUG 2025`. The row meta
     /// line is mono and tight, so old dates lose their time and very old ones
     /// gain a year rather than every row carrying a full timestamp.
-    static func when(_ date: Date) -> String {
+    @MainActor static func when(_ date: Date) -> String {
+        if let cached = whenCache[date] { return cached }
         let calendar = Calendar.current
+        let text: String
         if calendar.isDateInToday(date) {
-            return "TODAY " + date.formatted(.dateTime.hour().minute())
+            text = "TODAY " + date.formatted(.dateTime.hour().minute())
+        } else if calendar.isDateInYesterday(date) {
+            text = "YESTERDAY"
+        } else {
+            let sameYear = calendar.component(.year, from: date)
+                == calendar.component(.year, from: Date())
+            let format: Date.FormatStyle = sameYear
+                ? .dateTime.day().month(.abbreviated)
+                : .dateTime.day().month(.abbreviated).year()
+            text = date.formatted(format).uppercased()
         }
-        if calendar.isDateInYesterday(date) { return "YESTERDAY" }
-        let sameYear = calendar.component(.year, from: date)
-            == calendar.component(.year, from: Date())
-        let format: Date.FormatStyle = sameYear
-            ? .dateTime.day().month(.abbreviated)
-            : .dateTime.day().month(.abbreviated).year()
-        return date.formatted(format).uppercased()
+        // `Date.formatted` builds and configures a formatter on each call, and
+        // this is called for every visible row on every rebuild of the list.
+        // Rows are drawn from a bounded set of dates, so memoising by date is
+        // enough; the cap is a backstop, not an eviction policy.
+        if whenCache.count > 2000 { whenCache.removeAll(keepingCapacity: true) }
+        whenCache[date] = text
+        return text
     }
+
+    /// Formatted dates, keyed by the instant they describe.
+    ///
+    /// Emptied when the day rolls over, because "TODAY" and "YESTERDAY" are
+    /// answers about *now* — a window left open past midnight would otherwise
+    /// keep yesterday's word.
+    @MainActor private static var whenCache: [Date: String] {
+        get {
+            let today = Calendar.current.startOfDay(for: Date())
+            if today != whenCacheDay {
+                whenCacheDay = today
+                whenCacheStorage.removeAll(keepingCapacity: true)
+            }
+            return whenCacheStorage
+        }
+        set { whenCacheStorage = newValue }
+    }
+
+    @MainActor private static var whenCacheStorage: [Date: String] = [:]
+    @MainActor private static var whenCacheDay = Calendar.current
+        .startOfDay(for: Date())
 
     /// Measured from the file on disk rather than stored alongside the row, so
     /// it stays honest if the audio is replaced or trimmed underneath us.

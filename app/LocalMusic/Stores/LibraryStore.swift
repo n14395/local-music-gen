@@ -28,6 +28,8 @@ final class LibraryStore {
     static let searchDebounce = Duration.milliseconds(140)
 
     private var searchTask: Task<Void, Never>?
+    /// The coalesced ingest-driven read — see `refreshRecentSoon`.
+    private var recentTask: Task<Void, Never>?
 
     /// A filter moved. Which one decides whether the database is asked now or
     /// in a moment.
@@ -134,10 +136,74 @@ final class LibraryStore {
     private(set) var nextTrackName = SongRecord.trackName(number: 1)
 
     func refreshRecent() {
-        recent = (try? repo.recent()) ?? []
-        nextTrackName = SongRecord.trackName(
-            number: ((try? repo.highestTrackNumber()) ?? 0) + 1)
-        refreshSearch()
+        searchTask?.cancel()
+        searchTask = nil
+        recentTask?.cancel()
+        recentTask = nil
+        publish(Self.readEverything(repo: repo, filters: filters))
+    }
+
+    /// Re-read the library because rows changed underneath us, without
+    /// blocking whatever is on screen.
+    ///
+    /// The synchronous sibling above runs five unbounded queries — `recent`,
+    /// the highest track number, the FTS search behind `results`, `allTags`
+    /// and the edited count — and it is called once per take as a render
+    /// lands. On the main actor. While the next take is rendering. That is
+    /// the hitch you feel exactly when takes arrive, and it is why this
+    /// exists: the reads happen off the actor, and takes landing close
+    /// together collapse into one of them, because each request cancels the
+    /// last before it reaches the database.
+    ///
+    /// User actions keep using `refreshRecent` — a delete or a rename should
+    /// land on the row before the click finishes, and there is no burst of
+    /// them to coalesce.
+    func refreshRecentSoon() {
+        searchTask?.cancel()
+        searchTask = nil
+        recentTask?.cancel()
+        let wanted = filters
+        let repo = self.repo
+        recentTask = Task { [weak self] in
+            let answer = await Task.detached(priority: .userInitiated) {
+                Self.readEverything(repo: repo, filters: wanted)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            // Same rule as `scheduleSearch`: a slow answer must not overwrite
+            // a fresher one that was asked for after it.
+            guard self.filters == wanted else { return }
+            self.publish(answer)
+        }
+    }
+
+    /// One `Snapshot` is everything the two refresh paths publish, so they
+    /// cannot drift apart — and reading it is `nonisolated`, so it is the
+    /// same code whether it runs here or on a background executor.
+    struct Snapshot {
+        var recent: [SongRecord] = []
+        var highestTrackNumber = 0
+        var results: [SongRecord] = []
+        var tags: [String] = []
+        var edited = 0
+    }
+
+    nonisolated static func readEverything(
+        repo: LibraryRepository,
+        filters: LibraryRepository.Filters) -> Snapshot {
+        Snapshot(recent: (try? repo.recent()) ?? [],
+                 highestTrackNumber: (try? repo.highestTrackNumber()) ?? 0,
+                 results: (try? repo.search(filters)) ?? [],
+                 tags: (try? repo.allTags()) ?? [],
+                 edited: (try? repo.editedCount()) ?? 0)
+    }
+
+    private func publish(_ snapshot: Snapshot) {
+        recent = snapshot.recent
+        let name = SongRecord.trackName(number: snapshot.highestTrackNumber + 1)
+        if name != nextTrackName { nextTrackName = name }
+        results = snapshot.results
+        allTags = snapshot.tags
+        if editedCount != snapshot.edited { editedCount = snapshot.edited }
     }
 
     func refreshSearch() {
@@ -248,8 +314,15 @@ final class LibraryStore {
     /// The backup is the pre-edit original — user content, so it follows the
     /// same Trash policy as the file it backs; the peak cache is derived and
     /// always goes outright.
-    static func removeEditorLeftovers(id: String, toTrash: Bool = false) {
-        for backup in StoragePaths.backups(forId: id) {
+    ///
+    /// `index`, when given, is a `StoragePaths.backupIndex()` the caller has
+    /// already built — a batch delete builds one and reuses it rather than
+    /// listing the backups folder once per row.
+    static func removeEditorLeftovers(id: String, toTrash: Bool = false,
+                                      index: [String: [URL]]? = nil) {
+        let backups = index.map { $0[id] ?? [] }
+            ?? StoragePaths.backups(forId: id)
+        for backup in backups {
             FileDisposal.dispose(backup, toTrash: toTrash)
         }
         try? FileManager.default.removeItem(
@@ -258,7 +331,7 @@ final class LibraryStore {
     }
 
     func delete(_ song: SongRecord) {
-        deleteWithoutRefresh(song)
+        deleteWithoutRefresh(song, index: StoragePaths.backupIndex())
         refreshRecent()
     }
 
@@ -269,11 +342,14 @@ final class LibraryStore {
     /// times while the user watched it shrink a row at a time.
     func delete(_ songs: [SongRecord]) {
         guard !songs.isEmpty else { return }
-        for song in songs { deleteWithoutRefresh(song) }
+        // Listed once for the whole batch — see `removeEditorLeftovers`.
+        let index = StoragePaths.backupIndex()
+        for song in songs { deleteWithoutRefresh(song, index: index) }
         refreshRecent()
     }
 
-    private func deleteWithoutRefresh(_ song: SongRecord) {
+    private func deleteWithoutRefresh(_ song: SongRecord,
+                                      index: [String: [URL]]) {
         let toTrash = usesTrash()
         // Parts are derivatives: their rows cascade with the song row, so the
         // files must go first.
@@ -284,7 +360,9 @@ final class LibraryStore {
                     try? FileManager.default.removeItem(at: preview)
                 }
                 try? FileManager.default.removeItem(at: part.waveformURL)
-                LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash)
+                LibraryStore.removeEditorLeftovers(id: part.id,
+                                                   toTrash: toTrash,
+                                                   index: index)
                 try? partsRepo.deleteAnalysis(ownerId: part.id)
                 try? partsRepo.deleteTextDocs(ownerId: part.id)
             }
@@ -293,7 +371,8 @@ final class LibraryStore {
         }
         FileDisposal.dispose(song.fileURL, toTrash: toTrash)
         try? FileManager.default.removeItem(at: song.waveformURL)
-        LibraryStore.removeEditorLeftovers(id: song.id, toTrash: toTrash)
+        LibraryStore.removeEditorLeftovers(id: song.id, toTrash: toTrash,
+                                           index: index)
         try? repo.delete(id: song.id)
     }
 

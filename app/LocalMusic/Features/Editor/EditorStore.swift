@@ -88,7 +88,11 @@ final class EditorStore {
 
     // MARK: state
 
-    var material: Material?
+    /// The backup's existence follows the material, so every `open` path
+    /// refreshes the cached answer without having to remember to.
+    var material: Material? {
+        didSet { refreshBackupState() }
+    }
     var document = EditDocument()
     private(set) var segments: [EditSegment] = []
     private(set) var grid = EditorGrid()
@@ -98,7 +102,13 @@ final class EditorStore {
     /// The program state the file currently holds (nil = file is pristine).
     var appliedDocument: EditDocument?
 
-    var selection: EditRange?
+    var selection: EditRange? {
+        didSet {
+            guard oldValue != selection else { return }
+            let amplify = computeAmplifyDbForSelection()
+            if amplify != amplifyDbForSelection { amplifyDbForSelection = amplify }
+        }
+    }
     var cursorS: Double = 0
     var snapMode: EditorGeometry.SnapMode = .beats
     var showBeatGrid = true
@@ -127,8 +137,26 @@ final class EditorStore {
     /// A one-line result from an action that would otherwise do nothing
     /// visible. Cleared by the next edit, and after a few seconds.
     private(set) var actionNote: String?
+    /// Gated in their `didSet`-free way: `setApplyStage` / `setExportStage`
+    /// below are what the render watcher writes through.
+    ///
+    /// These are still plain `var`s because a dozen paths assign them
+    /// directly with a value that really is new (`.failed`, `.idle`,
+    /// `.uploading`). The one caller that repeats itself is `watchJob`, which
+    /// polls and used to republish an identical `.rendering` three times a
+    /// second — redrawing the apply card, its five stage tiles, the toolbar
+    /// and every row menu that reads `renderingTitle`, on every tick, for the
+    /// whole render.
     var applyStage: ApplyStage = .idle
     var exportStage: ApplyStage = .idle
+
+    func setApplyStage(_ next: ApplyStage) {
+        if next != applyStage { applyStage = next }
+    }
+
+    func setExportStage(_ next: ApplyStage) {
+        if next != exportStage { exportStage = next }
+    }
     /// The export dialog (E04) — opened from two places on the rail.
     var exportSheetOpen = false
     /// True while the user chose "notify me" and left the apply running.
@@ -147,6 +175,9 @@ final class EditorStore {
     private var snippetIntents: [String: SnippetIntent] = [:]
     /// The gesture whose changes are folding into one undo step.
     private var interactionKey: String?
+    /// A structural re-arm waiting for a drag to settle — see
+    /// `refreshPreviewAfterEdit`.
+    private var previewRearmTask: Task<Void, Never>?
     /// How many undo steps this session has registered. A slider drag must
     /// add exactly one however many frames it spans — see `perform`.
     private(set) var undoStepsRegistered = 0
@@ -186,9 +217,24 @@ final class EditorStore {
         return hasBackup ? material.backupURL : material.fileURL
     }
 
-    var hasBackup: Bool {
-        guard let material else { return false }
-        return FileManager.default.fileExists(atPath: material.backupURL.path)
+    /// Whether the pristine copy exists.
+    ///
+    /// Stored, not a `fileExists` on every read. `sourceURL` and
+    /// `sourcePeaksCacheURL` are built on it and both are read from view
+    /// bodies — including as a `.task(id:)` key, which a syscall has no
+    /// business being — so this used to be a blocking `stat` on the main
+    /// thread per pass. It can only change in four places: opening a
+    /// material, stashing the backup, applying, and reverting. Each calls
+    /// `refreshBackupState()`.
+    private(set) var hasBackup = false
+
+    /// Re-read whether the backup is on disk. The one place that syscall
+    /// happens.
+    func refreshBackupState() {
+        let next = material.map {
+            FileManager.default.fileExists(atPath: $0.backupURL.path)
+        } ?? false
+        if next != hasBackup { hasBackup = next }
     }
 
     var sourceDurationS: Double {
@@ -266,17 +312,29 @@ final class EditorStore {
     /// The seams the render will actually have. A split leaves a segment
     /// edge but no seam, so the markers read this rather than counting
     /// segment boundaries.
-    var joinTimes: [Double] {
-        EditMixPlan.joinTimes(segments: segments)
-    }
+    /// Stored, not computed: `EditMixPlan.joinTimes` is O(segments²) — it
+    /// calls `hasGap(before:in:)` inside its own loop — and three view bodies
+    /// read it on every pass, including through a selection drag. It is a
+    /// function of `segments` alone, so `rebuild()` is the honest place for
+    /// it.
+    private(set) var joinTimes: [Double] = []
 
     /// The head and tail fades as they will really render — clamped to the
     /// run that carries them, because the engine's ramps cannot span two
     /// tracks. The well draws these, not the numbers that were asked for.
-    var effectiveFades: (headS: Double, tailS: Double) {
-        EditMixPlan.effectiveFades(document: document,
-                                   sourceDuration: sourceDurationS)
+    /// Stored for the reason `joinTimes` is, and one worse: computing it ran
+    /// `EditProgram.segments` again from the top, replaying every op to
+    /// re-derive the list `segments` was already holding.
+    ///
+    /// A named `Equatable` pair rather than a tuple — a tuple cannot conform,
+    /// so a view taking one can never be proven unchanged and redraws on
+    /// every pass of its parent.
+    struct Fades: Equatable {
+        var headS: Double = 0
+        var tailS: Double = 0
     }
+
+    private(set) var effectiveFades = Fades()
 
     /// Where the head and tail fades actually land: the first and last
     /// AUDIBLE moment. Leading or trailing silence is not faded — the engine
@@ -458,9 +516,20 @@ final class EditorStore {
     }
 
     private func rebuild() {
-        segments = EditProgram.segments(sourceDuration: sourceDurationS,
-                                        ops: document.ops)
-        grid = EditorGrid.make(analysis: analysis, segments: segments)
+        let nextSegments = EditProgram.segments(sourceDuration: sourceDurationS,
+                                                ops: document.ops)
+        // Gated. Observation publishes on every *set*, not on every change, so
+        // reassigning these republished the whole segment list and the entire
+        // beat grid on each frame of an Amplify drag — and `segments` is what
+        // the well and the overview strip re-slice their waveforms from.
+        let boundariesMoved = !Self.sameBoundaries(nextSegments, segments)
+        if nextSegments != segments { segments = nextSegments }
+        // The grid is a function of the analysis and where the segment edges
+        // fall. A gain move changes neither, so it cannot change the grid.
+        if boundariesMoved || grid.isEmpty {
+            let nextGrid = EditorGrid.make(analysis: analysis, segments: segments)
+            if nextGrid != grid { grid = nextGrid }
+        }
         let duration = timelineDurationS
         cursorS = cursorS.clamped(to: 0...max(0, duration))
         if let current = selection {
@@ -471,12 +540,42 @@ final class EditorStore {
                                       end: min(current.end, duration))
             }
         }
+        refreshDerivedFromSegments()
         if document.ops.contains(where: { op in
             if case .reverse = op.kind { return true }
             return false
         }) {
             ensureReversedSource()
         }
+    }
+
+    /// Everything that follows from `segments` (and, for the amplify readout,
+    /// the selection). One place, called wherever either moves.
+    private func refreshDerivedFromSegments() {
+        let joins = EditMixPlan.joinTimes(segments: segments)
+        if joins != joinTimes { joinTimes = joins }
+        let fades = EditMixPlan.effectiveFades(document: document,
+                                               sourceDuration: sourceDurationS)
+        let nextFades = Fades(headS: fades.headS, tailS: fades.tailS)
+        if nextFades != effectiveFades { effectiveFades = nextFades }
+        let amplify = computeAmplifyDbForSelection()
+        if amplify != amplifyDbForSelection { amplifyDbForSelection = amplify }
+    }
+
+    /// Do these two segment lists cut the source in the same places?
+    ///
+    /// Compared on the edges alone, because that is all the beat grid reads —
+    /// a segment whose gain moved is the same cut.
+    private static func sameBoundaries(_ lhs: [EditSegment],
+                                       _ rhs: [EditSegment]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        for (a, b) in zip(lhs, rhs) {
+            if a.sourceStart != b.sourceStart || a.sourceEnd != b.sourceEnd
+                || a.silent != b.silent || a.reversed != b.reversed {
+                return false
+            }
+        }
+        return true
     }
 
     // MARK: mutation + undo
@@ -512,9 +611,11 @@ final class EditorStore {
     }
 
     /// A continuous gesture ended: the next change starts a fresh undo step
-    /// even if it carries the same key.
+    /// even if it carries the same key, and any structural re-arm the drag
+    /// deferred happens now.
     func endInteraction() {
         interactionKey = nil
+        if previewRearmTask != nil { rearmPreview() }
     }
 
     private func registerUndo(_ name: String, before: EditDocument,
@@ -819,7 +920,14 @@ final class EditorStore {
     /// Zero when the selection spans regions at different levels: there is
     /// no single number to show, and showing one of them would misreport the
     /// rest.
-    var amplifyDbForSelection: Double {
+    /// Stored: the Adjust tab reads this three times per pass — the radio
+    /// indicator, the readout and the slider's getter — and each read
+    /// allocated a fresh slice of the whole segment list. It is a function of
+    /// `segments` and `selection`, and both funnel through `rebuild()` and
+    /// `setSelection`.
+    private(set) var amplifyDbForSelection: Double = 0
+
+    private func computeAmplifyDbForSelection() -> Double {
         guard let selection else { return 0 }
         let covered = EditProgram.extract(segments, range: selection)
             .filter { !$0.silent }
@@ -1176,9 +1284,53 @@ final class EditorStore {
         loopWatcher = timer
     }
 
-    /// A structural edit rebuilds the schedule; keep playing from the same
-    /// timeline moment so tweaking a cut mid-listen does not restart it.
+    /// Bring the running preview in line with the document.
+    ///
+    /// Three cases, and only the third is expensive:
+    ///
+    /// - **Gain or mute only.** The nodes are already playing the right audio
+    ///   at the right time and need a new volume, which `updateGains` sets on
+    ///   the live graph. This is the common one — the first frame of an
+    ///   Amplify drag splits a segment (structural), every frame after it is
+    ///   this — and it used to take the expensive path: `play` is `stop` +
+    ///   `prepare` + `arm`, which detaches every node, reopens each file from
+    ///   disk and restarts the engine. At a slider's event rate that is a
+    ///   graph teardown about sixty times a second, which is audible as
+    ///   dropouts and holds the main thread the whole time.
+    /// - **Structural, mid-gesture.** A speed or pitch drag really does re-cut
+    ///   the timeline. Let the gesture settle first; `endInteraction` flushes
+    ///   whatever is still outstanding when the drag ends.
+    /// - **Structural, settled.** Re-arm now, from the same timeline moment so
+    ///   tweaking a cut mid-listen does not restart the track.
     private func refreshPreviewAfterEdit() {
+        guard player.state == .playing, !auditioningOriginal else { return }
+        let items = previewItems()
+        if MultiPartPlayer.Schedule(items) == player.armedSchedule {
+            cancelPreviewRearm()
+            player.updateGains(items: items)
+            return
+        }
+        guard interactionKey != nil else {
+            cancelPreviewRearm()
+            rearmPreview()
+            return
+        }
+        previewRearmTask?.cancel()
+        previewRearmTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            self?.rearmPreview()
+        }
+    }
+
+    private func cancelPreviewRearm() {
+        previewRearmTask?.cancel()
+        previewRearmTask = nil
+    }
+
+    /// Rebuild the audio graph and pick playback back up where it was.
+    private func rearmPreview() {
+        cancelPreviewRearm()
         guard player.state == .playing, !auditioningOriginal else { return }
         let position = min(player.currentPosition(),
                            max(0, timelineDurationS - 0.01))

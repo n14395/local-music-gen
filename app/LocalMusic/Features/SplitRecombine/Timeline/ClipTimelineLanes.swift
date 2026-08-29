@@ -49,11 +49,23 @@ extension View {
 /// The bar lines are the design's lane background: a repeating rule every bar,
 /// brighter every fourth, so a phrase is countable without reading the ruler.
 struct ClipTimelineGrid: View {
+    /// A named type, not the tuple this used to be.
+    ///
+    /// Tuples cannot conform to `Equatable`, so SwiftUI could never prove
+    /// this view unchanged and redrew the whole grid — every beat line across
+    /// the entire arrangement — on every pass of its parent, which during a
+    /// clip drag is every gesture event.
+    struct Overlap: Equatable {
+        var lane: Int
+        var start: Double
+        var end: Double
+    }
+
     let math: TimelineMath
     let laneCount: Int
     let laneHeight: CGFloat
     let width: CGFloat
-    let overlaps: [(lane: Int, start: Double, end: Double)]
+    let overlaps: [Overlap]
 
     var body: some View {
         Canvas { context, size in

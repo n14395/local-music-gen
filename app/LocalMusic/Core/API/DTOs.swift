@@ -540,7 +540,7 @@ enum JobStatus: String, Codable, Sendable {
     }
 }
 
-struct JobInfo: Codable, Identifiable, Sendable {
+struct JobInfo: Codable, Identifiable, Equatable, Sendable {
     var id: String { jobId }
     let jobId: String
     let groupId: String
@@ -627,7 +627,7 @@ struct JobInfo: Codable, Identifiable, Sendable {
     }
 }
 
-struct JobProgress: Codable, Sendable {
+struct JobProgress: Codable, Equatable, Sendable {
     /// Supervisor-assigned coarse stage: `loading` | `generating` | `encoding`.
     let stage: String
     /// Nullable on purpose. An adapter that genuinely does not know its
@@ -658,7 +658,7 @@ struct JobProgress: Codable, Sendable {
 /// an interpolation of the finished take. It lives under the engine's
 /// `Outputs/<job_id>/` and is deleted when the take succeeds, so the app either
 /// draws it now or keeps it explicitly.
-struct JobPreview: Codable, Sendable {
+struct JobPreview: Codable, Equatable, Sendable {
     /// Which take of a multi-take job this belongs to.
     let take: Int
     let path: String
@@ -671,7 +671,7 @@ struct JobPreview: Codable, Sendable {
     var fileURL: URL { URL(fileURLWithPath: path) }
 }
 
-struct JobResult: Codable, Sendable {
+struct JobResult: Codable, Equatable, Sendable {
     /// generate jobs only; task jobs return `artifacts` instead (contract §5.4).
     let outputs: [JobOutput]?
     let artifacts: [JobArtifact]?
@@ -679,7 +679,7 @@ struct JobResult: Codable, Sendable {
     let timings: [String: Double]
 }
 
-struct JobArtifact: Codable, Sendable {
+struct JobArtifact: Codable, Equatable, Sendable {
     let kind: String          // stem | midi | analysis | audio (open set)
     let label: String         // stem name / instrument; "preview:<label>" pairs
                               // an audition render with its same-label midi
@@ -689,7 +689,7 @@ struct JobArtifact: Codable, Sendable {
     let durationS: Double?
 }
 
-struct JobOutput: Codable, Sendable {
+struct JobOutput: Codable, Equatable, Sendable {
     let path: String
     let format: String
     let sampleRate: Int
@@ -820,7 +820,7 @@ struct LibraryVerifyFinding: Codable, Sendable, Identifiable {
 
 // MARK: - Errors
 
-struct APIErrorBody: Codable, Sendable {
+struct APIErrorBody: Codable, Equatable, Sendable {
     let code: String
     let message: String
 }

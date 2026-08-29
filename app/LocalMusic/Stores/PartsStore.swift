@@ -19,6 +19,8 @@ final class PartsStore {
     var lastError: String?
 
     private var searchTask: Task<Void, Never>?
+    /// The coalesced ingest-driven read — see `refreshSoon`.
+    private var refreshTask: Task<Void, Never>?
 
     /// As `LibraryStore.filtersChanged(from:)`, and for the same reason: a
     /// chip is a click and lands at once, the search text is a keystroke and
@@ -51,11 +53,7 @@ final class PartsStore {
             guard !Task.isCancelled, let self, self.filters == wanted else {
                 return
             }
-            self.results = answer.parts
-            self.analyses = answer.analyses
-            if self.favouriteCount != answer.favourites {
-                self.favouriteCount = answer.favourites
-            }
+            self.publish(answer)
         }
     }
 
@@ -70,7 +68,7 @@ final class PartsStore {
             favourites: Int) {
         let parts = (try? repo.parts(filters)) ?? []
         let analyses = (try? repo.analyses(ownerIds: parts.map(\.id))) ?? [:]
-        let favourites = ((try? repo.favorites()) ?? []).count
+        let favourites = (try? repo.favoriteCount()) ?? 0
         return (parts, analyses, favourites)
     }
 
@@ -88,7 +86,41 @@ final class PartsStore {
     func refresh() {
         searchTask?.cancel()
         searchTask = nil
-        let answer = Self.read(filters: filters, from: repo)
+        refreshTask?.cancel()
+        refreshTask = nil
+        publish(Self.read(filters: filters, from: repo))
+    }
+
+    /// Re-read because rows changed underneath us — the counterpart to
+    /// `LibraryStore.refreshRecentSoon`, and for the same reason.
+    ///
+    /// `refresh()` is synchronous and unbounded: every part, every analysis
+    /// attachment for them, and the favourites count. It runs on init, on
+    /// every star, rating, rename, delete and update, and on every parts
+    /// ingest — so a split landing six stems used to pay for the whole list
+    /// six times over on the main actor. Ingest paths use this instead;
+    /// clicks keep the synchronous one, which should land on the row before
+    /// the click finishes.
+    func refreshSoon() {
+        searchTask?.cancel()
+        searchTask = nil
+        refreshTask?.cancel()
+        let wanted = filters
+        let repo = self.repo
+        refreshTask = Task { [weak self] in
+            let answer = await Task.detached(priority: .userInitiated) {
+                Self.read(filters: wanted, from: repo)
+            }.value
+            guard !Task.isCancelled, let self, self.filters == wanted else {
+                return
+            }
+            self.publish(answer)
+        }
+    }
+
+    private func publish(_ answer: (parts: [PartRecord],
+                                    analyses: [String: AnalysisRecord],
+                                    favourites: Int)) {
         results = answer.parts
         analyses = answer.analyses
         if favouriteCount != answer.favourites {
@@ -171,7 +203,7 @@ final class PartsStore {
     }
 
     func delete(_ part: PartRecord) {
-        deleteWithoutRefresh(part)
+        deleteWithoutRefresh(part, index: StoragePaths.backupIndex())
         refresh()
     }
 
@@ -179,18 +211,22 @@ final class PartsStore {
     /// why one refresh rather than one per row.
     func delete(_ parts: [PartRecord]) {
         guard !parts.isEmpty else { return }
-        for part in parts { deleteWithoutRefresh(part) }
+        // Listed once for the whole batch — see `removeEditorLeftovers`.
+        let index = StoragePaths.backupIndex()
+        for part in parts { deleteWithoutRefresh(part, index: index) }
         refresh()
     }
 
-    private func deleteWithoutRefresh(_ part: PartRecord) {
+    private func deleteWithoutRefresh(_ part: PartRecord,
+                                      index: [String: [URL]]) {
         let toTrash = usesTrash()
         FileDisposal.dispose(part.fileURL, toTrash: toTrash)
         if let preview = part.previewURL {
             try? FileManager.default.removeItem(at: preview)
         }
         try? FileManager.default.removeItem(at: part.waveformURL)
-        LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash)
+        LibraryStore.removeEditorLeftovers(id: part.id, toTrash: toTrash,
+                                           index: index)
         do {
             try repo.delete(id: part.id)
         } catch {

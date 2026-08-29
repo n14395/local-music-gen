@@ -164,7 +164,13 @@ struct WorkbenchScreen: View {
         }
     }
 
-    private var isRendering: Bool { !renderingJobs.isEmpty }
+    /// Off `busy` rather than `renderingJobs` — see the note in `StudioView`.
+    /// Reading the queue itself here subscribed every lane card and the align
+    /// bar to each progress frame.
+    private var isRendering: Bool {
+        let ids = model.renderingJobIds
+        return jobs.busy.contains { ids.contains($0.id) }
+    }
     private var showsRendering: Bool { isRendering && !showingBench }
 
     var body: some View {

@@ -55,7 +55,7 @@ final class GenerationFlowTests: XCTestCase {
                                    prompt: "integration test tune",
                                    lyrics: nil, durationS: 4, count: 2,
                                    params: ["guidance_scale": .double(4.0)])
-        try await waitFor("job appears") { !env.jobsStore.active.isEmpty }
+        try await waitFor("job appears") { !env.jobsStore.trackedJobs.isEmpty }
         try await waitFor("progress arrives") {
             env.jobsStore.displayJobs.first?.progress != nil
         }
@@ -141,21 +141,21 @@ final class GenerationFlowTests: XCTestCase {
             let jobId = try XCTUnwrap(created?.jobs.first?.jobId,
                                       "submit failed: \(env.jobsStore.lastError ?? "-")")
             try await waitFor("a preview frame") {
-                env.jobsStore.active[jobId]?.preview != nil
+                env.jobsStore.job(jobId)?.preview != nil
             }
             return jobId
         }
 
         let before = env.library.recent.count
         let discarded = try await renderUntilFirstPreview()
-        let frame = try XCTUnwrap(env.jobsStore.active[discarded]?.preview)
+        let frame = try XCTUnwrap(env.jobsStore.job(discarded)?.preview)
         XCTAssertTrue(FileManager.default.fileExists(atPath: frame.path),
                       "the engine wrote a real wav for the frame")
         await env.jobsStore.cancel(discarded)
         try await waitFor("cancel lands") {
-            env.jobsStore.active[discarded]?.status == .canceled
+            env.jobsStore.job(discarded)?.status == .canceled
         }
-        XCTAssertNil(env.jobsStore.active[discarded]?.info.result,
+        XCTAssertNil(env.jobsStore.job(discarded)?.info.result,
                      "a canceled job has no result")
         XCTAssertEqual(env.library.recent.count, before,
                        "an ordinary cancel keeps nothing")
@@ -165,7 +165,7 @@ final class GenerationFlowTests: XCTestCase {
         let song = try XCTUnwrap(keptSong,
                                  "keep partial: \(env.jobsStore.lastError ?? "-")")
         try await waitFor("cancel lands") {
-            env.jobsStore.active[kept]?.status == .canceled
+            env.jobsStore.job(kept)?.status == .canceled
         }
         XCTAssertEqual(env.library.recent.count, before + 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: song.fileURL.path),

@@ -48,57 +48,75 @@ struct ClipTimelineView: View {
                      beatsPerBar: model.beatsPerBar, pxPerSecond: zoom)
     }
 
-    private var placements: [TimelineMath.Placement] {
+    /// Everything the timeline derives from the arrangement, worked out once.
+    ///
+    /// These were computed properties, and the ones that read each other
+    /// compounded: `contentWidth` rebuilt `placements`, so did `frames`, so
+    /// did `draggedFrames` through `frames`, and the drag gesture rebuilt the
+    /// whole `frames` dictionary to read one clip's width. `muteMap` was
+    /// worse — it was read *inside* the `ForEach`, so its two dictionaries
+    /// over every lane and clip were rebuilt once per clip, making the pass
+    /// quadratic. All of it on a body that re-runs on every gesture event,
+    /// because the drag session is `@State`.
+    struct Derived {
+        var placements: [TimelineMath.Placement] = []
+        var contentWidth: CGFloat = 0
+        var frames: [String: CGRect] = [:]
+        var overlaps: [ClipTimelineGrid.Overlap] = []
+        var muteMap: [String: Bool] = [:]
+    }
+
+    private func derive(math: TimelineMath) -> Derived {
         let laneIndex = Dictionary(uniqueKeysWithValues:
                                     model.lanes.enumerated().map { ($1.id, $0) })
-        return model.clips.map { clip in
+        // One length per clip, reused by the placements and the overlap scan.
+        let lengths = Dictionary(uniqueKeysWithValues:
+                                    model.clips.map { ($0.id,
+                                                       model.lengthBeats(of: $0)) })
+        let placements = model.clips.map { clip in
             TimelineMath.Placement(id: clip.id,
                                    laneIndex: laneIndex[clip.laneId] ?? 0,
                                    startBeats: clip.startBeats,
-                                   lengthBeats: model.lengthBeats(of: clip))
+                                   lengthBeats: lengths[clip.id] ?? 0)
         }
-    }
-
-    private var contentBeats: Double {
-        TimelineMath.contentBeats(placements, trailingBars: 2,
-                                  beatsPerBar: model.beatsPerBar)
-    }
-
-    private var contentWidth: CGFloat { math.width(beats: contentBeats) }
-
-    private var frames: [String: CGRect] {
-        Dictionary(uniqueKeysWithValues:
-                    math.frames(placements, laneHeight: Self.laneHeight,
-                                clipInset: Self.clipInset)
+        let contentBeats = TimelineMath.contentBeats(
+            placements, trailingBars: 2, beatsPerBar: model.beatsPerBar)
+        let frames = Dictionary(uniqueKeysWithValues:
+                                    math.frames(placements,
+                                                laneHeight: Self.laneHeight,
+                                                clipInset: Self.clipInset)
             .map { ($0.id, $0.rect) })
-    }
-
-    /// Overlapping spans per lane, for the grid's hatching.
-    private var overlaps: [(lane: Int, start: Double, end: Double)] {
-        var out: [(lane: Int, start: Double, end: Double)] = []
+        let clipsByLane = Dictionary(grouping: model.clips, by: \.laneId)
+        var overlaps: [ClipTimelineGrid.Overlap] = []
         for (index, lane) in model.lanes.enumerated() {
-            let spans = model.clips.filter { $0.laneId == lane.id }
-                .map { (start: $0.startBeats, length: model.lengthBeats(of: $0)) }
+            let spans = (clipsByLane[lane.id] ?? [])
+                .map { (start: $0.startBeats, length: lengths[$0.id] ?? 0) }
             for range in TimelineMath.overlaps(inLane: spans) {
-                out.append((index, range.start, range.end))
+                overlaps.append(ClipTimelineGrid.Overlap(
+                    lane: index, start: range.start, end: range.end))
             }
         }
-        return out
-    }
-
-    private var muteMap: [String: Bool] {
-        WorkbenchModel.effectivelyMuted(lanes: model.lanes, clips: model.clips)
+        return Derived(placements: placements,
+                       contentWidth: math.width(beats: contentBeats),
+                       frames: frames, overlaps: overlaps,
+                       muteMap: WorkbenchModel.effectivelyMuted(
+                        lanes: model.lanes, clips: model.clips))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Once per pass, and threaded down from here. Nothing below may go
+        // back to the model for geometry.
+        let math = self.math
+        let derived = derive(math: math)
+        return VStack(spacing: 0) {
             transport
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: 0) {
                     laneHeaders
                     ScrollView(.horizontal) {
                         VStack(alignment: .leading, spacing: 0) {
-                            ClipTimelineRuler(math: math, width: contentWidth,
+                            ClipTimelineRuler(math: math,
+                                              width: derived.contentWidth,
                                               onScrub: { beats in
                                                   playheadBeats = beats
                                                   if preview.isPlaying {
@@ -111,8 +129,9 @@ struct ClipTimelineView: View {
                                 ClipTimelineGrid(
                                     math: math, laneCount: model.lanes.count,
                                     laneHeight: Self.laneHeight,
-                                    width: contentWidth, overlaps: overlaps)
-                                clipLayer
+                                    width: derived.contentWidth,
+                                    overlaps: derived.overlaps)
+                                clipLayer(derived)
                                 playhead
                             }
                             .dropDestination(for: String.self) { ids, _ in
@@ -215,23 +234,23 @@ struct ClipTimelineView: View {
 
     // MARK: layers
 
-    private var clipLayer: some View {
+    private func clipLayer(_ derived: Derived) -> some View {
         ClipTimelineLayout(
-            frames: draggedFrames,
-            contentSize: CGSize(width: contentWidth,
+            frames: draggedFrames(derived),
+            contentSize: CGSize(width: derived.contentWidth,
                                 height: CGFloat(max(model.lanes.count, 1))
                                     * Self.laneHeight)
         ) {
             ForEach(model.clips) { clip in
                 ClipView(clip: clip, plan: model.plan(for: clip),
                          selected: selection.contains(clip.id),
-                         muted: muteMap[clip.id] ?? clip.muted,
+                         muted: derived.muteMap[clip.id] ?? clip.muted,
                          peaks: peaksHandle(for: clip),
                          showsWaveform: showsWaveforms,
                          fadeInFraction: fadeFraction(clip, clip.fadeInS),
                          fadeOutFraction: fadeFraction(clip, clip.fadeOutS))
                     .clipTimelineID(clip.id)
-                    .gesture(dragGesture(for: clip))
+                    .gesture(dragGesture(for: clip, derived: derived))
                     .contextMenu { clipMenu(clip) }
             }
         }
@@ -240,8 +259,8 @@ struct ClipTimelineView: View {
     /// Frames with the in-flight drag applied. The model is NOT written during
     /// a drag: an @Observable write invalidates every view reading `clips`, so
     /// mutating per frame drops the whole timeline to single-digit fps.
-    private var draggedFrames: [String: CGRect] {
-        var out = frames
+    private func draggedFrames(_ derived: Derived) -> [String: CGRect] {
+        var out = derived.frames
         guard let drag, let rect = out[drag.clipId] else { return out }
         switch drag.grab {
         case .body:
@@ -262,11 +281,11 @@ struct ClipTimelineView: View {
     /// One gesture for both click and drag: a DragGesture with a minimum
     /// distance would swallow plain clicks, and a separate tap gesture next to
     /// it never gets a look in.
-    private func dragGesture(for clip: WorkbenchModel.Clip)
-        -> some Gesture {
+    private func dragGesture(for clip: WorkbenchModel.Clip,
+                            derived: Derived) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                let width = frames[clip.id]?.width ?? 0
+                let width = derived.frames[clip.id]?.width ?? 0
                 if drag == nil {
                     let grab = ClipDrag.grab(atX: value.startLocation.x,
                                              width: width)
