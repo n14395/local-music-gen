@@ -78,11 +78,19 @@ enum ModelListLayout {
     ///
     /// The `seen` guard is for a catalog that names a cycle. It cannot be
     /// right, but a hang is worse than a model promoted to a base.
+    ///
+    /// A cycle promotes the model to its *own* base, which is the only answer
+    /// that cannot lose a row. Stopping at whatever the walk had reached was
+    /// worse than it looked: in a two-model cycle `x`↔`y`, `x` resolved to
+    /// `y` and `y` resolved to `x`, so neither was ever its own base, `bases`
+    /// came out empty, and both models vanished from the list entirely.
+    /// Every other rule in this file is a "don't lose a row" rule; this one
+    /// was dropping two.
     static func rootId(of model: ModelInfo, in byId: [String: ModelInfo]) -> String {
         var current = model
         var seen: Set<String> = [model.id]
-        while let parent = current.variantOf, let next = byId[parent],
-              seen.insert(parent).inserted {
+        while let parent = current.variantOf, let next = byId[parent] {
+            guard seen.insert(parent).inserted else { return model.id }
             current = next
         }
         return current.id

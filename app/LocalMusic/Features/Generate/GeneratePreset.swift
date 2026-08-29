@@ -113,13 +113,25 @@ struct GeneratePreset: Equatable, Identifiable, Sendable {
     /// How many takes to ask for. Four is the ceiling most models declare and
     /// the point of the two exploration cards.
     var takes: Int?
-    /// Read the tempo and key of a track the user picks, and carry them in.
-    var readsSource = false
-    /// Feed the picked track's *audio* into this param of the arriving model
-    /// (implies `readsSource` for the picker; the tempo-and-key prompt line
-    /// is skipped — the model hears the track itself). This is the door for
-    /// cards like vocals2music, whose whole point is a specific audio input.
+    /// Read the tempo and key of a track the user picks, and carry them in as
+    /// *words*. The model never hears the track.
+    var readsMeasurements = false
+    /// Feed the picked track's *audio* into this param of the arriving model.
+    /// The tempo-and-key prompt line is skipped — the model hears the track
+    /// itself, so writing "132 bpm" into the prompt would be describing audio
+    /// it is already listening to. This is the door for cards like
+    /// vocals2music, whose whole point is a specific audio input.
     var sourceParamKey: String?
+
+    /// Whether opening this card opens a source picker.
+    ///
+    /// Computed, and that is the point: `sourceParamKey`'s contract has always
+    /// been that it implies a picker, but the implication was written out by
+    /// hand at each of the five cards that name one. Five copies of a rule is
+    /// five chances to forget it — and `readsSource` then meant two different
+    /// things depending on which call site was asking, which is what
+    /// `readsMeasurements` is now for.
+    var readsSource: Bool { readsMeasurements || sourceParamKey != nil }
     /// One line above the composer explaining what arriving here changed.
     var notice: String?
 }
@@ -199,7 +211,7 @@ extension GeneratePreset {
         GeneratePreset(
             id: "gen-fit-track",
             need: GenerateNeed(),
-            readsSource: true,
+            readsMeasurements: true,
             notice: "Tempo and key read from the track you picked and written "
                 + "into the prompt. Nothing of its audio is used."),
 
@@ -223,7 +235,6 @@ extension GeneratePreset {
             need: GenerateNeed(lyrics: true, prefers: ["diffsynthace"],
                                requiresParam: "accompany_audio"),
             lyricsSeed: "[verse]\n",
-            readsSource: true,
             sourceParamKey: "accompany_audio",
             notice: "Your vocal is kept exactly as sung; the model composes "
                 + "the band around it. Pasting the sung words as lyrics "
@@ -233,7 +244,6 @@ extension GeneratePreset {
             id: "edit-with-words",
             need: GenerateNeed(prefers: ["melodyflow"],
                                requiresParam: "edit_strength"),
-            readsSource: true,
             sourceParamKey: "src_audio",
             notice: "Describe the change; the model rewrites the audio "
                 + "toward the words. Structure and tempo survive in "
@@ -242,7 +252,6 @@ extension GeneratePreset {
             id: "vamp-loop",
             need: GenerateNeed(prefers: ["vampnet"],
                                requiresParam: "periodic_prompt"),
-            readsSource: true,
             sourceParamKey: "src_audio",
             notice: "Vamping keeps the loop's identity token by token and "
                 + "re-plays the material between the beats it pins. "
@@ -252,7 +261,6 @@ extension GeneratePreset {
             need: GenerateNeed(lyrics: true, prefers: ["songgen"],
                                requiresParam: "ref_voice"),
             lyricsSeed: "",
-            readsSource: true,
             sourceParamKey: "ref_voice",
             notice: "The track you picked is the VOICE reference — a few "
                 + "clean seconds are enough. Use your own recording, or "
@@ -262,7 +270,6 @@ extension GeneratePreset {
             id: "style-morph",
             need: GenerateNeed(prefers: ["magentart"],
                                requiresParam: "style_audio_b"),
-            readsSource: true,
             sourceParamKey: "style_audio",
             notice: "The track you picked is where the stream STARTS. "
                 + "Set the morph target below — a second clip or a "

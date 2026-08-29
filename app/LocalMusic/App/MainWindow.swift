@@ -659,7 +659,7 @@ struct MainWindow: View {
             // hears the source; this model does, so writing "132 bpm" into
             // the prompt would be describing audio it is already listening to.
             audioParams[key] = material.fileURL
-        } else if preset.readsSource, let sourceId,
+        } else if preset.readsMeasurements, let sourceId,
                   let measured = musicalMeta(of: sourceId) {
             // The track's own words, not its audio: this is a *description*
             // of what to make, and the model never hears the reference.

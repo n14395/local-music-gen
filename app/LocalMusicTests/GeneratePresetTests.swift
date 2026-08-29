@@ -112,18 +112,57 @@ final class GeneratePresetTests: XCTestCase {
     /// The shelf's whole premise: these start from a sentence. A slot would be
     /// a source picker with nothing to pick.
     ///
+    /// Stated against the preset rather than against a list of ids. It used to
+    /// name `gen-fit-track` as the sole exception, which was true until
+    /// `gen-my-voice` arrived — a card that generates a *new* song from words
+    /// and takes the picked track as a voice reference, so it belongs on this
+    /// shelf and genuinely uses what it asks for. An id list cannot tell those
+    /// two cases apart; "does the preset consume a source" can, and cannot
+    /// drift the way the list did.
+    ///
     /// The plan cards are the exception the premise allows for: two of them
     /// read a *finished* take to show (or re-render) the plan behind it, which
     /// is material they genuinely use.
-    func testGenerateCardsCarryNoSourceExceptTheOneThatMeasuresOne() {
+    func testGenerateCardsCarryNoSourceTheyCannotUse() {
+        var examined = 0
         for recipe in RecipeCatalog.all
         where recipe.category == .generate && !recipe.isPlanCard {
-            if recipe.id == "gen-fit-track" {
-                XCTAssertEqual(recipe.slots.count, 1)
+            examined += 1
+            // A card with no preset behind it — `gen-compare-models` runs its
+            // own engine — has nothing that could read a source at all.
+            guard case .generate(let preset) = recipe.engine else {
+                XCTAssertTrue(recipe.slots.isEmpty,
+                              "\(recipe.id) has no preset to read a source "
+                              + "with, so it must not ask for one")
+                continue
+            }
+            if preset.readsSource {
+                XCTAssertEqual(recipe.slots.count, 1,
+                               "\(recipe.id) reads a source, so it needs "
+                               + "exactly one slot to pick it with")
             } else {
                 XCTAssertTrue(recipe.slots.isEmpty,
                               "\(recipe.id) asks for material it cannot use")
             }
+        }
+        // A `where` clause that stopped matching would leave every assertion
+        // above unrun and the test still green.
+        XCTAssertEqual(examined, 15, "the Generate shelf changed size")
+    }
+
+    /// …and the converse, so a slot cannot be added to a card that would
+    /// silently ignore what was picked.
+    func testEveryGenerateSlotIsReadByItsPreset() {
+        for recipe in RecipeCatalog.all
+        where recipe.category == .generate && !recipe.isPlanCard
+            && !recipe.slots.isEmpty {
+            guard case .generate(let preset) = recipe.engine else {
+                return XCTFail("\(recipe.id) opens a picker with no preset "
+                               + "to hand the result to")
+            }
+            XCTAssertTrue(preset.readsSource,
+                          "\(recipe.id) opens a picker and then drops the "
+                          + "track that was picked")
         }
     }
 
@@ -139,10 +178,34 @@ final class GeneratePresetTests: XCTestCase {
         }
     }
 
-    /// Only the card that says it reads a track may open a picker.
-    func testOnlyTheFitCardReadsItsSource() {
-        let reading = GeneratePreset.all.filter(\.readsSource).map(\.id)
-        XCTAssertEqual(reading, ["gen-fit-track"])
+    /// Only the fit card reads a track's *measurements* — its tempo and key,
+    /// written into the prompt as words, with none of its audio used.
+    ///
+    /// This is what the assertion was always about. It was written against
+    /// `readsSource`, which at the time meant only this; the audio doors then
+    /// set the same flag to get themselves a picker, and the two meanings
+    /// collapsed into one. They are separate properties now, and this pins
+    /// the one it meant.
+    func testOnlyTheFitCardReadsItsSourcesMeasurements() {
+        let measuring = GeneratePreset.all.filter(\.readsMeasurements).map(\.id)
+        XCTAssertEqual(measuring, ["gen-fit-track"])
+    }
+
+    /// A picker opens for the fit card and for every door that feeds the
+    /// picked track into a model param — and for nothing else.
+    func testTheCardsThatOpenAPickerAreTheOnesThatUseWhatIsPicked() {
+        let picking = Set(GeneratePreset.all.filter(\.readsSource).map(\.id))
+        XCTAssertEqual(picking, ["gen-fit-track", "gen-my-voice",
+                                 "vocals2music", "edit-with-words",
+                                 "vamp-loop", "style-morph"])
+    }
+
+    /// The implication `sourceParamKey` has always claimed, now that it is the
+    /// type's job rather than five hand-written copies of it.
+    func testFeedingAParamImpliesAPicker() {
+        for preset in GeneratePreset.all where preset.sourceParamKey != nil {
+            XCTAssertTrue(preset.readsSource, preset.id)
+        }
     }
 
     /// The shelf is first in the gallery, because it is the only one that
@@ -284,8 +347,20 @@ final class TrackTransformTests: XCTestCase {
     func testTheSpecialistCardsNameRealModels() {
         let preferred = RecipeCatalog.all.flatMap(\.prefersModelIds)
         XCTAssertEqual(Set(preferred),
-                       ["transcribe-swiftf0", "transcribe-transkun",
-                        "transcribe-basicpitch", "caption-lpmusiccaps",
-                        "tag-clap", "lyrics-whisper-turbo"])
+                       ["analysis-chords-btc",
+                        "analysis-squim",
+                        "caption-lpmusiccaps",
+                        "cleanup-uvr-deecho-dereverb",
+                        "cleanup-uvr-denoise",
+                        "compose-anticipation",
+                        "compose-anticipation-medium",
+                        "lyrics-whisper-turbo",
+                        "separation-uvr-karaoke",
+                        "tag-clap",
+                        "tag-essentia-discogs",
+                        "transcribe-basicpitch",
+                        "transcribe-bytedance-piano",
+                        "transcribe-swiftf0",
+                        "transcribe-transkun"])
     }
 }
