@@ -29,13 +29,17 @@ struct ModelsScreen: View {
     /// rebuilt from scratch on every navigation — kept as local state, the
     /// rail would shut itself every time you nipped over to the Library.
     @Binding var inspectedId: String?
+    /// Bound to the shell rather than held here, like `requirement` and
+    /// `inspectedId` above and for a third reason as well as theirs: File's
+    /// "Add Model from Hugging Face…" raises this sheet from any screen, and
+    /// a flag private to Models could not be reached from a menu.
+    @Binding var showAddModel: Bool
     /// Open an Actions card named in the properties rail. Absent where the
     /// screen has no route to Actions — the rail then just lists them.
     var onOpenAction: ((Recipe) -> Void)?
 
     @State private var licenseTarget: ModelInfo?
     @State private var deleteTarget: ModelInfo?
-    @State private var showAddModel = false
     @State private var filter = ""
     @FocusState private var filterFocused: Bool
     @State private var selectedTags: Set<String> = []
@@ -92,10 +96,10 @@ struct ModelsScreen: View {
             .filter { requirement != nil
                 || ModelTagFilter.matches($0, selection: selectedTags) }
             .map(\.id))
-        let inFlight = Set(catalog.models
-            .filter { downloads.info(forModel: $0.id) != nil }
-            .map(\.id))
-        return matched.union(inFlight)
+        // The store's own set rather than a scan of the catalog against it:
+        // the layout only ever asks this set whether it *contains* an id, so an
+        // id for a model the catalog has not got costs nothing.
+        return matched.union(downloads.downloadingModelIds)
     }
 
     /// This Mac's memory. Shown, not filtered on: the section header quotes it
@@ -105,20 +109,8 @@ struct ModelsScreen: View {
 
     /// Base ids of anything with bytes in flight.
     private var downloadingBaseIds: Set<String> {
-        let inFlight = Set(catalog.models
-            .filter { downloads.info(forModel: $0.id) != nil }
-            .map(\.id))
-        return ModelListLayout.baseIds(of: inFlight, in: catalog.models)
-    }
-
-    /// What the list is actually showing, which is not always what the toggle
-    /// was last set to: a requirement narrows to models that are frequently
-    /// unfeatured, and a download in the long tail holds its section open.
-    private var isExpanded: Bool {
-        showAllModels || requirement != nil
-            || ModelListLayout.holdsTailOpen(
-                models: catalog.models,
-                downloadingBaseIds: downloadingBaseIds)
+        ModelListLayout.baseIds(of: downloads.downloadingModelIds,
+                                in: catalog.models)
     }
 
     /// Deliberately *not* filtered on memory. The design's one downloading row
@@ -131,13 +123,75 @@ struct ModelsScreen: View {
         ModelListLayout.recommendedIds(in: catalog.models)
     }
 
-    private var plan: ModelListPlan {
+    // MARK: - The plan, and when it is stale
+
+    /// The list as it will be drawn, plus the disclosure state that shaped it.
+    /// The two travel together because they are one walk of the catalog: the
+    /// expansion decides which variants the plan contains, and asking for it
+    /// separately meant scanning the catalog a second time to get the same
+    /// answer.
+    private struct ListPlan {
+        let plan: ModelListPlan
+        /// What the list is actually showing, which is not always what the
+        /// toggle was last set to: a requirement narrows to models that are
+        /// frequently unfeatured, and a download in the long tail holds its
+        /// section open.
+        let isExpanded: Bool
+    }
+
+    /// Everything the plan is a function of, as one comparable value.
+    ///
+    /// Building the plan walks the catalog several times over — a tokenised
+    /// search match per model, the variant chains, the sort — and `body` ran
+    /// all of it on every pass, including the twice-a-second ones a running
+    /// download causes. Not one of these inputs moves while bytes do, so the
+    /// plan is kept between passes and this is what says when it is stale.
+    private struct PlanKey: Equatable {
+        let catalogVersion: Int
+        let filter: String
+        let tags: Set<String>
+        let onlyInstalled: Bool
+        let requirement: ModelRequirement?
+        let showAll: Bool
+        /// Which models are downloading, not how far along they are: a
+        /// download joins the list and can hold the tail open, and both of
+        /// those are settled the moment it starts.
+        let downloading: Set<String>
+    }
+
+    private var planKey: PlanKey {
+        PlanKey(catalogVersion: catalog.version, filter: filter,
+                tags: selectedTags, onlyInstalled: onlyInstalled,
+                requirement: requirement, showAll: showAllModels,
+                downloading: downloads.downloadingModelIds)
+    }
+
+    @State private var planCache: (key: PlanKey, value: ListPlan)?
+
+    private func buildPlan() -> ListPlan {
         // Always expanded under a requirement: the model you were sent for is
         // frequently an unfeatured build (the DiT variants that serve a style
         // mode nest under a base, and the separation models are not featured
         // at all), and a list that hides it defeats the whole errand.
-        ModelListLayout.plan(models: catalog.models, matching: matchingIds,
-                             recommended: recommendedIds, expanded: isExpanded)
+        let expanded = showAllModels || requirement != nil
+            || ModelListLayout.holdsTailOpen(
+                models: catalog.models,
+                downloadingBaseIds: downloadingBaseIds)
+        return ListPlan(
+            plan: ModelListLayout.plan(models: catalog.models,
+                                       matching: matchingIds,
+                                       recommended: recommendedIds,
+                                       expanded: expanded),
+            isExpanded: expanded)
+    }
+
+    private var listPlan: ListPlan {
+        if let planCache, planCache.key == planKey { return planCache.value }
+        // Built rather than cached here, because `body` must not write state.
+        // The `.onChange` fills the cache a beat later; until it does the plan
+        // is arrived at exactly the way it always was, so a keystroke in the
+        // filter box is never a frame behind the list it filters.
+        return buildPlan()
     }
 
     private func clearFilters() {
@@ -170,10 +224,13 @@ struct ModelsScreen: View {
             }
         }
         .background(Bench.Palette.windowBackground)
-        .background {
-            Button("") { filterFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
+        // ⌘F is the Edit menu's item now, not a hidden button: one item that
+        // names where it will land ("Find in Models") instead of four
+        // invisible ones that claimed the key with nothing to show for it.
+        .focusedSceneValue(\.searchCommand,
+                           SearchCommand(scope: "Models") { filterFocused = true })
+        .onChange(of: planKey, initial: true) { _, key in
+            planCache = (key: key, value: buildPlan())
         }
         .task { await catalog.refresh() }
         .sheet(isPresented: $showAddModel) {
@@ -294,19 +351,19 @@ struct ModelsScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        let plan = self.plan
+        let shown = listPlan
         if catalog.models.isEmpty {
             placeholder
-        } else if plan.recommended.isEmpty && plan.other.isEmpty {
+        } else if shown.plan.recommended.isEmpty && shown.plan.other.isEmpty {
             noMatches
         } else {
-            list(plan)
+            list(shown)
         }
     }
 
-    private func list(_ plan: ModelListPlan) -> some View {
+    private func list(_ shown: ListPlan) -> some View {
         ScrollViewReader { proxy in
-            listBody(plan)
+            listBody(shown)
                 // One candidate is an answer rather than a choice, so it is
                 // put in front of you. With more than one it stays a list:
                 // five separation models differ in size, speed and licence,
@@ -323,14 +380,17 @@ struct ModelsScreen: View {
         }
     }
 
-    private func listBody(_ plan: ModelListPlan) -> some View {
+    private func listBody(_ shown: ListPlan) -> some View {
         // Read here, where `body` is what is running, so the dependency is
-        // registered on this view rather than lost inside the lazy stack.
-        let active = downloads.downloads
+        // registered on this view rather than lost inside the lazy stack. The
+        // *projection* rather than the raw dictionary: this read is what
+        // decides how often the whole screen is rebuilt, so it has to be a
+        // value that moves when the rows do and not when the bytes do.
+        let active = downloads.modelDownloads
         let failures = downloads.failures
         func rowView(_ listRow: ModelListRow) -> some View {
             row(listRow,
-                download: active.values.first { $0.modelId == listRow.model.id },
+                download: active[listRow.model.id],
                 failure: failures[listRow.model.id])
         }
         return ScrollView {
@@ -340,20 +400,20 @@ struct ModelsScreen: View {
                     .eyebrow()
                     .padding(.horizontal, 2).padding(.bottom, 4)
 
-                if plan.recommended.isEmpty {
+                if shown.plan.recommended.isEmpty {
                     Text("No featured model matches these filters.")
                         .font(Bench.Typo.secondary)
                         .foregroundStyle(Bench.Palette.textFaint)
                         .padding(.horizontal, 2).padding(.bottom, 6)
                 } else {
-                    ForEach(plan.recommended) { rowView($0) }
+                    ForEach(shown.plan.recommended) { rowView($0) }
                 }
 
-                if plan.hidden > 0 {
-                    everythingElseDivider(plan)
+                if shown.plan.hidden > 0 {
+                    everythingElseDivider(shown)
                 }
-                if isExpanded {
-                    ForEach(plan.other) { rowView($0) }
+                if shown.isExpanded {
+                    ForEach(shown.plan.other) { rowView($0) }
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
@@ -361,22 +421,23 @@ struct ModelsScreen: View {
         }
     }
 
-    private func everythingElseDivider(_ plan: ModelListPlan) -> some View {
+    private func everythingElseDivider(_ shown: ListPlan) -> some View {
         HStack(spacing: 10) {
-            Text("EVERYTHING ELSE · \(plan.hidden)").eyebrow()
+            Text("EVERYTHING ELSE · \(shown.plan.hidden)").eyebrow()
             Rectangle().fill(Bench.Palette.hairline).frame(height: 1)
             // Reads the state the list is really in, not the stored
             // preference: while a download holds this section open, a control
             // still offering "Show all" would be describing a section that is
             // already open, and one that closed it would hide the only place
             // to pause or cancel the transfer.
-            let heldOpen = isExpanded && !showAllModels
+            let heldOpen = shown.isExpanded && !showAllModels
             Button {
                 showAllModels.toggle()
             } label: {
                 HStack(spacing: 5) {
-                    Text(isExpanded ? "Show less" : "Show all")
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    Text(shown.isExpanded ? "Show less" : "Show all")
+                    Image(systemName: shown.isExpanded ? "chevron.up"
+                                                       : "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                 }
                 .font(Bench.Typo.secondary)

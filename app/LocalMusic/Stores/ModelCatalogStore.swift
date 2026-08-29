@@ -155,16 +155,46 @@ final class ModelCatalogStore {
         acceptedLicenses.remove(modelId)
     }
 
+    /// Re-read the catalog from the engine.
+    ///
+    /// Coalesced, because one completed download emits both
+    /// `download.completed` and `models.changed` — and a multi-repo download
+    /// emits `models.changed` again per repo — so the shell asked for the
+    /// catalog two or three times in a row. Each ask is a filesystem walk on
+    /// the engine side and a half-megabyte decode here; the second one can
+    /// only return what the first is already fetching.
+    ///
+    /// A caller that arrives mid-flight waits for the in-flight answer rather
+    /// than starting a second fetch, so `await refresh()` still means "the
+    /// catalog is current" when it returns.
     func refresh() async {
+        if let inFlight { return await inFlight.value }
+        guard client != nil else { return }
+        let task = Task { [weak self] in await self?.performRefresh() ?? () }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    private func performRefresh() async {
         guard let client else { return }
         do {
-            models = try await client.models()
+            let fetched = try await client.models()
+            // Gated: the catalog is usually identical to the one already
+            // held — the events that trigger a refresh mostly change one
+            // model's install state, and several of them fire per download.
+            // Assigning regardless bumped `version` and invalidated every
+            // screen reading the catalog for no change at all.
+            if fetched != models { models = fetched }
             lastError = nil
             hasLoaded = true
         } catch {
             lastError = error.localizedDescription
         }
     }
+
+    /// The refresh currently in flight, if any — see `refresh()`.
+    @ObservationIgnored private var inFlight: Task<Void, Never>?
 
     func startDownload(_ model: ModelInfo) async {
         guard let client else { return }

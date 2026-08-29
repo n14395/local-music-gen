@@ -25,6 +25,13 @@ struct SplitActionView: View {
     let onBack: () -> Void
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and it
+    /// was being asked for from inside `body` — so both queries ran again on
+    /// every redraw, including every drag of a parameter slider. The line
+    /// only depends on the material, so it is resolved once with it.
+    @State private var sourceMeta: String?
     @State private var selectedModelId: String?
     @State private var formState = ParameterFormState(specs: [])
     @State private var choosing = false
@@ -33,9 +40,23 @@ struct SplitActionView: View {
     @State private var alsoTranscribe = false
     @State private var submitting = false
     @State private var browsingT3K = false
+    /// The kinds the chosen model has produced before — see
+    /// `refreshPriorKinds`, which reads the whole parts table to answer it.
+    ///
+    /// State rather than a computed property because the commit title, the
+    /// expected outputs and the rail explanation all want the answer, so a
+    /// single redraw of this page was reading the entire table two to four
+    /// times over.
+    @State private var priorKinds: [String] = []
     @AppStorage("analysisToolsCardDismissed")
     private var analysisCardDismissed = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     // MARK: models
 
@@ -78,9 +99,7 @@ struct SplitActionView: View {
             }
             ActionSourceCard(
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "Choose a song from your library, or import audio.",
                 importTitle: "Import audio…",
@@ -112,12 +131,28 @@ struct SplitActionView: View {
         } rail: {
             ActionRail(outputs: expectedOutputs,
                        explanation: railExplanation,
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id],
+                       lastRun: runLog.runs[recipe.id],
                        onReplay: replay)
         }
         .onAppear(perform: restore)
-        .onChange(of: selectedModelId) { rebuildForm() }
-        .onChange(of: catalog.version) { rebuildForm() }
+        .onChange(of: source) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
+        .onChange(of: selectedModelId) {
+            rebuildForm()
+            refreshPriorKinds()
+        }
+        .onChange(of: catalog.version) {
+            rebuildForm()
+            refreshPriorKinds()
+        }
+        // A split that lands while this page is still up changes what the
+        // model is known to produce, and the rail should say so.
+        .onChange(of: parts.results) { refreshPriorKinds() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: recipe.slots.first?.label ?? "Song",
@@ -303,14 +338,17 @@ struct SplitActionView: View {
     /// whatever the Library › Parts filter bar last narrowed it to, and those
     /// filters are not reset on leaving the Library. Filtered to "Vocals", the
     /// whole rail would claim this model only ever produces one part.
-    private var priorKinds: [String] {
-        guard let model else { return [] }
+    private func refreshPriorKinds() {
+        guard let model else {
+            priorKinds = []
+            return
+        }
         let all = (try? parts.repository.parts(.init())) ?? []
         var seen: [String] = []
         for part in all where part.modelId == model.id {
             if !seen.contains(part.kind) { seen.append(part.kind) }
         }
-        return seen
+        priorKinds = seen
     }
 
     private var expectedOutputs: [ActionOutput] {
@@ -380,6 +418,7 @@ struct SplitActionView: View {
                 }) ?? eligibleModels.first?.id
         }
         rebuildForm()
+        refreshPriorKinds()
     }
 
     // MARK: - Submit

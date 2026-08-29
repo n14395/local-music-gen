@@ -157,6 +157,29 @@ struct StudioView: View {
         // Coming back to a finished queue should not leave you stranded on an
         // empty rendering pane.
         .onChange(of: isRendering) { if !isRendering { showingComposer = false } }
+        // ⌘↩ belongs to the Render menu's item now rather than to the button
+        // alone, so it appears somewhere readable and is correctly named for
+        // whichever screen owns it. The button is still the button.
+        .focusedSceneValue(\.runCommand, runCommand)
+    }
+
+    /// What ⌘↩ does here, for the menubar.
+    ///
+    /// nil while the composer is not the thing on screen — watching a render
+    /// is not a state in which "Generate" means anything, and the item dims
+    /// rather than firing a second batch at a queue that is already busy with
+    /// the first.
+    private var runCommand: RunCommand? {
+        guard let model, !showsRendering else { return nil }
+        let needsWords = model.capabilities.needsLyrics
+            && lyrics.trimmingCharacters(in: .whitespaces).isEmpty
+        let emptyPrompt = prompt.trimmingCharacters(in: .whitespaces).isEmpty
+        let blocked = emptyPrompt || missingRequiredAudio(model) != nil
+            || needsWords
+        return RunCommand(
+            title: count > 1 ? "Generate \(count) Takes" : "Generate",
+            isEnabled: !blocked,
+            run: { submit(model) })
     }
 
     // MARK: - Top bar
@@ -644,7 +667,9 @@ struct StudioView: View {
             .buttonStyle(.benchPrimary)
             .disabled(blocked)
             .opacity(blocked ? 0.5 : 1)
-            .keyboardShortcut(.return, modifiers: .command)
+            // No `keyboardShortcut` here any more: the Render menu's item
+            // carries ⌘↩ and would shadow this one anyway, and two claimants
+            // on one key is a thing to reason about rather than to ship.
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(estimateText(model))

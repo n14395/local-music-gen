@@ -27,6 +27,12 @@ struct CompareActionView: View {
     @State private var durationS: Double = 15
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var eligible: [ModelInfo] {
         GenerateNeed().eligible(catalog.models)
@@ -88,7 +94,7 @@ struct CompareActionView: View {
                        explanation: "One take per model, all on the same "
                             + "prompt, seed and length — so the only thing "
                             + "that differs between them is the model.",
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear {
             // Two is the point of the card, so it opens with two ticked
@@ -97,6 +103,8 @@ struct CompareActionView: View {
             snapDuration()
         }
         .onChange(of: picked) { snapDuration() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
     }
 
     private var promptCard: some View {

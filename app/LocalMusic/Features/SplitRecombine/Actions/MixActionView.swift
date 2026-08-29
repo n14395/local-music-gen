@@ -21,6 +21,14 @@ struct MixActionView: View {
     let onBack: () -> Void
 
     @State private var filled: [String: [PickedMaterial]] = [:]
+    /// Each picked material's second line, keyed by material id.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and every
+    /// slot card was asking for it from inside `body` — so a four-slot mix
+    /// re-ran eight queries on every redraw, including every keystroke in the
+    /// name field. The line only depends on the material, so it is resolved
+    /// when the slots change and looked up thereafter.
+    @State private var metaByMaterial: [String: String] = [:]
     @State private var pickingSlot: Slot?
     /// slotId → songId of a split we kicked off from the picker, so the slot
     /// fills itself the moment matching parts land.
@@ -32,6 +40,12 @@ struct MixActionView: View {
     @State private var name = ""
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var defaults: MixDefaults {
         if case .mix(let d) = recipe.engine { return d }
@@ -44,6 +58,15 @@ struct MixActionView: View {
 
     private var allPicked: [PickedMaterial] {
         recipe.slots.flatMap { filled[$0.id] ?? [] }
+    }
+
+    private func refreshMetaByMaterial() {
+        metaByMaterial = Dictionary(
+            allPicked.map {
+                ($0.id,
+                 ActionCopy.sourceMeta($0, library: library, parts: parts))
+            },
+            uniquingKeysWith: { first, _ in first })
     }
 
     private var slotsSatisfied: Bool {
@@ -89,11 +112,14 @@ struct MixActionView: View {
         } rail: {
             ActionRail(outputs: expectedOutputs,
                        explanation: railExplanation,
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id],
+                       lastRun: runLog.runs[recipe.id],
                        onReplay: replay)
         }
         .onAppear(perform: restore)
         .onChange(of: parts.results) { tryAutofill() }
+        .onChange(of: filled) { refreshMetaByMaterial() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(item: $pickingSlot) { slot in
             PartPickerSheet(
                 slotLabel: slot.label, accepts: slot.accepts,
@@ -116,9 +142,7 @@ struct MixActionView: View {
             ActionSourceCard(
                 eyebrow: slot.label.uppercased(),
                 material: picked.first,
-                meta: picked.first.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: picked.first.flatMap { metaByMaterial[$0.id] },
                 playback: playback,
                 placeholder: slot.arity.lowerBound == 0
                     ? "Optional — leave empty to skip it."
@@ -158,8 +182,7 @@ struct MixActionView: View {
                         ForEach(picked) { material in
                             ActionMaterialRow(
                                 material: material, playback: playback,
-                                meta: ActionCopy.sourceMeta(
-                                    material, library: library, parts: parts),
+                                meta: metaByMaterial[material.id],
                                 onRemove: {
                                     filled[slot.id]?.removeAll {
                                         $0.id == material.id

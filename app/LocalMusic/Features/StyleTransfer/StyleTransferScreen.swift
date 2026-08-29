@@ -43,7 +43,36 @@ struct StyleTransferScreen: View {
     /// Set when the user asks for the controls back while a run is in flight
     /// — Generate's `showingComposer`, under this screen's name for it.
     @State private var showingWorkspace = false
+    /// The source and reference cards' second lines, resolved when their
+    /// material changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read each, and
+    /// both were being asked for from inside `body` — so four queries ran
+    /// between one keystroke of the prompt and the next. The lines only depend
+    /// on the materials, so they are resolved with them.
+    @State private var sourceMeta: String?
+    @State private var referenceMeta: String?
+    /// Which installed models serve each mode, the smallest one that would,
+    /// and the line to show when none does — rebuilt when the catalog moves
+    /// and not before.
+    ///
+    /// Answering "can anything run this mode?" is a filter over the whole
+    /// catalog with a requirement check per model, and the eleven mode chips,
+    /// the card beneath them and the model picker all ask it. That was a
+    /// dozen full passes over a hundred-odd models on every redraw of a
+    /// screen that redraws for every keystroke in the prompt field. The
+    /// answers depend on the catalog and on nothing else, so `catalog.version`
+    /// is the whole key — the same bargain `ActionsScreen.cardStates` makes.
+    @State private var eligibleByMode: [StyleTransferMode: [ModelInfo]] = [:]
+    @State private var smallestCandidateByMode: [StyleTransferMode: ModelInfo] = [:]
+    @State private var unavailableReasonByMode: [StyleTransferMode: String] = [:]
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the takes rail was asking
+    /// for the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on this screen is every keystroke in the prompt.
+    @State private var runLog = ActionRunLog()
 
     private var models: [ModelInfo] { catalog.models }
     private var chosen: ModelInfo? { model.model(in: models) }
@@ -91,11 +120,16 @@ struct StyleTransferScreen: View {
                                     renderingJobs: renderingJobs,
                                     waitingLine: chainWaitingLine)
             } else {
+                // The stems card draws the chain plan and the cost line counts
+                // its jobs, and building it walks the stem pool against the
+                // catalog. Built once here and handed down, rather than asked
+                // for by each of them.
+                let plan = model.plannedChain(in: models)
                 if model.pendingPreset != nil || model.notice != nil {
                     noticeStrip
                 }
                 HStack(spacing: 0) {
-                    mainColumn
+                    mainColumn(chain: plan)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     BenchInspector(width: Bench.Metrics.Inspector.takes) {
                         StyleTransferTakesRail(
@@ -104,14 +138,21 @@ struct StyleTransferScreen: View {
                     }
                 }
                 .frame(maxHeight: .infinity)
-                commitBar
+                commitBar(chain: plan)
             }
         }
         .background(Bench.Palette.windowBackground)
         .onAppear(perform: restore)
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: model.source) { refreshMaterialMeta() }
+        .onChange(of: model.reference) { refreshMaterialMeta() }
         .onChange(of: model.mode) { rebuildForm() }
         .onChange(of: model.selectedModelId) { rebuildForm() }
-        .onChange(of: catalog.version) { reconcile() }
+        .onChange(of: catalog.version) {
+            refreshEligibility()
+            reconcile()
+        }
         // `parts.results.count`, not the array: the planner only needs to
         // know the pool changed, and observing every record subscribed this
         // whole screen to each parts search and each ingest.
@@ -230,12 +271,12 @@ struct StyleTransferScreen: View {
 
     // MARK: - Main column
 
-    private var mainColumn: some View {
+    private func mainColumn(chain: StyleTransferChain?) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 sourceCards
                 modeSection
-                controls
+                controls(chain: chain)
                 modelSection
                 advancedSection
             }
@@ -253,9 +294,7 @@ struct StyleTransferScreen: View {
             eyebrow: model.mode.sourceNeed == .optional
                 ? "YOUR TRACK (OPTIONAL)" : "TRACK TO TRANSFORM",
             material: model.source,
-            meta: model.source.map {
-                ActionCopy.sourceMeta($0, library: library, parts: parts)
-            },
+            meta: sourceMeta,
             playback: playback,
             placeholder: model.mode.sourceNeed == .optional
                 ? "Optional — with nothing here the model writes from scratch, "
@@ -285,9 +324,7 @@ struct StyleTransferScreen: View {
                 eyebrow: model.mode.referenceNeed == .required
                     ? "SOUND TO BORROW" : "STYLE REFERENCE (OPTIONAL)",
                 material: model.reference,
-                meta: model.reference.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: referenceMeta,
                 playback: playback,
                 placeholder: "A track whose texture and production the model "
                     + "should borrow. Its melody is not copied.",
@@ -327,7 +364,7 @@ struct StyleTransferScreen: View {
         // Until the engine answers, every mode is neither available nor
         // unavailable. Treating it as unavailable would grey out all eleven
         // and offer eleven downloads the user very likely already has.
-        let isAvailable = !knowsModels || !mode.eligible(models).isEmpty
+        let isAvailable = !knowsModels || !(eligibleByMode[mode] ?? []).isEmpty
         let isSelected = model.mode == mode
         return Button {
             // A dimmed chip stays clickable on purpose: clicking it is the
@@ -369,7 +406,7 @@ struct StyleTransferScreen: View {
         }
         .buttonStyle(.plain)
         .help(isAvailable ? mode.survives
-                          : (mode.unavailableReason(models) ?? mode.survives))
+                          : (unavailableReasonByMode[mode] ?? mode.survives))
     }
 
     /// The one line that stands in for every "you need to install something"
@@ -400,12 +437,12 @@ struct StyleTransferScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
             if !knowsModels {
                 catalogFootnote()
-            } else if let reason = model.mode.unavailableReason(models) {
+            } else if let reason = unavailableReasonByMode[model.mode] {
                 HStack(spacing: 10) {
                     Text(reason)
                         .font(Bench.Typo.caption)
                         .foregroundStyle(Bench.Palette.warn)
-                    if let candidate = model.mode.candidates(models).first {
+                    if let candidate = smallestCandidateByMode[model.mode] {
                         let label = "Get \(candidate.displayName) · "
                             + ByteFormat.gb(candidate.sizeBytes)
                         Button(label) { routeToModels(for: model.mode) }
@@ -425,10 +462,10 @@ struct StyleTransferScreen: View {
     // MARK: Controls
 
     @ViewBuilder
-    private var controls: some View {
+    private func controls(chain: StyleTransferChain?) -> some View {
         @Bindable var model = model
 
-        if model.mode.isChain { stemsCard }
+        if model.mode.isChain { stemsCard(chain: chain) }
 
         if model.mode.trackNeed.isNeeded {
             ActionOptionsCard(eyebrow: "INSTRUMENT") {
@@ -542,8 +579,7 @@ struct StyleTransferScreen: View {
 
     /// Which stems survive literally, for the chain mode.
     @ViewBuilder
-    private var stemsCard: some View {
-        let plan = model.plannedChain(in: models)
+    private func stemsCard(chain plan: StyleTransferChain?) -> some View {
         ActionOptionsCard(eyebrow: "STEMS TO KEEP") {
             if model.source == nil {
                 ActionFootnote(text: "Choose a song first.")
@@ -630,12 +666,12 @@ struct StyleTransferScreen: View {
     @ViewBuilder
     private var modelSection: some View {
         @Bindable var model = model
-        let eligible = model.mode.eligible(models)
+        let eligible = eligibleByMode[model.mode] ?? []
         if eligible.isEmpty {
             ActionModelGate(
                 readiness: readiness,
                 title: "No installed model can do this yet",
-                detail: model.mode.unavailableReason(models)
+                detail: unavailableReasonByMode[model.mode]
                     ?? "Install a model that supports this transformation.",
                 onOpenModels: { routeToModels(for: model.mode) })
         } else {
@@ -758,20 +794,22 @@ struct StyleTransferScreen: View {
 
     // MARK: - Commit bar
 
-    private var commitBar: some View {
-        ActionCommitRow(
+    private func commitBar(chain: StyleTransferChain?) -> some View {
+        // `canRun` *is* `blockedReason == nil`, and asking for both walked the
+        // catalog and rebuilt the chain plan twice over to answer one question.
+        let blocked = knowsModels ? model.blockedReason(in: models) : nil
+        return ActionCommitRow(
             title: model.mode.isChain ? "Run the chain" : "Transform",
-            costLine: costLine,
+            costLine: costLine(chain: chain),
             costSubline: "ORIGINAL IS NEVER MODIFIED",
-            isEnabled: knowsModels && model.canRun(in: models),
-            error: knowsModels ? (model.blockedReason(in: models)
-                                    ?? jobs.lastError)
+            isEnabled: knowsModels && blocked == nil,
+            error: knowsModels ? (blocked ?? jobs.lastError)
                                : readiness.shortLine,
             queueTitle: nil,
             onCommit: { Task { await run() } })
     }
 
-    private var costLine: String? {
+    private func costLine(chain plan: StyleTransferChain?) -> String? {
         if let chain = model.chain {
             return chain.plan.statusLine(chain.progress).uppercased()
         }
@@ -779,7 +817,7 @@ struct StyleTransferScreen: View {
         let estimate = ActionEstimate.generativeSeconds(
             model: chosen, durationS: model.requestedDurationS(model: chosen))
         var parts: [String?] = [ActionFormat.estimate(estimate)]
-        if let plan = model.plannedChain(in: models), plan.isRunnable {
+        if let plan, plan.isRunnable {
             parts.append("\(plan.jobCount) JOBS")
         }
         parts.append(model.mode.outputsPart ? "SAVED TO LIBRARY › PARTS"
@@ -814,7 +852,7 @@ struct StyleTransferScreen: View {
 
     private var lastRun: ActionRunLog.Entry? {
         guard let recipeId = model.presetId else { return nil }
-        return ActionRunLog.decoded(runsJSON).runs[recipeId]
+        return runLog.runs[recipeId]
     }
 
     private func replay() {
@@ -847,6 +885,8 @@ struct StyleTransferScreen: View {
     // MARK: - Lifecycle
 
     private func restore() {
+        refreshEligibility()
+        refreshMaterialMeta()
         reconcile()
         model.refreshPlannerInput(parts: parts)
         rebuildForm()
@@ -854,6 +894,32 @@ struct StyleTransferScreen: View {
 
     private func reconcile() {
         model.reconcileSelection(in: models)
+    }
+
+    private func refreshMaterialMeta() {
+        sourceMeta = model.source.map {
+            ActionCopy.sourceMeta($0, library: library, parts: parts)
+        }
+        referenceMeta = model.reference.map {
+            ActionCopy.sourceMeta($0, library: library, parts: parts)
+        }
+    }
+
+    /// Re-answer every mode's eligibility question against the catalog as it
+    /// now stands. Cheap enough to do all eleven at once, because it happens
+    /// when the catalog changes rather than when the screen redraws.
+    private func refreshEligibility() {
+        var eligible: [StyleTransferMode: [ModelInfo]] = [:]
+        var smallest: [StyleTransferMode: ModelInfo] = [:]
+        var reasons: [StyleTransferMode: String] = [:]
+        for mode in StyleTransferMode.allCases {
+            eligible[mode] = mode.eligible(models)
+            smallest[mode] = mode.candidates(models).first
+            reasons[mode] = mode.unavailableReason(models)
+        }
+        eligibleByMode = eligible
+        smallestCandidateByMode = smallest
+        unavailableReasonByMode = reasons
     }
 
     /// Rebuild the generic form for the current model, re-seeding it from the

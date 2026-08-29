@@ -28,6 +28,13 @@ struct ScoreActionView: View {
     }
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and asked
+    /// for from inside `body` it ran on every pass of a page that has text
+    /// fields on it. The line only depends on the material, so it is resolved
+    /// with it.
+    @State private var sourceMeta: String?
     @State private var promptText = ""
     @State private var choosingSource = false
     @State private var submitting = false
@@ -75,9 +82,7 @@ struct ScoreActionView: View {
             ActionSourceCard(
                 eyebrow: "THE RENDER",
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "A generated track, and the words that asked "
                     + "for it.",
@@ -117,6 +122,11 @@ struct ScoreActionView: View {
                 lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
         }
         .onAppear { restore() }
+        .onChange(of: source, initial: true) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
         .sheet(isPresented: $choosingSource) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Song or part",

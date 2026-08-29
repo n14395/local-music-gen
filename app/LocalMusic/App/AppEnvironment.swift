@@ -84,6 +84,10 @@ final class AppEnvironment {
     /// First, deliberately: its init migrates legacy defaults keys, and the
     /// stores below read the renamed keys.
     let settings: AppSettings
+    /// Where the shell is pointed and what it has picked. Here rather than in
+    /// `MainWindow` because the menubar is declared on the scene and cannot
+    /// reach a view's `@State` — see `ShellState`.
+    let shell = ShellState()
     let prefill = PrefillBox()
     let studio = StudioBox()
     let notifications = NotificationService()
@@ -461,7 +465,12 @@ final class AppEnvironment {
             self.drainScheduled = false
             let batch = self.pendingEvents
             self.pendingEvents.removeAll(keepingCapacity: true)
-            for item in batch { self.route(item) }
+            // One shell update for the burst rather than one per event —
+            // `route` is synchronous throughout, which is what lets the
+            // batch window span the whole loop.
+            self.jobsStore.batchingEvents {
+                for item in batch { self.route(item) }
+            }
         }
     }
 
@@ -514,6 +523,8 @@ final class AppEnvironment {
             switch event {
             case .modelsChanged, .downloadCompleted, .downloadFailed:
                 Task { await catalog.refresh() }
+            case .systemTelemetry(let usage):
+                telemetry.applyUsage(usage)
             case .workerState(let state, let modelId, _):
                 backendStatus.workerModelId = state == "stopped" ? nil : modelId
                 backendStatus.workerModelState = state == "stopped" ? nil : state
@@ -574,8 +585,18 @@ final class AppEnvironment {
                 telemetry.apply(system)
                 jobsStore.applyHold(from: system)
             }
-            let busy = hasRunningJob || backendStatus.workerModelId != nil
-            try? await Task.sleep(for: .seconds(busy ? 3 : 15))
+            // Slow even while busy, because the readings that actually move
+            // — GPU load, worker footprint, accelerator bytes — now arrive on
+            // their own every two seconds as `system.telemetry`. What is left
+            // for the poll is the machine's static facts and the fields the
+            // event does not carry: the warm model, the queue hold, the memory
+            // guard. Those change on their own events, so this is a backstop.
+            //
+            // It is worth slowing: the handler behind `/v1/system` samples the
+            // GPU through IOKit and walks the process tree, synchronously, on
+            // the engine's event loop — so every poll while rendering was a
+            // pause in the progress the user is watching.
+            try? await Task.sleep(for: .seconds(15))
         }
     }
 

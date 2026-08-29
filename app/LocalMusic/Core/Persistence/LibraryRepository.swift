@@ -56,6 +56,21 @@ struct LibraryRepository: Sendable {
         try db.queue.read { try SongRecord.fetchOne($0, key: id) }
     }
 
+    /// Several songs by id, in one round trip.
+    ///
+    /// The sibling above, called in a loop, is what the parts list did to
+    /// title its groups: a list drawn from fifty songs was fifty synchronous
+    /// queries, on the main actor, every time either store published — which
+    /// is once per settled keystroke while searching. Same shape and same
+    /// reason as `PartsRepository.analyses(ownerIds:)`.
+    func songs(ids: [String]) throws -> [String: SongRecord] {
+        guard !ids.isEmpty else { return [:] }
+        let rows = try db.queue.read { database in
+            try SongRecord.filter(ids.contains(Column("id"))).fetchAll(database)
+        }
+        return Dictionary(rows.map { ($0.id, $0) }) { _, last in last }
+    }
+
     /// Highest `trackNNN` number currently in the library, 0 when there is
     /// none. Names are allocated from the high-water mark rather than from a
     /// count, so deleting or renaming a track never hands its number to a
@@ -115,10 +130,16 @@ struct LibraryRepository: Sendable {
                 request = request.filter(Column("favorite") == true)
             }
             if let tag = filters.tag {
-                let ids = try SongTagRecord
-                    .filter(Column("tagName") == tag)
-                    .fetchAll(database).map(\.songId)
-                request = request.filter(ids.contains(Column("id")))
+                // As a subselect rather than a fetched id list: the list was
+                // materialised into Swift and then spliced back into the
+                // statement as an `IN (...)` of every song carrying the tag,
+                // so a popular tag rebuilt and re-planned a statement that
+                // grew with it, once per keystroke.
+                request = request.filter(
+                    sql: "EXISTS (SELECT 1 FROM songTag"
+                       + " WHERE songTag.songId = song.id"
+                       + " AND songTag.tagName = ?)",
+                    arguments: [tag])
             }
             switch filters.origin {
             case .any:
@@ -132,9 +153,13 @@ struct LibraryRepository: Sendable {
                 request = request.filter(Column("editedAt") != nil)
             }
             if filters.hasParts {
-                let ids = try String.fetchAll(
-                    database, sql: "SELECT DISTINCT songId FROM part")
-                request = request.filter(ids.contains(Column("id")))
+                // The worst of the materialised lists: it fetched *every*
+                // distinct song id in the part table — a list bounded by the
+                // library rather than by the answer — to ask a question
+                // `EXISTS` answers per row without leaving the database.
+                request = request.filter(
+                    sql: "EXISTS (SELECT 1 FROM part"
+                       + " WHERE part.songId = song.id)")
             }
             switch filters.sort {
             case .newest: request = request.order(Column("createdAt").desc)
@@ -297,6 +322,22 @@ struct LibraryRepository: Sendable {
         try db.queue.read {
             try SongTagRecord.filter(Column("songId") == songId)
                 .fetchAll($0).map(\.tagName).sorted()
+        }
+    }
+
+    /// Ids of every song carrying no tags at all — the batch tagger's
+    /// "Untagged only" sweep.
+    ///
+    /// One `NOT EXISTS` rather than a `tags(for:)` per row. The sweep asks
+    /// this of the entire library, so answering it song by song turned a
+    /// tickbox into one query per track — repeated on every redraw of the
+    /// screen that reads it.
+    func untaggedSongIds() throws -> Set<String> {
+        try db.queue.read { database in
+            Set(try String.fetchAll(database, sql: """
+                SELECT id FROM song WHERE NOT EXISTS (
+                    SELECT 1 FROM songTag WHERE songTag.songId = song.id)
+                """))
         }
     }
 

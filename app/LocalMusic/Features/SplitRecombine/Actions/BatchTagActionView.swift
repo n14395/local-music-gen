@@ -22,7 +22,21 @@ struct BatchTagActionView: View {
     @State private var query = ""
     @State private var untaggedOnly = true
     @State private var submitting = false
+    /// Which songs have no tags yet, read once rather than asked per row.
+    ///
+    /// `songs` is read by the eyebrow count, the "Select all" button, the
+    /// commit title and the list itself, and it was answering "is this one
+    /// untagged?" with a query per track on each of those — so a library of a
+    /// hundred songs cost hundreds of round trips per redraw, and the filter
+    /// field above the list redraws on every keystroke.
+    @State private var untaggedIds: Set<String> = []
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var eligible: [ModelInfo] {
         catalog.models.filter {
@@ -41,9 +55,7 @@ struct BatchTagActionView: View {
     private var songs: [SongRecord] {
         var all = library.recent
         if untaggedOnly {
-            all = all.filter {
-                ((try? library.repository.tags(for: $0.id)) ?? []).isEmpty
-            }
+            all = all.filter { untaggedIds.contains($0.id) }
         }
         guard !query.isEmpty else { return all }
         return all.filter {
@@ -96,11 +108,20 @@ struct BatchTagActionView: View {
                             + "you edit by hand — nothing is overwritten, "
                             + "and the full scored list is kept as a "
                             + "document on each song.",
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear {
             if selectedModelId == nil { selectedModelId = model?.id }
+            refreshUntagged()
         }
+        .onChange(of: untaggedOnly) { refreshUntagged() }
+        .onChange(of: library.recent) { refreshUntagged() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
+    }
+
+    private func refreshUntagged() {
+        untaggedIds = (try? library.repository.untaggedSongIds()) ?? []
     }
 
     private var trackList: some View {

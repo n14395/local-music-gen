@@ -16,9 +16,33 @@ actor WaveformExtractor {
 
     private var inFlight: [String: Task<Peaks, Error>] = [:]
 
+    /// Whole-file peaks, from memory, then the on-disk cache, then a decode.
+    ///
+    /// The memory tier matters because the disk one is not as cheap as it
+    /// looks: every library row asks on appear, so scrolling a long list down
+    /// and back up re-read a 16 KB file and rebuilt two 2000-element arrays
+    /// per row per re-entry — all of it serialised on this actor behind
+    /// whatever else was decoding, which is what made rows flash their
+    /// placeholder on the way back up.
+    ///
+    /// Keyed on the cache file's modification date as well as its path, the
+    /// same way the window tier is: bytes changing under a path — an apply, a
+    /// revert, which delete the cache file — can then never serve a stale
+    /// waveform, and no call site has to remember to invalidate this.
     func peaks(for audioURL: URL, cacheURL: URL) async throws -> Peaks {
-        if let cached = Self.readCache(cacheURL) { return cached }
         let key = cacheURL.path
+        if let modified = Self.modifiedDate(of: cacheURL) {
+            let fileKey = FileKey(path: key, modified: modified)
+            if let hit = fileCache[fileKey] {
+                fileOrder.removeAll { $0 == fileKey }
+                fileOrder.append(fileKey)
+                return hit
+            }
+            if let cached = Self.readCache(cacheURL) {
+                store(cached, for: fileKey)
+                return cached
+            }
+        }
         if let task = inFlight[key] { return try await task.value }
         let task = Task<Peaks, Error>.detached(priority: .utility) {
             let peaks = try Self.extract(from: audioURL)
@@ -27,7 +51,40 @@ actor WaveformExtractor {
         }
         inFlight[key] = task
         defer { inFlight[key] = nil }
-        return try await task.value
+        let peaks = try await task.value
+        // Stamped with the date of the cache file the task just wrote, so the
+        // next ask hits memory rather than re-reading what it produced.
+        if let modified = Self.modifiedDate(of: cacheURL) {
+            store(peaks, for: FileKey(path: key, modified: modified))
+        }
+        return peaks
+    }
+
+    nonisolated private static func modifiedDate(of url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+    }
+
+    /// A whole-file cache entry: the peaks file, at the version it was read.
+    private struct FileKey: Hashable {
+        var path: String
+        var modified: Date
+    }
+
+    /// Bigger than the window cache because the entries are small and the
+    /// access pattern is a long list scrolled back and forth: 2000 bins is
+    /// ~16 KB, so this is a few megabytes at full stretch.
+    private static let fileCacheLimit = 256
+    private var fileCache: [FileKey: Peaks] = [:]
+    private var fileOrder: [FileKey] = []
+
+    private func store(_ peaks: Peaks, for key: FileKey) {
+        fileCache[key] = peaks
+        fileOrder.removeAll { $0 == key }
+        fileOrder.append(key)
+        while fileOrder.count > Self.fileCacheLimit {
+            fileCache.removeValue(forKey: fileOrder.removeFirst())
+        }
     }
 
     /// Peaks for one *window* of a file, read fresh from only the frames in

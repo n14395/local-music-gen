@@ -26,14 +26,20 @@ struct StudioTakesRail: View {
     /// and a rail that showed half of them would hide takes the run you are
     /// watching just made. The rail scrolls, so this is a history window
     /// rather than a layout ceiling.
-    private var takes: [SongRecord] { Array(generated.prefix(16)) }
-
-    private var todayCount: Int {
-        let start = Calendar.current.startOfDay(for: Date())
-        return generated.filter { $0.createdAt >= start }.count
-    }
+    private static let historyWindow = 16
 
     var body: some View {
+        // One walk of `library.recent` per pass, shared. The header's count
+        // and the cards below it are two readings of the same list, and
+        // asking for each separately filtered it twice and built a `Calendar`
+        // besides — every pass, for a number that changes once a take.
+        let generated = self.generated
+        let takes = Array(generated.prefix(Self.historyWindow))
+        let dayStart = Calendar.current.startOfDay(for: Date())
+        // Counted lazily: the answer is one integer, and the eager filter was
+        // allocating a second array of the whole day's takes to get it.
+        let todayCount = generated.lazy.filter { $0.createdAt >= dayStart }.count
+
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text("Takes")
@@ -66,12 +72,7 @@ struct StudioTakesRail: View {
                                      modelName: catalog.models
                                         .first { $0.id == song.modelId }?.displayName
                                         ?? song.modelName,
-                                     isCurrent: playback.currentSongId == song.id,
-                                     isPlaying: playback.currentSongId == song.id
-                                        && playback.isPlaying,
                                      isLead: index == 0,
-                                     playedFraction: playback.currentSongId == song.id
-                                        ? playback.playedFraction : 0,
                                      library: library, playback: playback,
                                      actions: actions,
                                      onPlay: { play(song) },
@@ -105,10 +106,7 @@ struct StudioTakesRail: View {
 private struct TakeCard: View {
     let song: SongRecord
     let modelName: String
-    let isCurrent: Bool
-    let isPlaying: Bool
     let isLead: Bool
-    let playedFraction: Double
     let library: LibraryStore
     let playback: PlaybackController
     let actions: SongActions
@@ -117,6 +115,23 @@ private struct TakeCard: View {
     let onReuse: (ReuseScope) -> Void
 
     @State private var showingDetails = false
+
+    /// Asked here, in the card, rather than worked out by the rail and handed
+    /// down — and asked in this order. `currentSongId` is read first and the
+    /// guard returns before the transport's clock on every card that is not
+    /// the one playing. SwiftUI tracks the properties a body actually reads,
+    /// so a rail that read the clock itself subscribed all sixteen of these
+    /// to a timer that fires four times a second; read from in here, the tick
+    /// reaches the one card whose waveform is actually moving. The same
+    /// idiom, for the same reason, as `LibrarySongRow`.
+    private var isCurrent: Bool { playback.currentSongId == song.id }
+
+    private var isPlaying: Bool { isCurrent && playback.isPlaying }
+
+    private var playedFraction: Double {
+        guard isCurrent else { return 0 }
+        return playback.playedFraction
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {

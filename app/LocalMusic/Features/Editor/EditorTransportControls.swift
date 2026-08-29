@@ -182,7 +182,9 @@ struct EditorSeekBar: View {
             BenchSlider(value: Binding(
                 get: { store.playheadS },
                 set: { store.seekPreview(to: $0) }),
-                range: 0...max(0.001, store.timelineDurationS))
+                range: 0...max(0.001, store.timelineDurationS),
+                onEditingBegan: { store.beginScrub() },
+                onEditingEnded: { store.endScrub() })
         }
     }
 }

@@ -66,7 +66,9 @@ struct StudioRenderingPane: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("DONE").eyebrow()
                         ForEach(doneRecently) { song in
-                            doneRow(song)
+                            DoneRow(song: song, library: library,
+                                    playback: playback,
+                                    onLoad: { load(song) })
                         }
                     }
                 }
@@ -406,15 +408,48 @@ struct StudioRenderingPane: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Done rows
+    /// Make this take the transport's current item. Shared by the play
+    /// button and the waveform, so a click into a take that is not loaded
+    /// yet lands on the same subtitle the play button would have given it.
+    private func load(_ song: SongRecord) {
+        playback.play(url: song.fileURL, songId: song.id, title: song.title,
+                      duration: song.durationS,
+                      subtitle: "\(song.modelName) · "
+                                + "\(Int(song.durationS.rounded())) s")
+    }
+}
 
-    private func doneRow(_ song: SongRecord) -> some View {
-        let isCurrent = playback.currentSongId == song.id
-        return HStack(spacing: 16) {
+// MARK: - Done rows
+
+/// One take that finished while this batch was running.
+///
+/// Its own view rather than a method on the pane, because of the one thing it
+/// reads: the transport's position, which moves four times a second. Worked
+/// out in the pane's body those reads belonged to the pane, so a playing take
+/// redrew the hero, the pipeline and the log with it; asked from in here the
+/// tick reaches the row whose waveform is moving and stops there.
+///
+/// The read order is the other half of it, and it is load-bearing:
+/// `currentSongId` first, and the guard returns before the clock on every row
+/// that is not the one playing. SwiftUI tracks the properties a body actually
+/// reads. Same idiom, same reason, as `LibrarySongRow`.
+private struct DoneRow: View {
+    let song: SongRecord
+    let library: LibraryStore
+    let playback: PlaybackController
+    let onLoad: () -> Void
+
+    private var isCurrent: Bool { playback.currentSongId == song.id }
+
+    private var playedFraction: Double {
+        guard isCurrent else { return 0 }
+        return playback.playedFraction
+    }
+
+    var body: some View {
+        HStack(spacing: 16) {
             BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
-                            isCurrent: isCurrent, size: 36) {
-                load(song)
-            }
+                            isCurrent: isCurrent, size: 36, action: onLoad)
             VStack(alignment: .leading, spacing: 2) {
                 Text(song.title)
                     .font(Bench.Typo.bodyEmphasis)
@@ -426,7 +461,7 @@ struct StudioRenderingPane: View {
             }
             .frame(width: 170, alignment: .leading)
             BenchWaveformLoader(audioURL: song.fileURL, cacheURL: song.waveformURL,
-                                playedFraction: isCurrent ? playback.playedFraction : 0,
+                                playedFraction: playedFraction,
                                 tint: isCurrent ? Bench.Palette.accent
                                                 : Bench.Palette.textQuaternary,
                                 // Every other waveform in the app seeks on
@@ -434,7 +469,7 @@ struct StudioRenderingPane: View {
                                 // are looking at a take you just made was the
                                 // one place you could not jump into it.
                                 onSeek: { fraction in
-                                    if !isCurrent { load(song) }
+                                    if !isCurrent { onLoad() }
                                     playback.seek(to: fraction * song.durationS)
                                 })
                 .frame(height: 44)
@@ -447,15 +482,5 @@ struct StudioRenderingPane: View {
         }
         .padding(16)
         .benchCard()
-    }
-
-    /// Make this take the transport's current item. Shared by the play
-    /// button and the waveform, so a click into a take that is not loaded
-    /// yet lands on the same subtitle the play button would have given it.
-    private func load(_ song: SongRecord) {
-        playback.play(url: song.fileURL, songId: song.id, title: song.title,
-                      duration: song.durationS,
-                      subtitle: "\(song.modelName) · "
-                                + "\(Int(song.durationS.rounded())) s")
     }
 }

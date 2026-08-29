@@ -375,7 +375,8 @@ private struct AdjustTab: View {
                             ?? store.houseTargetLufs() },
                         set: { store.setNormalize(lufs: $0) }),
                     range: -30...(-6), step: 0.5, labelWidth: 52,
-                    format: { String(format: "%.1f", $0) })
+                    format: { String(format: "%.1f", $0) },
+                        onEditingEnded: { store.endInteraction() })
             }
             Text("Pick one — normalising after amplifying would undo it. "
                  + "Both end in the same limiter at −1 dBTP.")
@@ -419,7 +420,8 @@ private struct AdjustTab: View {
                         return String(format: "%.1f", bpm * rate)
                     }
                     return String(format: "%d%%", Int((rate * 100).rounded()))
-                })
+                },
+                    onEditingEnded: { store.endInteraction() })
             BenchSliderRow(
                 label: "Pitch",
                 value: Binding(get: { store.document.pitchSemitones },
@@ -427,7 +429,8 @@ private struct AdjustTab: View {
                 range: -12...12, step: 1,
                 tint: Bench.Palette.textMuted, labelWidth: 52,
                 valueWidth: 58,
-                format: { String(format: "%+.0f st", $0) })
+                format: { String(format: "%+.0f st", $0) },
+                    onEditingEnded: { store.endInteraction() })
             HStack(spacing: 11) {
                 Text("Engine")
                     .font(Bench.Typo.secondary)
@@ -696,7 +699,12 @@ private struct EffectCard: View {
                            set: { newValue in
                                var updated = effect
                                updated[keyPath: keyPath] = newValue
-                               store.updateEffect(updated)
+                               // Keyed, so a drag is one undo step rather
+                               // than one per mouse-move; `onEditingEnded`
+                               // below closes it when the gesture does.
+                               store.updateEffect(
+                                   updated,
+                                   coalescing: "fx-\(effect.id)-\(label)")
                            }),
             range: range, step: step, labelWidth: 62, valueWidth: 54,
             format: format,
@@ -880,7 +888,8 @@ private struct EditOpRow: View {
                                    coalescing: "row-\(op.id)-amp")
                 }),
                 range: -24...24, step: 0.5, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%+.1f dB", $0) })
+                format: { String(format: "%+.1f dB", $0) },
+                    onEditingEnded: { store.endInteraction() })
         case .normalize(let lufs):
             BenchSliderRow(
                 label: "Target",
@@ -889,7 +898,8 @@ private struct EditOpRow: View {
                                    coalescing: "row-\(op.id)-norm")
                 }),
                 range: -30...(-6), step: 0.5, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%.1f", $0) })
+                format: { String(format: "%.1f", $0) },
+                    onEditingEnded: { store.endInteraction() })
         case .speed(let rate):
             BenchSliderRow(
                 label: "Rate",
@@ -898,7 +908,8 @@ private struct EditOpRow: View {
                                    coalescing: "row-\(op.id)-speed")
                 }),
                 range: 0.5...2, step: 0.01, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%d%%", Int(($0 * 100).rounded())) })
+                format: { String(format: "%d%%", Int(($0 * 100).rounded())) },
+                    onEditingEnded: { store.endInteraction() })
         case .pitch(let semitones):
             BenchSliderRow(
                 label: "Shift",
@@ -907,7 +918,8 @@ private struct EditOpRow: View {
                                    coalescing: "row-\(op.id)-pitch")
                 }),
                 range: -12...12, step: 1, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%+.0f st", $0) })
+                format: { String(format: "%+.0f st", $0) },
+                    onEditingEnded: { store.endInteraction() })
         case .insertGap(let at, let seconds):
             BenchSliderRow(
                 label: "Length",
@@ -917,7 +929,8 @@ private struct EditOpRow: View {
                                    coalescing: "row-\(op.id)-gap")
                 }),
                 range: 0.1...30, step: 0.1, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%.1f s", $0) })
+                format: { String(format: "%.1f s", $0) },
+                    onEditingEnded: { store.endInteraction() })
         default:
             EmptyView()
         }
@@ -933,7 +946,8 @@ private struct EditOpRow: View {
                 value: Binding(get: { seconds }, set: { update($0, curve) }),
                 range: 0.1...min(30, max(0.2, store.timelineDurationS)),
                 step: 0.1, labelWidth: 52, valueWidth: 56,
-                format: { String(format: "%.1f s", $0) })
+                format: { String(format: "%.1f s", $0) },
+                    onEditingEnded: { store.endInteraction() })
             HStack(spacing: 10) {
                 Text("Curve")
                     .font(Bench.Typo.small)

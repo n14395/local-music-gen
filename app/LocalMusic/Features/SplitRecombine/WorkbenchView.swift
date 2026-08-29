@@ -152,9 +152,44 @@ struct WorkbenchScreen: View {
     /// Generate's `showingComposer`, under this screen's name for it.
     @State private var showingBench = false
 
-    private var mixModel: ModelInfo? {
-        MixModels.mixdown(in: catalog.models)
+    /// The models the commit bar can offer, picked once per catalog.
+    ///
+    /// Three filters over the whole catalog — the mixdown model, and the cover
+    /// and shape candidates a Reimagine pass can run on — and `body` ran all
+    /// three on every pass. That is every frame of a lane fader's drag, since
+    /// dragging one writes `model.lanes` and this screen watches them. None of
+    /// the three reads anything but the catalog, and the catalog says when it
+    /// has changed.
+    private struct EligibleModels {
+        let mixdown: ModelInfo?
+        let reimagine: [ModelInfo]
     }
+
+    @State private var eligibleCache: (version: Int, value: EligibleModels)?
+
+    private func pickEligible() -> EligibleModels {
+        let cover = StyleTransferMode.cover.eligible(catalog.models)
+        let loop = StyleTransferMode.shape.eligible(catalog.models)
+        var seen = Set<String>()
+        return EligibleModels(
+            mixdown: MixModels.mixdown(in: catalog.models),
+            reimagine: (cover + loop).filter { seen.insert($0.id).inserted })
+    }
+
+    private var eligible: EligibleModels {
+        if let eligibleCache, eligibleCache.version == catalog.version {
+            return eligibleCache.value
+        }
+        // Picked rather than cached here, because `body` must not write state.
+        // The `.onChange` fills the cache a beat later; until it does the
+        // answer is arrived at exactly the way it always was, so the bar never
+        // draws a catalog it has already been given.
+        return pickEligible()
+    }
+
+    private var mixModel: ModelInfo? { eligible.mixdown }
+
+    private var reimagineModels: [ModelInfo] { eligible.reimagine }
 
     /// The mixes and Reimagine passes this bench has in flight, as queue rows.
     private var renderingJobs: [JobsStore.ActiveJob] {
@@ -203,7 +238,7 @@ struct WorkbenchScreen: View {
                     reimagineModelId: $reimagineModelId,
                     reimagineModels: reimagineModels,
                     readiness: catalog.readiness,
-                    canReimagine: reimagineSource != nil,
+                    canReimagine: canReimagine,
                     onPreview: togglePreview,
                     onCreateMix: createMix,
                     onReimagine: { Task { await createReimagine() } },
@@ -234,6 +269,9 @@ struct WorkbenchScreen: View {
                 // "Add part" is the button; parts are what it opens on. Songs
                 // stay one tab away — the slot still takes them.
                 opensOn: .parts)
+        }
+        .onChange(of: catalog.version, initial: true) { _, version in
+            eligibleCache = (version: version, value: pickEligible())
         }
         .onDisappear { preview.stop() }
         .onChange(of: model.clips) { syncPreviewGains() }
@@ -495,13 +533,6 @@ struct WorkbenchScreen: View {
         })
     }
 
-    private var reimagineModels: [ModelInfo] {
-        let cover = StyleTransferMode.cover.eligible(catalog.models)
-        let loop = StyleTransferMode.shape.eligible(catalog.models)
-        var seen = Set<String>()
-        return (cover + loop).filter { seen.insert($0.id).inserted }
-    }
-
     private var aiLayerSource: WorkbenchModel.Clip? {
         let muteMap = WorkbenchModel.effectivelyMuted(lanes: model.lanes,
                                                       clips: model.clips)
@@ -515,6 +546,28 @@ struct WorkbenchScreen: View {
                                                       clips: model.clips)
         return WorkbenchModel.ordered(lanes: model.lanes, clips: model.clips)
             .first { !(muteMap[$0.id] ?? $0.muted) }
+    }
+
+    /// Whether a Reimagine pass has anything to work from.
+    ///
+    /// The question, not the clip: `reimagineSource` builds two dictionaries
+    /// and sorts the whole bench to name the first audible one, and the commit
+    /// bar only wants to know whether its button is live — which `body` asks
+    /// on every pass, at fader-drag rate. Kept beside `reimagineSource` and
+    /// folding lanes by the same rule as `effectivelyMuted`, because the two
+    /// disagreeing would arm a button over nothing.
+    private var canReimagine: Bool {
+        let anySolo = model.lanes.contains { $0.solo }
+        var audible: [String: Bool] = [:]
+        audible.reserveCapacity(model.lanes.count)
+        for lane in model.lanes {
+            audible[lane.id] = anySolo ? lane.solo : !lane.muted
+        }
+        // A clip on no lane at all follows `effectivelyMuted` too: nothing
+        // silences it until somebody else solos.
+        return model.clips.contains {
+            !$0.muted && (audible[$0.laneId] ?? !anySolo)
+        }
     }
 
     /// v1 scope: an AI pass reimagines the first audible clip (the bench is

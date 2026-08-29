@@ -6,10 +6,12 @@ import Observation
 /// caches analyses, so every pane that shows a slot reads one dictionary
 /// instead of running its own query.
 ///
-/// The mirror is whole and eager: `refresh()` re-reads the entire table, and
-/// every mutation writes through and refreshes. A handful of rows per song
-/// never justifies incremental cache surgery, and a read path that lazily
-/// filled the cache would be a view-body mutation waiting to be reported.
+/// The mirror is whole: `refresh()` re-reads the entire table, and every
+/// mutation writes through and refreshes. A handful of rows per song never
+/// justifies incremental cache surgery, and a read path that lazily filled the
+/// cache would be a view-body mutation waiting to be reported. Ingest goes
+/// through `refreshSoon` instead — same whole read, off the actor and
+/// coalesced, because that one arrives in bursts.
 @MainActor @Observable
 final class TextStore {
     private let repo: PartsRepository
@@ -19,15 +21,51 @@ final class TextStore {
 
     init(repo: PartsRepository) {
         self.repo = repo
-        refresh()
+        // Off the actor, as in `LibraryStore.init` — this one mirrors the
+        // whole table, and it grows about three rows per track for as long as
+        // the auto-runs stay on.
+        refreshSoon()
     }
 
     var repository: PartsRepository { repo }
 
     func refresh() {
-        let rows = (try? repo.allTextDocs()) ?? []
+        refreshTask?.cancel()
+        refreshTask = nil
+        publish((try? repo.allTextDocs()) ?? [])
+    }
+
+    /// Re-read the mirror because rows landed underneath us, without blocking
+    /// what is on screen.
+    ///
+    /// The synchronous sibling re-reads the *whole* table, and with the
+    /// auto-describe, auto-tag and auto-lyrics runs enabled that happens
+    /// about three times per track as a render lands — on the main actor,
+    /// inside the same burst that is already moving files and writing rows.
+    /// The cost grows with everything the library has ever produced, so it is
+    /// the one that gets worse the longer the app is used.
+    ///
+    /// Edits keep the synchronous path: a rename or a delete should land on
+    /// the pane before the click finishes, and there is no burst of them to
+    /// collapse.
+    func refreshSoon() {
+        refreshTask?.cancel()
+        let repo = self.repo
+        refreshTask = Task { [weak self] in
+            let rows = await Task.detached(priority: .userInitiated) {
+                (try? repo.allTextDocs()) ?? []
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.publish(rows)
+        }
+    }
+
+    private func publish(_ rows: [TextDocRecord]) {
         docs = Dictionary(grouping: rows, by: \.ownerId)
     }
+
+    /// The coalesced ingest-driven read — see `refreshSoon`.
+    private var refreshTask: Task<Void, Never>?
 
     /// Docs for one owner, optionally narrowed to a kind.
     func docs(for ownerId: String, kind: TextDocKind? = nil) -> [TextDocRecord] {
@@ -73,6 +111,6 @@ final class TextStore {
     /// here): the rows are already written, so only the mirror moves.
     func noteIngested(_ records: [TextDocRecord]) {
         guard !records.isEmpty else { return }
-        refresh()
+        refreshSoon()
     }
 }

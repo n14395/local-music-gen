@@ -429,7 +429,7 @@ struct EditorApplyCard: View {
         case .stashingBackup: current = 0
         case .uploading, .queued: current = 1
         case .rendering: current = 2
-        case .replacing: current = 3
+        case .replacing, .restoring: current = 3
         case .rebuildingPeaks: current = 4
         }
         if current > index { return .done }

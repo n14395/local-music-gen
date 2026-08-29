@@ -28,6 +28,13 @@ struct PlanActionView: View {
     let onBack: () -> Void
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and asked
+    /// for from inside `body` it ran on every pass of a page that has text
+    /// fields on it. The line only depends on the material, so it is resolved
+    /// with it.
+    @State private var sourceMeta: String?
     @State private var choosing = false
     @State private var selectedModelId: String?
     @State private var caption = ""
@@ -77,9 +84,7 @@ struct PlanActionView: View {
                 ActionSourceCard(
                     eyebrow: "TRACK",
                     material: source,
-                    meta: source.map {
-                        ActionCopy.sourceMeta($0, library: library, parts: parts)
-                    },
+                    meta: sourceMeta,
                     playback: playback,
                     placeholder: "A song this app generated. Imported audio has "
                         + "no plan — nothing wrote one.",
@@ -112,6 +117,11 @@ struct PlanActionView: View {
             ActionRail(outputs: outputs,
                        explanation: railExplanation,
                        lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+        }
+        .onChange(of: source, initial: true) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
         }
         .onAppear {
             if source == nil, let sourceId {

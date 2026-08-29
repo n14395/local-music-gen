@@ -49,11 +49,30 @@ struct SongDetailView: View {
     /// True while the stashed original is what the transport is playing —
     /// the pane's own A/B, distinct from the library's two-row compare.
     @State private var playingOriginal = false
+    /// Everything the pane prints that is not a field on the row it was
+    /// handed: the tag set, the parts a mix was built from, the applied
+    /// program, and what the two files measure on disk.
+    ///
+    /// Held rather than asked for from `body`, for the reason
+    /// `EditorStore.hasBackup` sets out at length. Drawing this pane used to
+    /// mean two `SELECT`s, a whole `EditDocument` decode and three `stat`s
+    /// per pass — and a pane showing a playing track draws four times a
+    /// second, because the transport's tick is a property its body reads.
+    @State private var tags: [String] = []
+    @State private var ingredientRows: [SongIngredientRecord] = []
+    @State private var appliedDocument: EditDocument?
+    @State private var hasBackup = false
+    @State private var backupSize: String?
+    @State private var fileSize: String?
     /// Ambient, optional: previews and tests host this pane without an
     /// environment, and "no settings" must read as "ask", the safe default.
     @Environment(AppSettings.self) private var appSettings: AppSettings?
-
-    private var isCurrent: Bool { playback.currentSongId == song.id }
+    /// Optional, like `appSettings`: previews and the layout tests host this
+    /// pane without a shell, and "no shell" has to read as "no rename
+    /// requests", not as a crash.
+    @Environment(ShellState.self) private var shell: ShellState?
+    /// The name field, so Track ▸ Rename can put the caret in it.
+    @FocusState private var titleFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,8 +80,8 @@ struct SongDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 14) {
                         header
-                        hero
-                        transportLine
+                        SongDetailHero(song: song, playback: playback,
+                                       onRate: { setRating($0) })
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 20).padding(.bottom, 14)
@@ -76,9 +95,14 @@ struct SongDetailView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("TAGS").eyebrow()
-                        LibraryTagField(tags: library.tags(for: song.id)) { tags in
-                            editor.tagsText = tags.joined(separator: ", ")
+                        LibraryTagField(tags: tags) { edited in
+                            editor.tagsText = edited.joined(separator: ", ")
                             editor.commitTags(in: library)
+                            // Tags live in a table of their own, so the write
+                            // moves nothing this pane is watching. Read back
+                            // what was stored rather than what was typed:
+                            // `commitTags` trims and drops blanks.
+                            tags = library.tags(for: song.id)
                         }
                         TextDocsSection(ownerId: song.id, ownerType: "song",
                                         playback: playback,
@@ -98,9 +122,29 @@ struct SongDetailView: View {
         }
         .background(Bench.Palette.panel)
         .onChange(of: song.id, initial: true) { editor.load(song, in: library) }
+        // Keyed on the whole record rather than its id: applying a program or
+        // reverting one rewrites the row under the same track, and the pane
+        // has to stop claiming edits it no longer has.
+        .onChange(of: song, initial: true) { loadTrackFacts() }
+        .task(id: song) { await loadFileFacts() }
+        // Nothing on `song` moves when a tag is written from somewhere else in
+        // the app, so the list's own refresh is the only signal there is —
+        // the hook `LibraryScreen` hangs its derived state on.
+        .onChange(of: library.results) { tags = library.tags(for: song.id) }
         // The pane can go away without a field ever losing focus — a popover
         // dismissed, a tab switched — so buffered edits are written on the way out.
         .onDisappear { editor.flush(in: library) }
+        // Track ▸ Rename, consumed here because the field is three levels
+        // inside the Library and a menu item cannot reach a `FocusState`.
+        // `initial` because the request is usually set in the same turn that
+        // selects this song, so the first body evaluation already carries it
+        // and there is no change left to observe. Cleared on the way out, so
+        // one request focuses the field once.
+        .onChange(of: shell?.renameRequest, initial: true) {
+            guard let shell, shell.renameRequest == song.id else { return }
+            titleFocused = true
+            shell.renameRequest = nil
+        }
         .confirmationDialog("Delete “\(song.title)”?", isPresented: $confirmDelete) {
             Button("Delete song and audio file", role: .destructive) {
                 deleteNow()
@@ -125,6 +169,54 @@ struct SongDetailView: View {
         onDeleted()
     }
 
+    // MARK: what the pane knows
+
+    /// Re-read what the row does not carry: its tags, the parts a mix was
+    /// built from, and the program that was applied to it.
+    private func loadTrackFacts() {
+        tags = library.tags(for: song.id)
+        appliedDocument = Self.appliedProgram(of: song)
+        // A mix's ingredients are fixed the moment it is rendered, but the
+        // query is cheap and keying it to the row keeps one reload path
+        // rather than two.
+        if song.originKind == .recombined, let partsRepo = library.partsRepo {
+            ingredientRows = (try? partsRepo.ingredients(songId: song.id)) ?? []
+        } else {
+            ingredientRows = []
+        }
+    }
+
+    /// Measure the two files the pane reports on: the audio it plays, and the
+    /// stashed original a revert would put back.
+    ///
+    /// Off the actor because these are syscalls, and a view body has no
+    /// business making one. Asked again whenever the row changes, because
+    /// applying a program rewrites the audio and stashes the original, and a
+    /// revert takes both back the other way.
+    private func loadFileFacts() async {
+        let audioURL = song.fileURL
+        let backupURL = song.backupURL
+        let measured = await Task.detached(priority: .userInitiated) {
+            (audio: LibraryFormat.fileSize(of: audioURL),
+             hasBackup: FileManager.default.fileExists(atPath: backupURL.path),
+             backup: LibraryFormat.fileSize(of: backupURL))
+        }.value
+        fileSize = measured.audio
+        hasBackup = measured.hasBackup
+        backupSize = measured.backup
+    }
+
+    /// The program applied to a track, or nil when it carries none — and nil
+    /// too when the stored document decodes to nothing, so an empty program
+    /// never draws an empty EDITS block.
+    private static func appliedProgram(of song: SongRecord) -> EditDocument? {
+        guard song.editedAt != nil, let json = song.editsJSON,
+              let document = try? JSONDecoder().decode(
+                EditDocument.self, from: Data(json.utf8)),
+              !document.isEmpty else { return nil }
+        return document
+    }
+
     // MARK: header
 
     private var header: some View {
@@ -132,6 +224,7 @@ struct SongDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 TextField("Title", text: $editor.title,
                           onCommit: { editor.commitTitle(in: library) })
+                    .focused($titleFocused)
                     .textFieldStyle(.plain)
                     .tint(Bench.Palette.accent)
                     .font(Bench.Typo.inspectorTitle)
@@ -220,47 +313,6 @@ struct SongDetailView: View {
         .fixedSize()
     }
 
-    // MARK: hero
-
-    private var hero: some View {
-        BenchWaveformWell(height: 96) {
-            BenchWaveformLoader(
-                audioURL: song.fileURL, cacheURL: song.waveformURL,
-                playedFraction: isCurrent && song.durationS > 0
-                    ? playback.currentTime / song.durationS : 0,
-                barPitch: 2.5,
-                onSeek: { fraction in
-                    // Load first, seek second: seeking before the item is
-                    // replaced moves whatever was playing before.
-                    if !isCurrent {
-                        playback.play(url: song.fileURL, songId: song.id,
-                                      title: song.title,
-                                      duration: song.durationS,
-                                      subtitle: SongDetailView.subtitle(for: song))
-                    }
-                    playback.seek(to: fraction * song.durationS)
-                })
-        }
-    }
-
-    private var transportLine: some View {
-        HStack(spacing: 12) {
-            BenchTransportButton(isPlaying: isCurrent && playback.isPlaying,
-                                 size: 32) {
-                playback.play(url: song.fileURL, songId: song.id,
-                              title: song.title, duration: song.durationS,
-                              subtitle: SongDetailView.subtitle(for: song))
-            }
-            Text("\(LibraryFormat.clock(isCurrent ? playback.currentTime : 0))"
-                 + " / \(LibraryFormat.clock(song.durationS))")
-                .font(Bench.Typo.mono(12))
-                .foregroundStyle(Bench.Palette.textTertiary)
-            Spacer(minLength: 8)
-            RatingStars(rating: song.rating, size: 15, spacing: 2,
-                        onRate: { setRating($0) })
-        }
-    }
-
     /// The transport bar's mono second line: `MUSICGEN SMALL · 9.9 S`. Without
     /// it the bar shows a title over an empty row.
     static func subtitle(for song: SongRecord) -> String {
@@ -317,8 +369,8 @@ struct SongDetailView: View {
             BenchInfoRow("Created",
                          song.createdAt.formatted(date: .abbreviated,
                                                   time: .shortened))
-            if let size = LibraryFormat.fileSize(of: song.fileURL) {
-                BenchInfoRow("Size", size, mono: true)
+            if let fileSize {
+                BenchInfoRow("Size", fileSize, mono: true)
             }
         }
     }
@@ -442,22 +494,6 @@ struct SongDetailView: View {
         .buttonStyle(.plain)
     }
 
-    private var appliedDocument: EditDocument? {
-        guard song.editedAt != nil, let json = song.editsJSON,
-              let document = try? JSONDecoder().decode(
-                EditDocument.self, from: Data(json.utf8)),
-              !document.isEmpty else { return nil }
-        return document
-    }
-
-    private var hasBackup: Bool {
-        FileManager.default.fileExists(atPath: song.backupURL.path)
-    }
-
-    private var backupSize: String? {
-        LibraryFormat.fileSize(of: song.backupURL)
-    }
-
     private var originalDuration: Double? {
         appliedDocument?.originalDurationS
     }
@@ -499,11 +535,12 @@ struct SongDetailView: View {
 
     /// Recombined songs list the parts they were built from. The design has no
     /// slot for this, but it is the only place a mix says what went into it.
+    ///
+    /// Only a recombined song ever has rows here — `loadTrackFacts` asks the
+    /// question, so the origin test lives there rather than in this builder.
     @ViewBuilder
     private var ingredients: some View {
-        if song.originKind == .recombined, let partsRepo = library.partsRepo,
-           let rows = try? partsRepo.ingredients(songId: song.id),
-           !rows.isEmpty {
+        if !ingredientRows.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("INGREDIENTS").eyebrow()
@@ -513,7 +550,7 @@ struct SongDetailView: View {
                         .font(Bench.Typo.caption)
                         .foregroundStyle(Bench.Palette.accent)
                 }
-                ForEach(rows, id: \.slotId) { row in
+                ForEach(ingredientRows, id: \.slotId) { row in
                     HStack(spacing: 8) {
                         StemBar(kind: row.slotId, width: 4, height: 12)
                         Text("\(row.slotId) · \(library.sourceTitle(for: row))")
@@ -660,6 +697,77 @@ struct SongDetailView: View {
             guard response == .OK, let url = panel.url else { return }
             try? FileManager.default.removeItem(at: url)
             try? FileManager.default.copyItem(at: song.fileURL, to: url)
+        }
+    }
+}
+
+/// The waveform well and the transport row: everything on the pane that the
+/// playhead moves, and nothing else.
+///
+/// Its own view rather than two properties on the pane, because under
+/// Observation a body is subscribed to every property it reads — so reading
+/// `playback.currentTime` from `SongDetailView.body` put the whole inspector
+/// on the transport's 4 Hz tick, tags query, edit-document decode, file
+/// measurements and all. Fenced in here, the tick redraws a waveform and a
+/// clock, which is what it is for.
+private struct SongDetailHero: View {
+    let song: SongRecord
+    let playback: PlaybackController
+    let onRate: (Int) -> Void
+
+    private var isCurrent: Bool { playback.currentSongId == song.id }
+
+    /// `currentSongId` first and the guard before `currentTime`, exactly as
+    /// `LibrarySongRow.playedFraction` explains: the order is the difference
+    /// between this view redrawing while its own track plays and it redrawing
+    /// while any track does.
+    private var playedFraction: Double {
+        guard isCurrent, song.durationS > 0 else { return 0 }
+        return playback.currentTime / song.durationS
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            hero
+            transportLine
+        }
+    }
+
+    private var hero: some View {
+        BenchWaveformWell(height: 96) {
+            BenchWaveformLoader(
+                audioURL: song.fileURL, cacheURL: song.waveformURL,
+                playedFraction: playedFraction,
+                barPitch: 2.5,
+                onSeek: { fraction in
+                    // Load first, seek second: seeking before the item is
+                    // replaced moves whatever was playing before.
+                    if !isCurrent {
+                        playback.play(url: song.fileURL, songId: song.id,
+                                      title: song.title,
+                                      duration: song.durationS,
+                                      subtitle: SongDetailView.subtitle(for: song))
+                    }
+                    playback.seek(to: fraction * song.durationS)
+                })
+        }
+    }
+
+    private var transportLine: some View {
+        HStack(spacing: 12) {
+            BenchTransportButton(isPlaying: isCurrent && playback.isPlaying,
+                                 size: 32) {
+                playback.play(url: song.fileURL, songId: song.id,
+                              title: song.title, duration: song.durationS,
+                              subtitle: SongDetailView.subtitle(for: song))
+            }
+            Text("\(LibraryFormat.clock(isCurrent ? playback.currentTime : 0))"
+                 + " / \(LibraryFormat.clock(song.durationS))")
+                .font(Bench.Typo.mono(12))
+                .foregroundStyle(Bench.Palette.textTertiary)
+            Spacer(minLength: 8)
+            RatingStars(rating: song.rating, size: 15, spacing: 2,
+                        onRate: { onRate($0) })
         }
     }
 }

@@ -82,7 +82,13 @@ final class LibraryStore {
     init(repo: LibraryRepository, partsRepo: PartsRepository? = nil) {
         self.repo = repo
         self.partsRepo = partsRepo
-        refreshRecent()
+        // Seeded off the actor. This runs inside `AppEnvironment.init`, which
+        // is built as a property of the app delegate — so before there is a
+        // window, let alone a frame — and the read behind it is five unbounded
+        // queries that grow with the library. The screens all draw from
+        // observable state and fill in when it lands, which is the same thing
+        // they do when a take arrives.
+        refreshRecentSoon()
     }
 
     var onSongsImported: ([SongRecord]) -> Void = { _ in }

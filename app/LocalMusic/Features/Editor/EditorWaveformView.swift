@@ -165,7 +165,12 @@ struct EditorWellView: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { value in
+                store.beginScrub()
                 store.seekPreview(to: snap(geometry.seconds(atX: value.location.x)))
+            }
+            .onEnded { value in
+                store.seekPreview(to: snap(geometry.seconds(atX: value.location.x)))
+                store.endScrub()
             })
         .overlay(alignment: .bottom) {
             Rectangle().fill(Bench.Palette.hairline).frame(height: 1)
@@ -226,8 +231,11 @@ struct EditorWellView: View {
     private func canvas(_ geometry: EditorGeometry) -> some View {
         ZStack(alignment: .topLeading) {
             Bench.Palette.well
-            if store.showBeatGrid { beatGrid(geometry) }
-            waveform(geometry)
+            if store.showBeatGrid {
+                EditorBeatGrid(grid: store.grid, geometry: geometry)
+            }
+            EditorWaveformCanvas(slices: slices,
+                                 laneCount: store.stereoView ? 2 : 1)
             fadeOverlays(geometry)
             joinMarkers(geometry)
             selectionOverlay(geometry)
@@ -250,104 +258,6 @@ struct EditorWellView: View {
         .onChange(of: store.pxPerSecond) { refetch(width: geometry.width) }
         .onChange(of: store.segments) { refetch(width: geometry.width) }
         .onChange(of: store.stereoView) { refetch(width: geometry.width) }
-    }
-
-    /// Two paths and two fills, not one fill per beat.
-    ///
-    /// A three-minute track at 120 BPM is some three hundred and sixty beats,
-    /// and this used to issue a separate `context.fill` for each of them —
-    /// every one its own `Path`, its own `GraphicsContext` call, on every
-    /// redraw of a view that redraws on scroll, on zoom and on every edit. The
-    /// grid only ever has two colours in it, so it only ever needs two fills.
-    /// `ClipTimelineLanes` has always drawn its rules this way.
-    private func beatGrid(_ geometry: EditorGeometry) -> some View {
-        Canvas { context, size in
-            guard geometry.pxPerSecond > 2 else { return }
-            let barXs = Set(store.grid.barTicks.map {
-                (geometry.x(at: $0.timelineS) * 2).rounded() / 2
-            })
-            var bars = Path()
-            var beats = Path()
-            for beat in store.grid.beats {
-                let x = geometry.x(at: beat)
-                guard x >= 0, x <= size.width else { continue }
-                let snapped = (x * 2).rounded() / 2
-                let rect = CGRect(x: x, y: 0, width: 1, height: size.height)
-                if barXs.contains(snapped) {
-                    bars.addRect(rect)
-                } else {
-                    beats.addRect(rect)
-                }
-            }
-            context.fill(beats, with: .color(.white.opacity(0.04)))
-            context.fill(bars, with: .color(.white.opacity(0.09)))
-        }
-    }
-
-    private func waveform(_ geometry: EditorGeometry) -> some View {
-        Canvas { context, size in
-            let laneCount = store.stereoView ? 2 : 1
-            let laneHeight = size.height / CGFloat(laneCount)
-            // centre lines
-            for lane in 0..<laneCount {
-                let midY = laneHeight * (CGFloat(lane) + 0.5)
-                context.fill(Path(CGRect(x: 0, y: midY, width: size.width,
-                                         height: 1)),
-                             with: .color(.white.opacity(0.07)))
-            }
-            if laneCount == 2 {
-                context.fill(Path(CGRect(x: 0, y: laneHeight, width: size.width,
-                                         height: 1)),
-                             with: .color(.white.opacity(0.1)))
-            }
-            for slice in slices {
-                if slice.silent {
-                    // Hatch a silenced stretch rather than leaving it looking
-                    // like missing data.
-                    var hatch = Path()
-                    var x = slice.startX
-                    while x < slice.startX + slice.width {
-                        hatch.move(to: CGPoint(x: x, y: size.height))
-                        hatch.addLine(to: CGPoint(x: x + 8, y: 0))
-                        x += 9
-                    }
-                    context.stroke(hatch, with: .color(.white.opacity(0.04)),
-                                   lineWidth: 2)
-                    continue
-                }
-                for (laneIndex, lane) in slice.lanes.enumerated() {
-                    guard laneIndex < laneCount else { break }
-                    drawLane(lane, in: &context, slice: slice,
-                             laneTop: laneHeight * CGFloat(laneIndex),
-                             laneHeight: laneHeight)
-                }
-            }
-        }
-        .padding(.vertical, 10)
-    }
-
-    private func drawLane(_ peaks: WaveformExtractor.Peaks,
-                          in context: inout GraphicsContext,
-                          slice: WaveSlice, laneTop: CGFloat,
-                          laneHeight: CGFloat) {
-        let bins = peaks.maxs.count
-        guard bins > 0 else { return }
-        let pitch = slice.width / CGFloat(bins)
-        let barWidth = max(0.8, pitch - 1)
-        let midY = laneTop + laneHeight / 2
-        let scale = (laneHeight / 2 - 4)
-            * CGFloat(pow(10.0, slice.gainDb / 20.0))
-        var bars = Path()
-        for i in 0..<bins {
-            let magnitude = max(abs(peaks.maxs[i]), abs(peaks.mins[i]))
-            let height = max(1.5, CGFloat(magnitude) * scale * 2)
-            let x = slice.startX + CGFloat(i) * pitch
-            bars.addRoundedRect(
-                in: CGRect(x: x, y: midY - height / 2, width: barWidth,
-                           height: height),
-                cornerSize: CGSize(width: 1, height: 1))
-        }
-        context.fill(bars, with: .color(.white.opacity(0.32)))
     }
 
     private func fadeOverlays(_ geometry: EditorGeometry) -> some View {
@@ -668,16 +578,16 @@ struct EditorWellView: View {
 
     private var zoomControls: some View {
         HStack(spacing: 8) {
-            zoomButton("minus") { scaleZoom(by: 0.75) }
+            zoomButton("minus") { store.zoomOut() }
             BenchSlider(value: zoomSliderBinding, range: 0...1,
                         tint: Bench.Palette.accent)
                 .frame(width: 96)
-            zoomButton("plus") { scaleZoom(by: 1.33) }
+            zoomButton("plus") { store.zoomIn() }
             Text(inViewLabel)
                 .font(Bench.Typo.mono(11))
                 .foregroundStyle(Bench.Palette.textQuaternary)
                 .frame(width: 82, alignment: .leading)
-            Button("Fit") { store.pxPerSecond = 0; store.visibleStartS = 0 }
+            Button("Fit") { store.zoomToFit() }
                 .buttonStyle(.bench(.quiet))
         }
     }
@@ -724,32 +634,13 @@ struct EditorWellView: View {
                                                         width: width))
                 let maxZ = Double(EditorGeometry.maxZoom)
                 let zoom = exp(log(fit) + fraction * (log(maxZ) - log(fit)))
-                setZoomKeepingCenter(CGFloat(zoom))
+                store.setZoomKeepingCenter(CGFloat(zoom))
             })
     }
 
-    private func scaleZoom(by factor: CGFloat) {
-        let zoom = store.pxPerSecond > 0 ? store.pxPerSecond
-            : EditorGeometry.fitZoom(durationS: store.timelineDurationS,
-                                     width: max(1, store.wellWidth))
-        setZoomKeepingCenter(zoom * factor)
-    }
-
-    private func setZoomKeepingCenter(_ zoom: CGFloat) {
-        // Anchor on the playhead when visible, the window centre otherwise.
-        let duration = store.timelineDurationS
-        let width = max(1, store.wellWidth)
-        let visible = store.pxPerSecond > 0
-            ? Double(width / store.pxPerSecond) : duration
-        let anchor = (store.playheadS >= store.visibleStartS
-                      && store.playheadS <= store.visibleStartS + visible)
-            ? store.playheadS : store.visibleStartS + visible / 2
-        store.pxPerSecond = EditorGeometry.clampZoom(zoom, durationS: duration,
-                                                     width: width)
-        let newVisible = Double(width / store.pxPerSecond)
-        store.visibleStartS = (anchor - newVisible / 2)
-            .clamped(to: 0...max(0, duration - newVisible))
-    }
+    // The zoom arithmetic moved to `EditorStore` when the View menu needed it
+    // — see `EditorStore.scaleZoom`. The rail calls the store's methods so
+    // that ⌘+ and this `+` cannot end up anchoring differently.
 
     private var inViewLabel: String {
         guard store.pxPerSecond > 0, store.wellWidth > 0 else {
@@ -834,5 +725,126 @@ struct EditorWellView: View {
     private func trimmedSeconds(_ value: Double) -> String {
         value == value.rounded() ? String(Int(value))
                                  : String(format: "%.1f", value)
+    }
+}
+
+// MARK: - canvas leaves
+
+/// The beat grid, as its own view.
+///
+/// Its own view because the well draws it in the same body as the selection
+/// overlay and the tooltip, so every mouse-move of a selection drag re-ran
+/// this `Canvas` — rebuilding a `Set` over every bar tick and a path over
+/// every beat of the track — for a grid that cannot have moved. Given only
+/// values it can be compared, so SwiftUI skips it when nothing it draws has
+/// changed.
+///
+/// Two paths and two fills, not one fill per beat. A three-minute track at
+/// 120 BPM is some three hundred and sixty beats, and this used to issue a
+/// separate `context.fill` for each of them — every one its own `Path`, its
+/// own `GraphicsContext` call. The grid only ever has two colours in it, so
+/// it only ever needs two fills. `ClipTimelineLanes` has always drawn its
+/// rules this way.
+private struct EditorBeatGrid: View, Equatable {
+    let grid: EditorGrid
+    let geometry: EditorGeometry
+
+    var body: some View {
+        Canvas { context, size in
+            guard geometry.pxPerSecond > 2 else { return }
+            let barXs = Set(grid.barTicks.map {
+                (geometry.x(at: $0.timelineS) * 2).rounded() / 2
+            })
+            var bars = Path()
+            var beats = Path()
+            for beat in grid.beats {
+                let x = geometry.x(at: beat)
+                guard x >= 0, x <= size.width else { continue }
+                let snapped = (x * 2).rounded() / 2
+                let rect = CGRect(x: x, y: 0, width: 1, height: size.height)
+                if barXs.contains(snapped) {
+                    bars.addRect(rect)
+                } else {
+                    beats.addRect(rect)
+                }
+            }
+            context.fill(beats, with: .color(.white.opacity(0.04)))
+            context.fill(bars, with: .color(.white.opacity(0.09)))
+        }
+    }
+}
+
+/// The waveform itself, as its own view — same reason as the grid, and it is
+/// the expensive one: at deep zoom this is a rounded rect per bin per lane,
+/// hundreds to thousands of them, and a selection drag redrew every one of
+/// them per mouse-move. Nothing here depends on the selection or the cursor.
+private struct EditorWaveformCanvas: View, Equatable {
+    let slices: [EditorWellView.WaveSlice]
+    let laneCount: Int
+
+    var body: some View {
+        Canvas { context, size in
+            let laneHeight = size.height / CGFloat(laneCount)
+            // centre lines
+            for lane in 0..<laneCount {
+                let midY = laneHeight * (CGFloat(lane) + 0.5)
+                context.fill(Path(CGRect(x: 0, y: midY, width: size.width,
+                                         height: 1)),
+                             with: .color(.white.opacity(0.07)))
+            }
+            if laneCount == 2 {
+                context.fill(Path(CGRect(x: 0, y: laneHeight, width: size.width,
+                                         height: 1)),
+                             with: .color(.white.opacity(0.1)))
+            }
+            for slice in slices {
+                if slice.silent {
+                    // Hatch a silenced stretch rather than leaving it looking
+                    // like missing data.
+                    var hatch = Path()
+                    var x = slice.startX
+                    while x < slice.startX + slice.width {
+                        hatch.move(to: CGPoint(x: x, y: size.height))
+                        hatch.addLine(to: CGPoint(x: x + 8, y: 0))
+                        x += 9
+                    }
+                    context.stroke(hatch, with: .color(.white.opacity(0.04)),
+                                   lineWidth: 2)
+                    continue
+                }
+                for (laneIndex, lane) in slice.lanes.enumerated() {
+                    guard laneIndex < laneCount else { break }
+                    drawLane(lane, in: &context, slice: slice,
+                             laneTop: laneHeight * CGFloat(laneIndex),
+                             laneHeight: laneHeight)
+                }
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func drawLane(_ peaks: WaveformExtractor.Peaks,
+                          in context: inout GraphicsContext,
+                          slice: EditorWellView.WaveSlice,
+                          laneTop: CGFloat,
+                          laneHeight: CGFloat) {
+        let bins = peaks.maxs.count
+        guard bins > 0 else { return }
+        let pitch = slice.width / CGFloat(bins)
+        let barWidth = max(0.8, pitch - 1)
+        let midY = laneTop + laneHeight / 2
+        let scale = (laneHeight / 2 - 4)
+            * CGFloat(pow(10.0, slice.gainDb / 20.0))
+        var bars = Path()
+        for i in 0..<bins {
+            let magnitude = max(abs(peaks.maxs[i]), abs(peaks.mins[i]))
+            let height = max(1.5, CGFloat(magnitude) * scale * 2)
+            let x = slice.startX + CGFloat(i) * pitch
+            bars.addRoundedRect(
+                in: CGRect(x: x, y: midY - height / 2, width: barWidth,
+                           height: height),
+                cornerSize: CGSize(width: 1, height: 1))
+        }
+        context.fill(bars, with: .color(.white.opacity(0.32)))
     }
 }

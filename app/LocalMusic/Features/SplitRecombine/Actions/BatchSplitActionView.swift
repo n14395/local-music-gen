@@ -22,6 +22,12 @@ struct BatchSplitActionView: View {
     @State private var query = ""
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var eligible: [ModelInfo] {
         catalog.models.filter {
@@ -88,11 +94,13 @@ struct BatchSplitActionView: View {
             ActionRail(outputs: outputs,
                        explanation: "Each track's parts land in Library › "
                             + "Parts, grouped under the song they came from.",
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear {
             if selectedModelId == nil { selectedModelId = eligible.first?.id }
         }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
     }
 
     private var trackList: some View {

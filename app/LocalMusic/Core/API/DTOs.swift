@@ -138,7 +138,7 @@ struct SystemInfo: Codable, Sendable {
         let workingSetBytes: Int64?
     }
 
-    struct Usage: Codable, Sendable {
+    struct Usage: Codable, Equatable, Sendable {
         /// **Device-wide**, not per-process: Apple Silicon does not expose
         /// per-process GPU utilisation without root. Label it accordingly.
         let gpuPercent: Double?
@@ -151,7 +151,7 @@ struct SystemInfo: Codable, Sendable {
 
 // MARK: - Models
 
-struct ModelInfo: Codable, Identifiable, Sendable {
+struct ModelInfo: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let family: String
     let featured: Bool?
@@ -226,7 +226,7 @@ struct ModelInfo: Codable, Identifiable, Sendable {
     }
 }
 
-enum InstallState: String, Codable, Sendable {
+enum InstallState: String, Codable, Equatable, Sendable {
     case notInstalled = "not_installed"
     case downloading
     case partial
@@ -236,7 +236,7 @@ enum InstallState: String, Codable, Sendable {
 /// The family runtime's side of "is this model ready to run" (contract §4.1).
 /// A family property reported per model: two entries of one family are ready or
 /// not together, and the second one costs nothing once the first has paid.
-enum RuntimeState: String, Codable, Sendable {
+enum RuntimeState: String, Codable, Equatable, Sendable {
     case notInstalled = "not_installed"
     /// Being built right now — by this model's own runtime install, or by the
     /// provisioning step of any download of the same family.
@@ -244,12 +244,12 @@ enum RuntimeState: String, Codable, Sendable {
     case installed
 }
 
-struct HFRepo: Codable, Sendable {
+struct HFRepo: Codable, Equatable, Sendable {
     let repoId: String
     let gated: Bool
 }
 
-struct Capabilities: Codable, Sendable {
+struct Capabilities: Codable, Equatable, Sendable {
     let supportsLyrics: Bool
     let instrumentalOnly: Bool
     let duration: DurationSpec
@@ -324,7 +324,7 @@ struct Capabilities: Codable, Sendable {
     }
 }
 
-struct PipelineStage: Codable, Identifiable, Sendable {
+struct PipelineStage: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let label: String
     /// May be skipped for a given job (e.g. LM reasoning when the model's
@@ -333,7 +333,7 @@ struct PipelineStage: Codable, Identifiable, Sendable {
     let optional: Bool?
 }
 
-struct DurationSpec: Codable, Sendable {
+struct DurationSpec: Codable, Equatable, Sendable {
     let minS: Double
     let maxS: Double
     let defaultS: Double
@@ -358,7 +358,7 @@ struct DurationSpec: Codable, Sendable {
     var canUnlock: Bool { (unlockedMaxS ?? maxS) > maxS }
 }
 
-struct ParamSpec: Codable, Identifiable, Sendable {
+struct ParamSpec: Codable, Identifiable, Equatable, Sendable {
     var id: String { key }
     let key: String
     let type: ParamType
@@ -387,7 +387,7 @@ struct ParamSpec: Codable, Identifiable, Sendable {
     /// hiding it — a control that vanishes teaches you nothing.
     let appliesWhen: AppliesWhen?
 
-    struct AppliesWhen: Codable, Sendable {
+    struct AppliesWhen: Codable, Equatable, Sendable {
         let param: String
         let values: [String]
     }
@@ -427,33 +427,33 @@ struct ParamSpec: Codable, Identifiable, Sendable {
     }
 }
 
-enum ParamType: String, Codable, Sendable {
+enum ParamType: String, Codable, Equatable, Sendable {
     case int, float, bool, string, `enum`, audio, midi, json
 }
 
-struct UploadInfo: Codable, Sendable {
+struct UploadInfo: Codable, Equatable, Sendable {
     let uploadId: String
     let bytes: Int64
     let filename: String
 }
 
-struct EnumChoice: Codable, Identifiable, Sendable {
+struct EnumChoice: Codable, Identifiable, Equatable, Sendable {
     var id: String { value }
     let value: String
     let label: String
 }
 
-struct Requirements: Codable, Sendable {
+struct Requirements: Codable, Equatable, Sendable {
     let minRamBytes: Int64
     let diskBytes: Int64
     let speedTier: SpeedTier
 }
 
-enum SpeedTier: String, Codable, Sendable {
+enum SpeedTier: String, Codable, Equatable, Sendable {
     case fast, medium, slow, experimental
 }
 
-struct LicenseInfo: Codable, Sendable {
+struct LicenseInfo: Codable, Equatable, Sendable {
     let name: String
     let commercialUse: Bool
     let requiresHfToken: Bool
@@ -871,6 +871,10 @@ enum EngineEvent: Sendable {
     case libraryProgress(LibraryOperation)
     case libraryFinished(LibraryOperation)
     case workerState(state: String, modelId: String?, family: String?)
+    /// Live resource use, pushed every two seconds while a worker is alive
+    /// (and every ten when idle). Carries only the three readings that move;
+    /// the machine's static facts still come from `/v1/system`.
+    case systemTelemetry(SystemInfo.Usage)
     case engineWarning(message: String)
 
     /// nil for unknown event names (forward compatibility: ignore, don't fail).
@@ -942,6 +946,9 @@ enum EngineEvent: Sendable {
                 let d = try decoder.decode(WS.self, from: data)
                 return .workerState(state: d.state, modelId: d.modelId,
                                     family: d.family)
+            case "system.telemetry":
+                return .systemTelemetry(
+                    try decoder.decode(SystemInfo.Usage.self, from: data))
             case "engine.warning":
                 return .engineWarning(message: try decoder.decode(W.self, from: data).message)
             default:

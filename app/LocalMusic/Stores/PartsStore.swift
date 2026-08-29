@@ -8,6 +8,17 @@ final class PartsStore {
     private(set) var results: [PartRecord] = []
     /// Analysis attachments for the current results, keyed by part id.
     private(set) var analyses: [String: AnalysisRecord] = [:]
+    /// The ids `analyses` was bulk-read for.
+    ///
+    /// What makes a miss in that dictionary mean something. The read covers
+    /// every row in `results`, so for an id in this set an absent entry is the
+    /// whole answer, and the single-row query in `analysis(for:)` can do
+    /// nothing but confirm it — which it was doing on every body pass of every
+    /// view showing a part with no analysis, forever. Held as a set rather
+    /// than as nil entries in `analyses` because it is rebuilt with the
+    /// dictionary, so a measurement that lands later still arrives with the
+    /// publish that carries it.
+    private var analysedIds: Set<String> = []
     /// How many parts are hearted — the sidebar's "Favourites" count, which
     /// spans both tables and so cannot be read off `results`. Cached for the
     /// reason `LibraryStore.editedCount` is: the sidebar was running the
@@ -78,7 +89,10 @@ final class PartsStore {
 
     init(repo: PartsRepository) {
         self.repo = repo
-        refresh()
+        // Off the actor, as in `LibraryStore.init` and for the same reason:
+        // every part plus an analysis lookup for each of them, before the
+        // first frame exists.
+        refreshSoon()
     }
 
     var repository: PartsRepository { repo }
@@ -123,6 +137,7 @@ final class PartsStore {
                                     favourites: Int)) {
         results = answer.parts
         analyses = answer.analyses
+        analysedIds = Set(answer.parts.map(\.id))
         if favouriteCount != answer.favourites {
             favouriteCount = answer.favourites
         }
@@ -168,8 +183,14 @@ final class PartsStore {
         return nil
     }
 
+    /// The analysis for a part, or for anything else the caller keys on it.
+    ///
+    /// Only ids the bulk read never covered — a song's, or a part outside the
+    /// current filters — are worth a query; see `analysedIds`.
     func analysis(for partId: String) -> AnalysisRecord? {
-        analyses[partId] ?? (try? repo.analysis(ownerId: partId)) ?? nil
+        if let known = analyses[partId] { return known }
+        guard !analysedIds.contains(partId) else { return nil }
+        return (try? repo.analysis(ownerId: partId)) ?? nil
     }
 
     /// Heart / unheart a part. The Library's Favourites scope reads both this

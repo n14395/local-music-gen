@@ -37,6 +37,13 @@ struct TextActionView: View {
     }
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and it
+    /// was being asked for from inside `body` — which on the Ask card meant
+    /// two queries between one keystroke of the question and the next. The
+    /// line only depends on the material, so it is resolved with it.
+    @State private var sourceMeta: String?
     @State private var selectedModelId: String?
     @State private var question = ""
     @State private var alsoTag = false
@@ -49,6 +56,12 @@ struct TextActionView: View {
     @State private var submittedAt: Date?
     @State private var saved = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var slot: Slot? { recipe.slots.first }
 
@@ -86,9 +99,7 @@ struct TextActionView: View {
             ActionSourceCard(
                 eyebrow: sourceEyebrow,
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "A song or a part from your library.",
                 chooseTitle: source == nil ? "Choose from Library…" : "Change…",
@@ -123,10 +134,17 @@ struct TextActionView: View {
                                 ? { submit(back: true) } : nil)
         } rail: {
             ActionRail(outputs: outputs, explanation: explanation,
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear { restore() }
+        .onChange(of: source) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
         .onDisappear { request?.cancel() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(isPresented: $choosingSource) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Song or part",

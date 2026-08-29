@@ -28,6 +28,12 @@ struct SimilarActionView: View {
 
     @State private var base: PickedMaterial?
     @State private var candidates: [Candidate] = []
+    /// The source card's second line, resolved when the base changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and asked
+    /// for from inside `body` it ran on every pass. The line only depends on
+    /// the material, so it is resolved with it.
+    @State private var baseMeta: String?
     @State private var missingEmbedding = 0
     @State private var choosingBase = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
@@ -45,9 +51,7 @@ struct SimilarActionView: View {
             ActionSourceCard(
                 eyebrow: "SOUNDS LIKE…",
                 material: base,
-                meta: base.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: baseMeta,
                 playback: playback,
                 placeholder: "The track whose sound to search for.",
                 chooseTitle: base == nil ? "Choose from Library…" : "Change…",
@@ -89,6 +93,11 @@ struct SimilarActionView: View {
                 lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
         }
         .onAppear { restore() }
+        .onChange(of: base, initial: true) {
+            baseMeta = base.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
         .sheet(isPresented: $choosingBase) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Starting point",

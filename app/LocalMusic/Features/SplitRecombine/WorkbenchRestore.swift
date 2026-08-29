@@ -139,8 +139,11 @@ extension WorkbenchModel {
             }
             if let record = parts.analysis(for: partId) {
                 summaries[partId] = AnalysisSummary(record: record)
+                // Sections only — see `ClipAnalysis`. An eight-part mix used to
+                // decode eight whole analyses, beat lists and CLAP embeddings
+                // and all, on the click that reopened it.
                 let payload = try? BackendClient.decoder.decode(
-                    AnalysisPayload.self, from: Data(record.analysisJSON.utf8))
+                    ClipAnalysis.self, from: Data(record.analysisJSON.utf8))
                 sectionsById[partId] = payload?.sections ?? []
             }
         }

@@ -75,7 +75,9 @@ struct EditorOverviewStrip: View {
                 .fill(Bench.Palette.well)
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(Bench.Palette.hairline, lineWidth: 1)
-            overviewWave(width: width)
+            EditorOverviewWave(peaks: peaks, segments: store.segments,
+                               timelineDurationS: store.timelineDurationS,
+                               sourceDurationS: store.sourceDurationS)
                 .padding(.horizontal, 8).padding(.vertical, 7)
             // selection tint
             if let selection = store.selection {
@@ -241,22 +243,46 @@ struct EditorOverviewStrip: View {
             .animation(.easeOut(duration: 0.12), value: lit)
     }
 
-    /// The overview draws the *edited* timeline by resampling the source's
-    /// cached whole-file peaks through the segment map — cheap, and honest
-    /// about what was cut, pasted or reversed.
-    private func overviewWave(width: CGFloat) -> some View {
+    private func loadPeaks() async {
+        guard let url = store.sourceURL,
+              let cache = store.sourcePeaksCacheURL else { return }
+        guard loadedFor != url || peaks == nil else { return }
+        peaks = try? await WaveformExtractor.shared.peaks(for: url,
+                                                          cacheURL: cache)
+        loadedFor = url
+    }
+}
+
+/// The overview's waveform.
+///
+/// Its own view because the strip's body reads `visibleStartS` and
+/// `pxPerSecond` to place the viewport window, so dragging or zooming that
+/// window re-ran this `Canvas` on every event — resampling a few hundred bars
+/// through the segment map and rebuilding the path — to move a rectangle that
+/// sits on top of it. Given only values, it is skipped unless the audio or
+/// the cut actually changed.
+///
+/// The overview draws the *edited* timeline by resampling the source's cached
+/// whole-file peaks through the segment map — cheap, and honest about what was
+/// cut, pasted or reversed.
+private struct EditorOverviewWave: View, Equatable {
+    let peaks: WaveformExtractor.Peaks?
+    let segments: [EditSegment]
+    let timelineDurationS: Double
+    let sourceDurationS: Double
+
+    var body: some View {
         Canvas { context, size in
             guard let peaks, !peaks.maxs.isEmpty else { return }
-            let duration = max(0.001, store.timelineDurationS)
-            let sourceDuration = max(0.001, store.sourceDurationS)
+            let duration = max(0.001, timelineDurationS)
+            let sourceDuration = max(0.001, sourceDurationS)
             let bars = max(1, Int(size.width / 3))
             let pitch = size.width / CGFloat(bars)
             let mid = size.height / 2
             var path = Path()
             for i in 0..<bars {
                 let t = (Double(i) + 0.5) / Double(bars) * duration
-                guard let s = EditProgram.timelineToSource(t,
-                                                           in: store.segments)
+                guard let s = EditProgram.timelineToSource(t, in: segments)
                 else { continue }
                 let bin = Int(s / sourceDuration * Double(peaks.maxs.count))
                     .clamped(to: 0...(peaks.maxs.count - 1))
@@ -269,14 +295,5 @@ struct EditorOverviewStrip: View {
             }
             context.fill(path, with: .color(.white.opacity(0.24)))
         }
-    }
-
-    private func loadPeaks() async {
-        guard let url = store.sourceURL,
-              let cache = store.sourcePeaksCacheURL else { return }
-        guard loadedFor != url || peaks == nil else { return }
-        peaks = try? await WaveformExtractor.shared.peaks(for: url,
-                                                          cacheURL: cache)
-        loadedFor = url
     }
 }

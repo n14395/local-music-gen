@@ -68,6 +68,11 @@ struct TextDocsSection: View {
 
     @ViewBuilder
     private func slot(_ doc: TextDocRecord) -> some View {
+        // `segments` decodes `segmentsJSON` on every read, and the branch
+        // below wants the answer twice — once to choose the timed layout,
+        // once to draw it. Decoded here so a slot costs one, and so the two
+        // reads cannot disagree about whether there are any.
+        let segments = doc.kindValue == .lyrics ? doc.segments : []
         VStack(alignment: .leading, spacing: 6) {
             if let question = doc.question, !question.isEmpty {
                 Text(question)
@@ -84,8 +89,8 @@ struct TextDocsSection: View {
                     .padding(6)
                     .background(RoundedRectangle(cornerRadius: 8)
                         .fill(Bench.Palette.inset))
-            } else if doc.kindValue == .lyrics, !doc.segments.isEmpty {
-                segmentLines(doc)
+            } else if !segments.isEmpty {
+                segmentLines(segments)
             } else {
                 Text(doc.text)
                     .font(doc.kindValue == .abc ? Bench.Typo.mono(12)
@@ -129,9 +134,10 @@ struct TextDocsSection: View {
 
     /// Transcribed lyrics as tappable timestamped lines: a tap seeks the
     /// transport when this track is what is playing.
-    private func segmentLines(_ doc: TextDocRecord) -> some View {
+    private func segmentLines(
+        _ segments: [TextPayload.Segment]) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(doc.segments.enumerated()), id: \.offset) { _, seg in
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                 Button {
                     if let playback, playback.currentSongId == ownerId {
                         playback.seek(to: seg.startS)
@@ -227,9 +233,20 @@ struct TextDocsSection: View {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    private static func ago(_ date: Date) -> String {
+    /// Built once and kept. `RelativeDateTimeFormatter` resolves a locale
+    /// and a calendar when it is constructed, and `attribution` asks for one
+    /// of these per document slot — on a pane that redraws with the playhead
+    /// that was a formatter per slot, four times a second.
+    ///
+    /// On the actor because it is a class with settings on it and no
+    /// `Sendable` conformance; every caller is already drawing.
+    @MainActor private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return formatter
+    }()
+
+    @MainActor private static func ago(_ date: Date) -> String {
+        relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }

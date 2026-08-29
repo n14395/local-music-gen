@@ -29,6 +29,13 @@ struct TextCompareActionView: View {
     }
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and asked
+    /// for from inside `body` it ran on every pass of a page that has text
+    /// fields on it. The line only depends on the material, so it is resolved
+    /// with it.
+    @State private var sourceMeta: String?
     @State private var tickedIds: Set<String> = []
     @State private var question = ""
     @State private var entries: [Entry] = []
@@ -59,9 +66,7 @@ struct TextCompareActionView: View {
             ActionSourceCard(
                 eyebrow: "AUDIO TO LISTEN TO",
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "A song or a part from your library.",
                 chooseTitle: source == nil ? "Choose from Library…" : "Change…",
@@ -99,6 +104,11 @@ struct TextCompareActionView: View {
                 lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
         }
         .onAppear { restore() }
+        .onChange(of: source, initial: true) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
         .onDisappear { requests.forEach { $0.cancel() } }
         .sheet(isPresented: $choosingSource) {
             PartPickerSheet(

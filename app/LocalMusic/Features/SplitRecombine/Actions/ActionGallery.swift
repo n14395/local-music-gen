@@ -30,19 +30,38 @@ struct ActionGallery: View {
     @FocusState private var queryFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        // The chip counts, the shelves and the "start here" card are three
+        // views of one filtered list, and each of them used to ask for it
+        // again — the chip row alone seven times, and every shelf re-derived
+        // the shelf list to find out whether it was the first one. With sixty
+        // recipes and two case-insensitive searches apiece that was tens of
+        // thousands of comparisons between one keystroke in the search field
+        // and the next. Searched once here, then handed down.
+        let matched = matchingSearch
+        let bySection = Dictionary(grouping: matched, by: \.category)
+        let sections = RecipeCategory.allCases.filter { section in
+            guard category == nil || category == section else { return false }
+            return !(bySection[section] ?? []).isEmpty
+        }
+        // The design accent-strokes one card as "start here". It is the first
+        // card of the first shelf — separating a song is what every other
+        // exact recipe wants as material.
+        let recommendedId = sections.first
+            .flatMap { (bySection[$0] ?? []).first?.id }
+        return VStack(spacing: 0) {
             topBar
-            filterBar
+            filterBar(matched: matched, bySection: bySection)
             if let line = readiness.waitingLine { catalogStrip(line) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(visibleCategories) { section in
+                    ForEach(sections) { section in
                         Text(section.sectionTitle).eyebrow()
-                            .padding(.top, section == visibleCategories.first
-                                     ? 0 : 4)
-                        grid(for: section)
+                            .padding(.top, section == sections.first ? 0 : 4)
+                        grid(cards: bySection[section] ?? [],
+                             isFirstShelf: section == sections.first,
+                             recommendedId: recommendedId)
                     }
-                    if visibleCategories.isEmpty {
+                    if sections.isEmpty {
                         emptyState
                     }
                 }
@@ -50,11 +69,11 @@ struct ActionGallery: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background {
-            Button("") { queryFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-        }
+        // ⌘F is the Edit menu's item now, not a hidden button: one item that
+        // names where it will land ("Find in Actions") instead of four
+        // invisible ones that claimed the key with nothing to show for it.
+        .focusedSceneValue(\.searchCommand,
+                           SearchCommand(scope: "Actions") { queryFocused = true })
     }
 
     // MARK: catalog strip
@@ -162,13 +181,14 @@ struct ActionGallery: View {
         }
     }
 
-    private var filterBar: some View {
+    private func filterBar(matched: [Recipe],
+                           bySection: [RecipeCategory: [Recipe]]) -> some View {
         BenchFilterBar {
-            BenchFilterChip(label: "All", count: matchingSearch.count,
+            BenchFilterChip(label: "All", count: matched.count,
                             isSelected: category == nil) { category = nil }
             ForEach(RecipeCategory.allCases) { candidate in
                 BenchFilterChip(label: candidate.title,
-                                count: count(of: candidate),
+                                count: (bySection[candidate] ?? []).count,
                                 isSelected: category == candidate) {
                     category = category == candidate ? nil : candidate
                 }
@@ -186,11 +206,12 @@ struct ActionGallery: View {
 
     // MARK: grid
 
-    private func grid(for section: RecipeCategory) -> some View {
+    private func grid(cards: [Recipe], isFirstShelf: Bool,
+                      recommendedId: String?) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
                                  count: 4),
                   alignment: .leading, spacing: 10) {
-            ForEach(visible(in: section)) { recipe in
+            ForEach(cards) { recipe in
                 ActionCard(recipe: recipe,
                            state: states[recipe.id] ?? .active,
                            isRecommended: recipe.id == recommendedId) {
@@ -199,7 +220,7 @@ struct ActionGallery: View {
             }
             // The drop tile ends the first shelf, where "I have a file, now
             // what?" is the question actually being asked.
-            if section == visibleCategories.first {
+            if isFirstShelf {
                 BenchDropTarget(
                     title: "Drop audio here",
                     subtitle: "Or pick from Library · any action accepts a file",
@@ -237,27 +258,6 @@ struct ActionGallery: View {
         return false
     }
 
-    private func count(of section: RecipeCategory) -> Int {
-        matchingSearch.filter { $0.category == section }.count
-    }
-
-    private func visible(in section: RecipeCategory) -> [Recipe] {
-        matchingSearch.filter { $0.category == section }
-    }
-
-    private var visibleCategories: [RecipeCategory] {
-        RecipeCategory.allCases.filter { section in
-            guard category == nil || category == section else { return false }
-            return !visible(in: section).isEmpty
-        }
-    }
-
-    /// The design accent-strokes one card as "start here". It is the first card
-    /// of the first shelf — separating a song is what every other exact recipe
-    /// wants as material.
-    private var recommendedId: String? {
-        visibleCategories.first.flatMap { visible(in: $0).first?.id }
-    }
 }
 
 // MARK: - Card

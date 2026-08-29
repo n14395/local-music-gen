@@ -301,11 +301,14 @@ enum EditMixPlan {
     /// run that carries them. The engine's ramps cannot span two tracks, so
     /// a fade longer than its end run is cut short — and the well draws
     /// THIS rather than the number that was asked for.
+    ///
+    /// Takes the segments rather than deriving them: the only caller is
+    /// `refreshDerivedFromSegments`, which runs on every rebuild — including
+    /// every frame of a slider drag — and already holds the list this was
+    /// replaying the whole edit program to rebuild.
     static func effectiveFades(document: EditDocument,
-                               sourceDuration: Double)
+                               segments: [EditSegment])
         -> (headS: Double, tailS: Double) {
-        let segments = EditProgram.segments(sourceDuration: sourceDuration,
-                                            ops: document.ops)
         let rate = document.speedRate
         var runLengths: [Double] = []
         var runs: [Run] = []

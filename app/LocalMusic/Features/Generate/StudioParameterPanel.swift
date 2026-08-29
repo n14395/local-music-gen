@@ -209,9 +209,10 @@ struct StudioParameterPanel: View {
             + mine
     }
 
+    /// Every saved preset, for every model — see `StudioPresetMemo` for why
+    /// this is not the decode it looks like.
     private var stored: [StudioPreset] {
-        (try? JSONDecoder().decode([StudioPreset].self,
-                                   from: Data(storedPresetsJSON.utf8))) ?? []
+        StudioPresetMemo.presets(in: storedPresetsJSON)
     }
 
     private func savePreset() {
@@ -239,6 +240,38 @@ struct StudioParameterPanel: View {
         guard let data = try? JSONEncoder().encode(presets),
               let json = String(data: data, encoding: .utf8) else { return }
         storedPresetsJSON = json
+    }
+}
+
+/// `studio.presets` → the presets saved in it.
+///
+/// The preset row is drawn by the panel's body, and that body is invalidated
+/// by every write to `ParameterFormState.values` — one tracked property
+/// covering every knob, so any slider invalidates it. Decoding the store
+/// where the row asked for it therefore meant a `JSONDecoder` and a whole
+/// preset document per frame for the length of a drag, to redraw two or three
+/// chips that had not changed.
+///
+/// The JSON *is* the identity of the answer: a store that has changed is a
+/// different string. So memoising on it is exact rather than a guess about
+/// when to invalidate — and it holds for the writers too, since `savePreset`
+/// and `delete` read the store back before rewriting it.
+@MainActor
+enum StudioPresetMemo {
+    private static var lists: [String: [StudioPreset]] = [:]
+
+    /// A save or a delete writes a *new* document, so a long session would
+    /// otherwise keep every version of the store it had ever drawn. Past this
+    /// the memo starts over rather than growing for the rest of the session.
+    private static let capacity = 64
+
+    static func presets(in json: String) -> [StudioPreset] {
+        if let known = lists[json] { return known }
+        let answer = (try? JSONDecoder().decode([StudioPreset].self,
+                                                from: Data(json.utf8))) ?? []
+        if lists.count >= capacity { lists.removeAll(keepingCapacity: true) }
+        lists[json] = answer
+        return answer
     }
 }
 

@@ -285,6 +285,10 @@ final class PartNamingTests: XCTestCase {
         try partsRepo.insert(part(id: "p1", songId: "s1",
                                   name: "vocals-track042"))
         let store = PartsStore(repo: partsRepo)
+        // The store seeds itself off the actor, so a test that acts on it in
+        // the same turn it was built has to ask for the cache synchronously —
+        // this asserts on the cached row, which is what `refresh` fills.
+        store.refresh()
 
         XCTAssertNil(store.rename(id: "p1", to: "  The hook  "),
                      "a free name is accepted, whitespace and all")

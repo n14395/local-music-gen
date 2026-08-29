@@ -19,12 +19,25 @@ struct SpliceActionView: View {
     let onBack: () -> Void
 
     @State private var materials: [String: PickedMaterial] = [:]
+    /// Each slot's second line, keyed by slot id.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and both
+    /// cards were asking for it from inside `body`, so every redraw of the
+    /// page re-ran four queries. The line only depends on the material, so it
+    /// is resolved when the slots change.
+    @State private var metaBySlot: [String: String] = [:]
     @State private var pickingSlot: Slot?
     @State private var splitCodebook = 2
     @State private var swapped = false
     @State private var title = ""
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var spliceModel: ModelInfo? {
         MixModels.splicer(in: catalog.models)
@@ -52,9 +65,7 @@ struct SpliceActionView: View {
                 ActionSourceCard(
                     eyebrow: slot.label.uppercased(),
                     material: materials[slot.id],
-                    meta: materials[slot.id].map {
-                        ActionCopy.sourceMeta($0, library: library, parts: parts)
-                    },
+                    meta: metaBySlot[slot.id],
                     playback: playback,
                     placeholder: slot.id == "a"
                         ? "Whose rhythm and arrangement survive."
@@ -100,9 +111,12 @@ struct SpliceActionView: View {
                             + "with both sources in its provenance. Expect "
                             + "artifacts — this is a codec being misused on "
                             + "purpose.",
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear(perform: restore)
+        .onChange(of: materials) { refreshMetaBySlot() }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(item: $pickingSlot) { slot in
             PartPickerSheet(
                 slotLabel: slot.label, accepts: slot.accepts,
@@ -110,6 +124,12 @@ struct SpliceActionView: View {
                 catalog: catalog, library: library, parts: parts, jobs: jobs,
                 playback: playback, onOpenModels: onOpenModels,
                 onPick: { materials[slot.id] = $0 })
+        }
+    }
+
+    private func refreshMetaBySlot() {
+        metaBySlot = materials.mapValues {
+            ActionCopy.sourceMeta($0, library: library, parts: parts)
         }
     }
 

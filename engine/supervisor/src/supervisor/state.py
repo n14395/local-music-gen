@@ -44,6 +44,28 @@ class EngineState:
             self.registry.models[model_id]["family"])
         return info
 
+    def model_infos(self) -> list[dict]:
+        """Every model's `ModelInfo`, in catalog order.
+
+        One call rather than a comprehension over `model_info`, so /v1/models
+        can hand the whole assembly to a worker thread: it is filesystem-bound
+        from end to end (see `Registry.info`) and the catalog is large enough
+        that doing it on the event loop stalls the event stream.
+        """
+        out = []
+        # Iterated from a snapshot of the keys: a custom model can be added or
+        # deleted from the event loop while this runs, and a dict that changes
+        # size mid-iteration would take the whole request down.
+        for model_id in list(self.registry.models):
+            try:
+                out.append(self.model_info(model_id))
+            except KeyError:
+                # Deleted while this list was being built. It is simply absent
+                # from the answer; the models.changed event that accompanied
+                # the delete is what tells the client to re-ask.
+                continue
+        return out
+
     def runtime_state(self, family: str) -> str:
         """Whether this family's adapter packages are installed (contract 4.1).
 

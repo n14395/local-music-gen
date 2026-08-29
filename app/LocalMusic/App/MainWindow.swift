@@ -12,68 +12,23 @@ import SwiftUI
 struct MainWindow: View {
     let env: AppEnvironment
 
-    @State private var destination: Destination = .launch
-    @State private var libraryScope: LibraryScope = .songs
-    /// A track the shell wants the Library to open on — set by the queue's
-    /// "Show in library", cleared by the Library once it has acted.
-    @State private var libraryReveal: LibraryReveal?
-    /// Live navigation inside Actions: nil is the gallery, non-nil is the
-    /// configuration page currently open. Held by the shell so a jump from
-    /// another screen lands on a configured page, and so leaving Actions and
-    /// coming back keeps your place.
-    @State private var actionsRoute: ActionsScreen.Route?
-    /// One-off notes from reopening a finished mix — recovered tempo, missing
-    /// parts, settings that were never recorded. Owned here because both
-    /// Actions (which can hand the bench a fresh arrangement) and Workbench
-    /// (which displays them) need to reach them.
-    @State private var workbenchNotices: [String] = []
-    /// A/B comparison of two library rows. It lives in the shell rather than
-    /// in the Library because the transport bar — which is where you switch
-    /// sides — sits outside the screen.
-    @State private var libraryCompare = LibraryCompare()
-    /// How far each library scope was scrolled, kept out here because the
-    /// screen itself is rebuilt on every navigation. Dies with the window, as
-    /// asked: a scroll position is where you just were, not a preference.
+    /// Where the shell is pointed, what it has picked, and which panels are
+    /// showing. All of it used to be `@State` here; it moved to `ShellState`
+    /// when the menubar arrived, because a `Commands` body is built with the
+    /// scene and can never reach a view’s state. Nothing else changed —
+    /// this view reads and writes exactly the same values, one indirection
+    /// further out.
+    @Bindable private var shell: ShellState
+
+    /// How far each library scope was scrolled, kept out of the screen because
+    /// the screen itself is rebuilt on every navigation. Dies with the window,
+    /// as asked: a scroll position is where you just were, not a preference —
+    /// and no menu item has an opinion about it, so it stayed here.
     @State private var libraryScroll = LibraryScrollMemory()
-    /// What was picked in the Library — the inspected row of each kind, and
-    /// the ticked set beside them. Out here for the same reason as the scroll
-    /// position: the screen is rebuilt on every navigation, so a selection it
-    /// owned itself would not survive a trip to Models and back. Dies with the
-    /// window, like the scroll position — what you had picked a minute ago is
-    /// worth remembering, what you had picked last Tuesday is not.
-    @State private var librarySelectedSongId: String?
-    @State private var librarySelectedPartId: String?
-    @State private var libraryChecked: Set<String> = []
-    /// The model whose properties rail was open, held out here for the same
-    /// reason and with the same lifetime.
-    @State private var modelInspectedId: String?
-    /// A track the user asked to revert, held until they confirm.
-    @State private var pendingRevert: SongRecord?
-    /// Set when a revert could not run because a render was in flight —
-    /// a confirmed destructive action must never appear to do nothing.
-    @State private var revertBlocked: String?
-    /// What a gated feature sent the user to Models to find, so the list there
-    /// can narrow to the models that would ungate it. Held by the shell
-    /// because it is set on one screen and read on another.
-    @State private var modelRequirement: ModelRequirement?
     /// Which build of the first-run flow this user has been through. Versioned
     /// rather than a bool so a later change to the recommended set can offer
     /// itself once more without a defaults migration.
     @AppStorage("onboarding.completedVersion") private var onboardingVersion = 0
-    @State private var showOnboarding = false
-    /// The queue panel, and the rule for when it shows itself. Shell state
-    /// rather than a screen's, because the point of the change is that the
-    /// queue is the same queue from everywhere.
-    @State private var queuePanel = QueuePanel()
-    /// Whether the queue panel holds a column of its own instead of floating
-    /// over the screen. Stored, unlike `queuePanel`: where you want the queue
-    /// to sit is a way of working — a wide display can afford it permanently,
-    /// a laptop cannot — and re-pinning it every launch would be a chore.
-    @AppStorage("queue.pinned") private var queuePinned = false
-
-    /// Hiding the sidebar is a working preference, not a session accident —
-    /// somebody who wants the screen wide wants it wide tomorrow too.
-    @AppStorage("sidebar.collapsed") private var sidebarCollapsed = false
     /// Whether the window is currently too narrow to hold both. Overrules the
     /// preference without erasing it.
     @State private var sidebarFit = SidebarFit()
@@ -102,6 +57,11 @@ struct MainWindow: View {
     /// Bump when the recommended set changes enough to be worth re-offering.
     private static let onboardingVersionCurrent = 1
 
+    init(env: AppEnvironment) {
+        self.env = env
+        self.shell = env.shell
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -109,8 +69,8 @@ struct MainWindow: View {
                     // Slides out to the left rather than fading: the sidebar
                     // is a column of the window, and a column that dissolves
                     // in place reads as a drawing bug.
-                    ShellSidebar(env: env, destination: $destination,
-                                 libraryScope: $libraryScope)
+                    ShellSidebar(env: env, destination: $shell.destination,
+                                 libraryScope: $shell.libraryScope)
                         .transition(.move(edge: .leading))
                 }
                 FittingWidthReader(version: contentShapeVersion,
@@ -143,12 +103,12 @@ struct MainWindow: View {
             }
             .frame(maxHeight: .infinity)
             ShellTransport(env: env, slot: transportSlot,
-                           isQueueOpen: queuePanel.isOpen,
+                           isQueueOpen: shell.queuePanel.isOpen,
                            onToggleQueue: {
-                               withAnimation(panelMotion) { queuePanel.toggle() }
+                               withAnimation(panelMotion) { shell.queuePanel.toggle() }
                            },
                            onToggleCompare: {
-                               libraryCompare.toggle(playback: env.playback)
+                               shell.compare.toggle(playback: env.playback)
                            })
         }
         .background(Bench.Palette.windowBackground)
@@ -169,6 +129,12 @@ struct MainWindow: View {
         // every layer for a yes/no would make Settings look like a
         // dependency of screens that merely honour one preference.
         .environment(env.settings)
+        // Ambient for the same reason settings is, and read optionally at the
+        // far end for the same reason too: the only thing that wants it down
+        // there is the detail pane's rename mailbox, and threading a shell
+        // through six layers for one `FocusState` would make the Library look
+        // like a dependency of the menubar.
+        .environment(env.shell)
         // Ambient like settings, and optional at the reading end for the same
         // reason: previews and tests host panes without an environment, and
         // "no text store" must read as "no text-docs section".
@@ -208,7 +174,7 @@ struct MainWindow: View {
             isCollapsed: sidebarIsCollapsed,
             isLocked: sidebarFit.isCramped,
             toggle: {
-                withAnimation(panelMotion) { sidebarCollapsed.toggle() }
+                withAnimation(panelMotion) { shell.sidebarCollapsed.toggle() }
             }))
         // A screen with a wider requirement can arrive without the window
         // changing size at all — opening the Editor is exactly that — so the
@@ -216,16 +182,16 @@ struct MainWindow: View {
         .onChange(of: contentMinWidth) { refitSidebar() }
         .onChange(of: env.studio.pending) { routeIntent() }
         .onChange(of: env.prefill.pending) { if env.prefill.pending != nil {
-            destination = .generate
+            shell.destination = .generate
         } }
         .onChange(of: isRenderingWork) {
             withAnimation(panelMotion) {
-                queuePanel.workChanged(isWorking: isRenderingWork)
+                shell.queuePanel.workChanged(isWorking: isRenderingWork)
             }
         }
         .onChange(of: queueIsEmpty) {
             withAnimation(panelMotion) {
-                queuePanel.contentsChanged(isEmpty: queueIsEmpty)
+                shell.queuePanel.contentsChanged(isEmpty: queueIsEmpty)
             }
         }
         .task { await env.pollTelemetry() }
@@ -234,32 +200,49 @@ struct MainWindow: View {
             wireEditorRouting()
         }
         .confirmationDialog(
-            "Revert “\(pendingRevert?.title ?? "")” to the original?",
-            isPresented: Binding(get: { pendingRevert != nil },
-                                 set: { if !$0 { pendingRevert = nil } })) {
+            "Revert “\(shell.pendingRevert?.title ?? "")” to the original?",
+            isPresented: Binding(get: { shell.pendingRevert != nil },
+                                 set: { if !$0 { shell.pendingRevert = nil } })) {
             Button("Revert — discard the edits", role: .destructive) {
-                if let song = pendingRevert { revert(song) }
-                pendingRevert = nil
+                if let song = shell.pendingRevert { actions.revert(song) }
+                shell.pendingRevert = nil
             }
         } message: {
             Text("The file goes back to the untouched original and the edit "
                  + "list is cleared. This cannot be undone.")
         }
         .alert("Still rendering",
-               isPresented: Binding(get: { revertBlocked != nil },
-                                    set: { if !$0 { revertBlocked = nil } })) {
-            Button("OK") { revertBlocked = nil }
+               isPresented: Binding(get: { shell.revertBlocked != nil },
+                                    set: { if !$0 { shell.revertBlocked = nil } })) {
+            Button("OK") { shell.revertBlocked = nil }
         } message: {
-            Text("“\(revertBlocked ?? "")” is being rendered. Reverting has "
+            Text("“\(shell.revertBlocked ?? "")” is being rendered. Reverting has "
                  + "to wait for it to finish.")
         }
+        // The Track menu's Delete, confirmed here for the reason the revert
+        // above is: a menu item cannot host a dialog, and the panes that
+        // already ask do so from inside a screen this one can be pointed away
+        // from. The row menus keep their own — this is the menubar's path to
+        // the same deletion, not a replacement for theirs.
+        .confirmationDialog(
+            "Delete “\(actions.pendingDeleteTitle)”?",
+            isPresented: Binding(get: { shell.pendingDelete != nil },
+                                 set: { if !$0 { shell.pendingDelete = nil } })) {
+            Button("Delete and its files", role: .destructive) {
+                if let target = shell.pendingDelete {
+                    actions.deleteTarget(target)
+                }
+                shell.pendingDelete = nil
+            }
+        }
+
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
         // Stamped on the way *out* rather than by the sheet's own buttons, so
         // every route closes it for good — including an Escape press, which
         // would otherwise bring the welcome back on every launch.
-        .sheet(isPresented: Binding(get: { showOnboarding },
+        .sheet(isPresented: Binding(get: { shell.showOnboarding },
                                     set: { open in
-                                        showOnboarding = open
+                                        shell.showOnboarding = open
                                         if !open {
                                             onboardingVersion = Self.onboardingVersionCurrent
                                         }
@@ -268,7 +251,7 @@ struct MainWindow: View {
                            downloads: env.downloadsStore,
                            backend: env.backendStatus,
                            freeDiskBytes: env.telemetry.freeDiskBytes) {
-                showOnboarding = false
+                shell.showOnboarding = false
             }
         }
     }
@@ -284,14 +267,14 @@ struct MainWindow: View {
     /// once it was over. The sheet carries that wait now, and explains it.
     private func offerOnboarding() {
         guard onboardingVersion < Self.onboardingVersionCurrent,
-              !showOnboarding else { return }
+              !shell.showOnboarding else { return }
         // Only a never-onboarded install opens early. A *re-onboarding* — the
         // version stamp moving in a later release — belongs to someone whose
         // engine is already provisioned and whose catalog lands in under a
         // second, and flashing a welcome at them to conclude "everything
         // recommended is here" is worse than the second's wait.
         guard env.catalog.hasLoaded else {
-            if onboardingVersion == 0 { showOnboarding = true }
+            if onboardingVersion == 0 { shell.showOnboarding = true }
             return
         }
         let plan = OnboardingPlan.make(models: env.catalog.models,
@@ -301,7 +284,7 @@ struct MainWindow: View {
             onboardingVersion = Self.onboardingVersionCurrent
             return
         }
-        showOnboarding = true
+        shell.showOnboarding = true
     }
 
     // MARK: - Sidebar
@@ -312,8 +295,8 @@ struct MainWindow: View {
     /// drawn. Comparing two takes is the one thing you do with the transport
     /// itself, so it is what earns the space beside the readout.
     private var transportSlot: TransportBar.Slot {
-        if destination == .library, libraryCompare.isActive {
-            return .compare(isB: libraryCompare.isB)
+        if shell.destination == .library, shell.compare.isActive {
+            return .compare(isB: shell.compare.isB)
         }
         return .none
     }
@@ -350,7 +333,7 @@ struct MainWindow: View {
 
     /// Where the panel is sitting right now: the stored preference, unless it
     /// opened itself for a render, which pins it for that showing.
-    private var queueIsPinned: Bool { queuePanel.isPinned(preference: queuePinned) }
+    private var queueIsPinned: Bool { shell.queuePanel.isPinned(preference: shell.queuePinned) }
 
     /// What the measured content's width requirement can turn on: which
     /// screen is up, and whether the pinned queue is taking a gutter out of
@@ -358,30 +341,30 @@ struct MainWindow: View {
     /// next screen change or window resize — see `FittingWidthLayout`.
     private var contentShapeVersion: Int {
         var hasher = Hasher()
-        hasher.combine(destination)
+        hasher.combine(shell.destination)
         hasher.combine(queueGutter)
         return hasher.finalize()
     }
 
     private var queueGutter: CGFloat {
-        QueuePanel.gutter(isOpen: queuePanel.isOpen, isPinned: queueIsPinned,
+        QueuePanel.gutter(isOpen: shell.queuePanel.isOpen, isPinned: queueIsPinned,
                           width: Bench.Metrics.Inspector.queue)
     }
 
     /// Showing, and over the screen rather than beside it.
-    private var queueFloats: Bool { queuePanel.isOpen && !queueIsPinned }
+    private var queueFloats: Bool { shell.queuePanel.isOpen && !queueIsPinned }
 
     /// What the window actually draws — the preference unless the window has
     /// overruled it.
     private var sidebarIsCollapsed: Bool {
-        sidebarFit.isCollapsed(preference: sidebarCollapsed)
+        sidebarFit.isCollapsed(preference: shell.sidebarCollapsed)
     }
 
     /// What the window would have to be to show all of it at once: the screen
     /// at its narrowest useful width, the pinned queue's column, and the
     /// sidebar if the user has not put it away.
     private var requiredWidth: CGFloat {
-        SidebarFit.requiredWidth(sidebarPreferredOpen: !sidebarCollapsed,
+        SidebarFit.requiredWidth(sidebarPreferredOpen: !shell.sidebarCollapsed,
                                  contentMinWidth: contentMinWidth)
     }
 
@@ -393,6 +376,10 @@ struct MainWindow: View {
         next.widthChanged(measuredWidth.value, contentMinWidth: contentMinWidth)
         guard next != sidebarFit else { return }
         withAnimation(panelMotion) { sidebarFit = next }
+        // Republished for the View menu, which cannot read a window's
+        // measurement: an item offering to bring back a sidebar the window is
+        // too narrow to hold has to dim instead.
+        shell.sidebarCramped = next.isCramped
     }
 
     /// Take the user to a track a finished queue row made.
@@ -407,11 +394,11 @@ struct MainWindow: View {
     /// pinning it is a statement that you want it there.
     private func showInLibrary(songId: String) {
         guard let song = env.library.song(id: songId) else { return }
-        libraryReveal = LibraryReveal(
+        shell.libraryReveal = LibraryReveal(
             songId: songId, scope: LibraryScope(origin: song.originKind))
-        destination = .library
+        shell.destination = .library
         if queueFloats {
-            withAnimation(panelMotion) { queuePanel.close() }
+            withAnimation(panelMotion) { shell.queuePanel.close() }
         }
     }
 
@@ -425,12 +412,12 @@ struct MainWindow: View {
     /// over your work, a pinned one is beside it — so it goes when it pins.
     @ViewBuilder
     private var queueOverlay: some View {
-        if queuePanel.isOpen {
+        if shell.queuePanel.isOpen {
             BenchInspector(width: Bench.Metrics.Inspector.queue) {
                 QueueRail(jobs: env.jobsStore, downloads: env.downloadsStore,
                           catalog: env.catalog, isPinned: queueIsPinned,
                           onClose: {
-                              withAnimation(panelMotion) { queuePanel.close() }
+                              withAnimation(panelMotion) { shell.queuePanel.close() }
                           },
                           onTogglePin: {
                               // Toggling what is *drawn*, not what is stored:
@@ -439,8 +426,8 @@ struct MainWindow: View {
                               // preference alone would leave it pinned and the
                               // button looking broken.
                               withAnimation(panelMotion) {
-                                  queuePinned = !queueIsPinned
-                                  queuePanel.pinChanged()
+                                  shell.queuePinned = !queueIsPinned
+                                  shell.queuePanel.pinChanged()
                               }
                           },
                           onShowInLibrary: showInLibrary)
@@ -454,7 +441,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var content: some View {
-        switch destination {
+        switch shell.destination {
         case .generate:
             StudioView(catalog: env.catalog, jobs: env.jobsStore,
                        library: env.library, parts: env.partsStore,
@@ -468,7 +455,7 @@ struct MainWindow: View {
             LibraryScreen(library: env.library, parts: env.partsStore,
                           jobs: env.jobsStore, playback: env.playback,
                           settings: env.settings,
-                          scope: $libraryScope, reveal: $libraryReveal,
+                          scope: $shell.libraryScope, reveal: $shell.libraryReveal,
                           actions: songActions,
                           onAddToWorkbench: { part in
                               env.studio.pending = .addToWorkbench(partId: part.id)
@@ -481,11 +468,11 @@ struct MainWindow: View {
                           onEditPart: { part in
                               env.studio.pending = .edit(materialId: part.id)
                           },
-                          compare: libraryCompare,
+                          compare: shell.compare,
                           scrollMemory: libraryScroll,
-                          selectedSongId: $librarySelectedSongId,
-                          selectedPartId: $librarySelectedPartId,
-                          checked: $libraryChecked)
+                          selectedSongId: $shell.selectedSongId,
+                          selectedPartId: $shell.selectedPartId,
+                          checked: $shell.checked)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
@@ -502,11 +489,11 @@ struct MainWindow: View {
                 playback: env.playback, workbench: env.workbench,
                 assistant: env.assistant, plans: env.plans,
                 textStore: env.textStore, textChain: env.textChain,
-                route: $actionsRoute,
+                route: $shell.actionsRoute,
                 onOpenModels: { openModels(for: $0) },
                 onOpenWorkbench: { notes in
-                    workbenchNotices = notes
-                    destination = .workbench
+                    shell.workbenchNotices = notes
+                    shell.destination = .workbench
                 },
                 onOpenStyleTransfer: { preset, sourceId in
                     openStyleTransfer(preset: preset, sourceId: sourceId)
@@ -523,7 +510,7 @@ struct MainWindow: View {
                 // is, only what the user just read and approved.
                 onUseText: { prefill in
                     env.prefill.pending = prefill
-                    destination = .generate
+                    shell.destination = .generate
                 })
         case .workbench:
             WorkbenchScreen(model: env.workbench, catalog: env.catalog,
@@ -532,7 +519,7 @@ struct MainWindow: View {
                             telemetry: env.telemetry,
                             timings: env.renderTimings,
                             notifications: env.notifications,
-                            notices: $workbenchNotices,
+                            notices: $shell.workbenchNotices,
                             onOpenModels: { openModels(for: nil) },
                             onOpenStyleTransfer: { preset, sourceId in
                                 openStyleTransfer(preset: preset,
@@ -543,19 +530,20 @@ struct MainWindow: View {
                          library: env.library, parts: env.partsStore,
                          jobs: env.jobsStore, playback: env.playback,
                          onOpenModels: { openModels(for: nil) },
-                         onOpenLibrary: { destination = .library })
+                         onOpenLibrary: { shell.destination = .library })
         case .models:
             ModelsScreen(catalog: env.catalog, downloads: env.downloadsStore,
                          telemetry: env.telemetry,
-                         requirement: $modelRequirement,
-                         inspectedId: $modelInspectedId,
+                         requirement: $shell.modelRequirement,
+                         inspectedId: $shell.modelInspectedId,
+                         showAddModel: $shell.showAddModel,
                          // An action named in the properties rail opens on
                          // the Actions shelf, with no source picked — the
                          // errand was "show me this card", not "run it".
                          onOpenAction: { recipe in
-                             actionsRoute = .action(recipeId: recipe.id,
+                             shell.actionsRoute = .action(recipeId: recipe.id,
                                                     sourceId: nil)
-                             destination = .actions
+                             shell.destination = .actions
                          })
         }
     }
@@ -564,59 +552,21 @@ struct MainWindow: View {
     /// `nil` — so an errand from one screen cannot leave its filter behind for
     /// the next visit from another.
     private func openModels(for requirement: ModelRequirement?) {
-        modelRequirement = requirement
-        destination = .models
+        shell.modelRequirement = requirement
+        shell.destination = .models
     }
 
     // MARK: - Intents
 
-    /// Wired once and handed to every screen, so a track offers the same jumps
-    /// wherever it is opened from.
-    private var songActions: SongActions {
-        SongActions(
-            reusePrompt: { song in reuse(song, scope: .prompt) },
-            reuseAll: { song in reuse(song, scope: .all) },
-            reuseAllWithSeed: { song in reuse(song, scope: .allWithSeed) },
-            split: { song in
-                env.studio.pending = .split(songId: song.id)
-            },
-            findMatches: { song in
-                env.studio.pending = .findMatches(materialId: song.id)
-            },
-            describe: { song in
-                env.studio.pending = .describe(materialId: song.id)
-            },
-            openMix: { song in
-                env.studio.pending = .openMix(songId: song.id)
-            },
-            restyle: { song in
-                env.studio.pending = .styleTransfer(materialId: song.id,
-                                                    presetId: nil)
-            },
-            edit: { song in
-                env.studio.pending = .edit(materialId: song.id)
-            },
-            playOriginal: { song in
-                env.playback.play(url: song.backupURL,
-                                  songId: song.id + ".original",
-                                  title: song.title,
-                                  duration: song.durationS,
-                                  subtitle: "ORIGINAL · "
-                                      + song.sourceLabel.uppercased())
-            },
-            revertEdits: { song in
-                // Confirmed here rather than at each call site: this is the
-                // one action in the app that discards audio the user cannot
-                // get back, and the row menu used to fire it on one click.
-                // Settings can waive the asking; the render-in-flight refusal
-                // inside `revert` still applies either way.
-                if env.settings.confirmRevert {
-                    pendingRevert = song
-                } else {
-                    revert(song)
-                }
-            })
-    }
+    /// The jumps a track offers, built once in `ShellActions` so the row
+    /// menus, the detail panes and the Track menu are one implementation
+    /// rather than three. It used to be assembled here; the menubar needed the
+    /// same bundle from outside the view, and two copies of "what a track can
+    /// do" would have drifted the first time one gained an entry.
+    private var songActions: SongActions { actions.songActions }
+
+    /// The shell's actions, over this window's environment.
+    private var actions: ShellActions { ShellActions(env: env) }
 
     /// Intents arrive as a mailbox write from any screen. With Split &
     /// Recombine dissolved, there is no longer a second-level screen to hand
@@ -626,21 +576,21 @@ struct MainWindow: View {
         guard let intent = env.studio.pending else { return }
         switch intent {
         case .split(let songId):
-            actionsRoute = .action(recipeId: "split-instruments", sourceId: songId)
-            destination = .actions
+            shell.actionsRoute = .action(recipeId: "split-instruments", sourceId: songId)
+            shell.destination = .actions
         case .findMatches(let materialId):
-            actionsRoute = .action(recipeId: "what-mashes", sourceId: materialId)
-            destination = .actions
+            shell.actionsRoute = .action(recipeId: "what-mashes", sourceId: materialId)
+            shell.destination = .actions
         case .addToWorkbench(let partId):
             if let material = material(id: partId) {
                 env.workbench.add(material: material, parts: env.partsStore)
             }
-            destination = .workbench
+            shell.destination = .workbench
         case .openMix(let songId):
-            workbenchNotices = env.workbench.load(songId: songId,
+            shell.workbenchNotices = env.workbench.load(songId: songId,
                                                   parts: env.partsStore,
                                                   library: env.library)
-            destination = .workbench
+            shell.destination = .workbench
         case .styleTransfer(let materialId, let presetId):
             openStyleTransfer(
                 preset: presetId.flatMap(StylePreset.preset(forRecipeId:)),
@@ -648,9 +598,9 @@ struct MainWindow: View {
         case .edit(let materialId):
             openEditor(materialId: materialId)
         case .describe(let materialId):
-            actionsRoute = .action(recipeId: "describe-song",
+            shell.actionsRoute = .action(recipeId: "describe-song",
                                    sourceId: materialId)
-            destination = .actions
+            shell.destination = .actions
         case .generate(let presetId, let materialId):
             if let preset = GeneratePreset.preset(id: presetId) {
                 openGenerate(preset: preset, sourceId: materialId)
@@ -694,18 +644,7 @@ struct MainWindow: View {
                                     durationS: preset.durationS,
                                     takes: preset.takes,
                                     notice: notice)
-        destination = .generate
-    }
-
-    /// Fill the composer from a finished take and go there.
-    ///
-    /// The three scopes differ only in how much of the render they carry, so
-    /// they share this: `GenerationSettings` decides what each one means, and
-    /// the composer applies whatever arrives.
-    private func reuse(_ song: SongRecord, scope: ReuseScope) {
-        env.prefill.pending = GenerationSettings.prefill(for: song,
-                                                         scope: scope)
-        destination = .generate
+        shell.destination = .generate
     }
 
     /// A track's measured tempo and key, phrased for a prompt.
@@ -761,19 +700,6 @@ struct MainWindow: View {
         return nil
     }
 
-    /// Reverting goes through the Editor's own path: it owns the file swap,
-    /// the record rewrite and the peak invalidation, and a second copy here
-    /// would drift. It refuses while a render is in flight rather than
-    /// resetting a session that is mid-apply.
-    private func revert(_ song: SongRecord) {
-        // By id: the Editor may be holding a different track mid-edit, and
-        // taking that session over to act on this one is a surprise.
-        if !env.editor.revert(songId: song.id) {
-            revertBlocked = env.editor.renderingTitle
-                ?? "another track"
-        }
-    }
-
     /// Open the Editor on a song or a part — the id may be either, exactly
     /// as the other material intents accept.
     private func openEditor(materialId: String) {
@@ -782,7 +708,7 @@ struct MainWindow: View {
         } else {
             env.editor.open(songId: materialId)
         }
-        destination = .editor
+        shell.destination = .editor
     }
 
     /// A rendered selection snippet landed in the library: route it where
@@ -806,7 +732,7 @@ struct MainWindow: View {
     /// Seeding *offers* rather than applies when the workspace already holds a
     /// configuration: an Actions card that silently discards ten minutes of
     /// setup is worse than one that does nothing, and the whole reason this is
-    /// a destination is that its state is worth keeping.
+    /// a shell.destination is that its state is worth keeping.
     private func openStyleTransfer(preset: StylePreset?, sourceId: String?) {
         let material = sourceId.flatMap { material(id: $0) }
         if let preset {
@@ -817,7 +743,7 @@ struct MainWindow: View {
         } else if let material {
             env.styleTransfer.setSource(material)
         }
-        destination = .styleTransfer
+        shell.destination = .styleTransfer
     }
 
     private func useMelody(_ melodyURL: URL) {
@@ -830,7 +756,7 @@ struct MainWindow: View {
         }
         env.prefill.pending = .init(prompt: "", modelId: melodyModel?.id,
                                     audioParams: ["melody_audio": melodyURL])
-        destination = .generate
+        shell.destination = .generate
     }
 }
 
@@ -918,6 +844,33 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
 
 /// The contextual card at the bottom of the sidebar. Same rectangle on every
 /// screen, different contents: whatever you need while you are *there*.
+/// The footer's download slot.
+///
+/// Its own `View` for one reason: `SidebarDownload.make` needs the raw
+/// `downloads` dictionary at full precision, and that dictionary is rewritten
+/// on every progress frame — twice a second, for as long as a multi-gigabyte
+/// fetch takes. Read from `SidebarFooterCard.body` it subscribed the whole
+/// footer — context card, engine card, parts drawer — to those frames, so all
+/// three re-rendered to move one byte count. Here the invalidation stops at
+/// the card that is actually drawing the number.
+private struct SidebarDownloadSlot: View {
+    let downloads: DownloadsStore
+    let catalog: ModelCatalogStore
+
+    var body: some View {
+        if let download = SidebarDownload.make(
+            downloads: Array(downloads.downloads.values),
+            models: catalog.models) {
+            // Keyed on the download it is drawing so the rate smoother inside
+            // starts clean for each one: reusing the view across the end of
+            // one transfer and the start of the next would carry the old
+            // average into the new ETA.
+            SidebarDownloadCard(download: download)
+                .id(download.info.downloadId)
+        }
+    }
+}
+
 struct SidebarFooterCard: View {
     let env: AppEnvironment
     let destination: Destination
@@ -997,13 +950,8 @@ struct SidebarFooterCard: View {
     /// Keyed on the download it is drawing so the rate smoother inside starts
     /// clean for each one: reusing the view across the end of one transfer and
     /// the start of the next would carry the old average into the new ETA.
-    @ViewBuilder private var downloadCard: some View {
-        if let download = SidebarDownload.make(
-            downloads: Array(env.downloadsStore.downloads.values),
-            models: env.catalog.models) {
-            SidebarDownloadCard(download: download)
-                .id(download.info.downloadId)
-        }
+    private var downloadCard: some View {
+        SidebarDownloadSlot(downloads: env.downloadsStore, catalog: env.catalog)
     }
 
     // MARK: engine

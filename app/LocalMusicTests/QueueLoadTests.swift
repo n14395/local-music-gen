@@ -22,7 +22,7 @@ final class QueueLoadTests: XCTestCase {
                         steps: nil)
         }
         return JobsStore.ActiveJob(info: info, progress: progress,
-                                   status: status, error: nil, preview: nil)
+                                   status: status, error: nil)
     }
 
     // MARK: counts
@@ -172,7 +172,7 @@ final class QueueBatchesTests: XCTestCase {
             progress: nil, result: nil, error: nil,
             takeIndex: takeIndex, takeOf: takeOf)
         return JobsStore.ActiveJob(info: info, progress: nil, status: status,
-                                   error: nil, preview: nil)
+                                   error: nil)
     }
 
     func testTakesOfOneSubmissionGatherUnderOneGroup() {
@@ -251,7 +251,7 @@ final class QueueLoadFinishedTests: XCTestCase {
             createdAt: "2026-08-21T17:00:00Z", progress: nil, result: nil,
             error: nil)
         return JobsStore.ActiveJob(info: info, progress: nil, status: status,
-                                   error: nil, preview: nil)
+                                   error: nil)
     }
 
     func testFailedJobIsNotAnEmptyQueue() {

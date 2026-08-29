@@ -21,12 +21,27 @@ struct TransformActionView: View {
 
     @State private var source: PickedMaterial?
     @State private var reference: PickedMaterial?
+    /// The two source cards' second lines, resolved when their material
+    /// changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read each, and
+    /// both were being asked for from inside `body` — so four queries ran
+    /// again on every redraw, including every drag of the amount slider. The
+    /// lines only depend on the materials, so they are resolved with them.
+    @State private var sourceMeta: String?
+    @State private var referenceMeta: String?
     @State private var value: Double = 0
     @State private var startBar: Double = 0
     @State private var choosingSource = false
     @State private var choosingReference = false
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it, which on a page with a text field is every keystroke.
+    @State private var runLog = ActionRunLog()
 
     private var mixModel: ModelInfo? { MixModels.mixdown(in: catalog.models) }
     private var slot: Slot? { recipe.slots.first }
@@ -61,9 +76,7 @@ struct TransformActionView: View {
             ActionSourceCard(
                 eyebrow: "TRACK",
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "A song or a part from your library.",
                 chooseTitle: source == nil ? "Choose from Library…" : "Change…",
@@ -73,9 +86,7 @@ struct TransformActionView: View {
                 ActionSourceCard(
                     eyebrow: "MATCH TO",
                     material: reference,
-                    meta: reference.map {
-                        ActionCopy.sourceMeta($0, library: library, parts: parts)
-                    },
+                    meta: referenceMeta,
                     playback: playback,
                     placeholder: "The track whose tempo and key to take. Only "
                         + "its measurements are used — none of its audio.",
@@ -106,7 +117,7 @@ struct TransformActionView: View {
                             onQueue: { submit(back: false) })
         } rail: {
             ActionRail(outputs: outputs, explanation: explanation,
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear {
             if source == nil, let sourceId {
@@ -115,6 +126,18 @@ struct TransformActionView: View {
             }
             if let bounds = transform.bounds { value = bounds.initial }
         }
+        .onChange(of: source) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
+        .onChange(of: reference) {
+            referenceMeta = reference.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(isPresented: $choosingSource) {
             picker(slot: slot, label: "Track") { source = $0 }
         }

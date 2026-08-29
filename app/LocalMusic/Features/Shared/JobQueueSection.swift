@@ -70,7 +70,11 @@ struct JobQueueSection: View {
     @State private var dropTarget: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        // Lazy: every row here is fed by a stream that ticks — download bytes
+        // and job progress — and a long session's finished rows sit at the
+        // bottom until dismissed. Eager, all of them were built on every
+        // frame of either stream.
+        LazyVStack(alignment: .leading, spacing: 9) {
             // Transfers head the list, renders follow. A download is the
             // slowest thing this queue holds and the only one started from
             // another screen entirely, so a new one arriving underneath a

@@ -14,8 +14,14 @@ def _engine(request: Request) -> EngineState:
 
 @router.get("/v1/models")
 async def models_list(request: Request):
-    st = _engine(request)
-    return {"models": [st.model_info(mid) for mid in st.registry.models]}
+    import anyio
+
+    # Off the event loop: every entry's install state is answered from the
+    # filesystem — a stat of its marker, a listdir of each snapshot, and a walk
+    # of anything already on disk — and across the whole catalog that is long
+    # enough to be a visible hitch in the event stream, worst of all while a
+    # download is writing thousands of files into the same cache.
+    return {"models": await anyio.to_thread.run_sync(_engine(request).model_infos)}
 
 
 @router.get("/v1/models/{model_id}")

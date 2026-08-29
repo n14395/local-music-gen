@@ -37,6 +37,13 @@ struct AssistantActionView: View {
     @Environment(TextStore.self) private var textStore: TextStore?
 
     @State private var source: PickedMaterial?
+    /// The track card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and it
+    /// was being asked for from inside `body` — so both ran again between one
+    /// keystroke of the prompt field and the next. The line only depends on
+    /// the material, so it is resolved with it.
+    @State private var sourceMeta: String?
     @State private var choosing = false
     /// What the user typed, whatever this kind calls it.
     @State private var input = ""
@@ -74,9 +81,7 @@ struct AssistantActionView: View {
                 ActionSourceCard(
                     eyebrow: "TRACK",
                     material: source,
-                    meta: source.map {
-                        ActionCopy.sourceMeta($0, library: library, parts: parts)
-                    },
+                    meta: sourceMeta,
                     playback: playback,
                     placeholder: sourcePlaceholder,
                     chooseTitle: source == nil ? "Choose from Library…" : "Change…",
@@ -123,6 +128,9 @@ struct AssistantActionView: View {
         .onChange(of: source?.id) { _, _ in
             assistant.clear(recipe.id)
             draft = ""
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
             if autoRuns, source != nil { ask() }
         }
         .sheet(isPresented: $choosing) {

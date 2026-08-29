@@ -70,37 +70,69 @@ struct EditorScreen: View {
                  : "The edit list is cleared. Nothing has been applied, so "
                    + "the file is already the original.")
         }
-        // Key commands (Tier 0.4): the app had none anywhere; these are
-        // window-wide while the Editor is frontmost.
-        .background {
-            keyCommands
-        }
+        // Bare Space stays here rather than going to the Playback menu: a menu
+        // item's shortcut is installed window-wide and fires ahead of the
+        // focused control, so a bare Space in the menubar would eat the space
+        // bar in every prompt box and search field in the app. Scoped to this
+        // screen it is safe, because the Editor has no free-text field in the
+        // well. Everything else that used to live in this block — Cut, Copy,
+        // Paste, Delete, Select All, ⌥Space — is now a real menu item fed by
+        // the focused value below.
+        .background { spaceKeyCommand }
+        // What the Edit, View and Playback menus may do to this screen while
+        // it is the one on show. Published from here rather than assembled in
+        // the menus, because only the Editor knows whether there is a
+        // selection, whether the clipboard came from this track, and whether a
+        // render has frozen the document.
+        .focusedSceneValue(\.editorCommands, editorCommands)
+        // The Editor's ⌘↩, named by the screen so the item can read
+        // "Apply 3 edits" rather than a generic verb.
+        .focusedSceneValue(\.runCommand, RunCommand(
+            title: applyLabel,
+            isEnabled: store.isDirty && store.mixdownModel != nil
+                && !isBlockedByAnotherRender,
+            run: { Task { await store.applyEdits() } }))
     }
 
     // MARK: key commands
 
-    private var keyCommands: some View {
-        Group {
-            Button("") { store.togglePlayback() }
-                .keyboardShortcut(.space, modifiers: [])
-            Button("") { store.playSelection() }
-                .keyboardShortcut(.space, modifiers: .option)
-            Button("") { store.selectAll() }
-                .keyboardShortcut("a", modifiers: .command)
-            Button("") { store.deleteSelection() }
-                .keyboardShortcut(.delete, modifiers: [])
-            Button("") { store.cutSelection() }
-                .keyboardShortcut("x", modifiers: .command)
-            Button("") { store.copySelection() }
-                .keyboardShortcut("c", modifiers: .command)
-            Button("") { store.paste() }
-                .keyboardShortcut("v", modifiers: .command)
-                .disabled(!store.canPaste)
-        }
-        .opacity(0)
-        .frame(width: 0, height: 0)
-        .disabled(store.material == nil || isFrozen
-                  || isBlockedByAnotherRender)
+    private var spaceKeyCommand: some View {
+        Button("") { store.togglePlayback() }
+            .keyboardShortcut(.space, modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .disabled(store.material == nil || isFrozen
+                      || isBlockedByAnotherRender)
+    }
+
+    /// The bundle the menubar reads. Rebuilt on each body evaluation, which is
+    /// what keeps `hasSelection` and `canPaste` honest — they change as you
+    /// drag, and an item that stayed enabled after the selection was cleared
+    /// would delete the wrong thing.
+    private var editorCommands: EditorCommands {
+        EditorCommands(
+            isEditable: store.material != nil && !isFrozen
+                && !isBlockedByAnotherRender,
+            hasSelection: (store.selection?.length ?? 0) > 0,
+            canPaste: store.canPaste,
+            cut: { store.cutSelection() },
+            copy: { store.copySelection() },
+            paste: { store.paste() },
+            delete: { store.deleteSelection() },
+            selectAll: { store.selectAll() },
+            zoomIn: { store.zoomIn() },
+            zoomOut: { store.zoomOut() },
+            zoomToFit: { store.zoomToFit() },
+            zoomToSelection: { store.zoomToSelection() },
+            toggleOriginal: { store.toggleOriginalAudition() },
+            isAuditioningOriginal: store.auditioningOriginal,
+            playSelection: { store.playSelection() },
+            export: { store.exportSheetOpen = true },
+            // Nil, not a closure that does nothing, when there is no file yet
+            // — the File menu dims Reveal on exactly this.
+            reveal: store.sourceURL.map { url in
+                { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            })
     }
 
     // MARK: top bar
@@ -249,7 +281,8 @@ struct EditorScreen: View {
         }
         .buttonStyle(BenchPrimaryButtonStyle(size: .compact,
                                              glows: store.isDirty))
-        .keyboardShortcut(.return, modifiers: .command)
+        // ⌘↩ is the Render menu's item — see `runCommand` above. The label
+        // still prints "⌘⏎", and still tells the truth.
         .disabled(!store.isDirty || store.mixdownModel == nil
                   || isBlockedByAnotherRender)
         .opacity(store.isDirty && !isBlockedByAnotherRender ? 1 : 0.5)

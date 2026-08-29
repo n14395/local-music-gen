@@ -49,6 +49,18 @@ final class TelemetryStore {
             system.usage?.workerBytes ?? system.memoryGuard?.workerBytes)
     }
 
+    /// The three readings the engine pushes on its own, without a poll.
+    ///
+    /// Same gating as `apply`, and deliberately narrower: a telemetry frame
+    /// carries only what moves, so nothing here may clear a field the poll
+    /// filled in — assigning the static facts from an event that does not
+    /// carry them would blank the sidebar every two seconds.
+    func applyUsage(_ usage: SystemInfo.Usage) {
+        set(&gpuPercent, usage.gpuPercent)
+        set(&acceleratorBytes, usage.acceleratorBytes)
+        if let bytes = usage.workerBytes { set(&workerBytes, bytes) }
+    }
+
     private func set<T: Equatable>(_ stored: inout T, _ next: T) {
         if stored != next { stored = next }
     }

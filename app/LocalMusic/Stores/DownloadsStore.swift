@@ -7,7 +7,10 @@ final class DownloadsStore {
     /// Includes the ones still waiting their turn — transfers run one at a time
     /// (contract §4.2) and a queued download announces itself on arrival.
     private(set) var downloads: [String: DownloadInfo] = [:] {
-        didSet { refreshTransfers() }
+        didSet {
+            refreshTransfers()
+            refreshModelDownloads()
+        }
     }
     var client: BackendClient?
 
@@ -54,6 +57,113 @@ final class DownloadsStore {
         if next != transfers { transfers = next }
         let empty = next.active == 0 && next.finished == 0
         if empty != transfersEmpty { transfersEmpty = empty }
+    }
+
+    // MARK: - What a model row prints
+
+    /// The live download of each model, keyed by model id, republished only
+    /// when something a Models row *draws* has moved.
+    ///
+    /// The same argument as `transfers`, one screen further in. The Models
+    /// screen has to read a downloads dependency inside `body`: its rows are
+    /// built in a `LazyVStack`'s closure, outside the tracking scope, so each
+    /// one is handed its download as a value rather than reading for itself.
+    /// Reading the raw dictionary there subscribed the *whole screen* to a
+    /// byte counter the engine rewrites twice a second — and every one of
+    /// those frames refiltered sixty-four models, replanned the list and
+    /// recounted the actions of every row in it, to redraw numbers that had
+    /// not changed.
+    ///
+    /// So this is published when the rendered form of a transfer changes: the
+    /// state, the whole percent the bar is drawn at, the `18.1 / 53.4 GB`
+    /// pair, the rate and the ETA. The values are the engine's own, except for
+    /// `speedBps` — see `rates`.
+    private(set) var modelDownloads: [String: DownloadInfo] = [:]
+
+    /// The models with a transfer in flight.
+    ///
+    /// Separate from `modelDownloads` for the reason `transfersEmpty` is
+    /// separate from `transfers`: *which* models are downloading decides which
+    /// rows the Models screen plans and whether its long tail is held open,
+    /// and neither of those answers may be invalidated by a percentage.
+    private(set) var downloadingModelIds: Set<String> = []
+
+    /// The smoothed rate of each live transfer, by download id.
+    ///
+    /// The row prints a rate and an ETA, so both have to take part in the test
+    /// above — and a test on the raw `speedBps` would be the raw dictionary
+    /// again, because the engine measures speed by re-walking the model cache
+    /// and consecutive samples swing around the true rate (see `DownloadRate`).
+    /// The smoother therefore runs here and `speedBps` is published smoothed,
+    /// which leaves the row's own smoother a near-constant input rather than a
+    /// contradictory one.
+    ///
+    /// Keyed by download id, not model id, so a second attempt at a model
+    /// starts from nothing instead of inheriting the average of the attempt
+    /// that failed.
+    private var rates: [String: DownloadRate] = [:]
+
+    /// One transfer as the row would print it. Compared, never shown.
+    private struct RenderedTransfer: Equatable {
+        let downloadId: String
+        let state: DownloadState
+        let isRuntimeOnly: Bool
+        /// Drawn in place of the bar while a runtime is being built.
+        let message: String?
+        /// Whole percent — the width the progress bar is drawn at.
+        let percent: Int
+        /// The three segments of the mono line, kept apart so that a segment
+        /// the row cannot state honestly compares as the nil it draws as.
+        let progress: String
+        let rate: String?
+        let eta: String?
+    }
+
+    private var rendered: [String: RenderedTransfer] = [:]
+
+    private func refreshModelDownloads() {
+        var nextRendered: [String: RenderedTransfer] = [:]
+        var nextShown: [String: DownloadInfo] = [:]
+        // Rebuilt rather than pruned: a finished download's average has
+        // nowhere to go — its id never comes back — and carrying only the
+        // live ones over is one pass instead of two.
+        var nextRates: [String: DownloadRate] = [:]
+        var ids: Set<String> = []
+        for info in downloads.values {
+            ids.insert(info.modelId)
+            var rate = rates[info.downloadId] ?? DownloadRate()
+            rate.ingest(info.speedBps)
+            nextRates[info.downloadId] = rate
+            nextRendered[info.modelId] = RenderedTransfer(
+                downloadId: info.downloadId,
+                state: info.state,
+                isRuntimeOnly: info.isRuntimeOnly,
+                message: info.message,
+                percent: info.bytesTotal > 0
+                    ? Int(Double(info.bytesDone) / Double(info.bytesTotal) * 100)
+                    : 0,
+                // Asked of the formatters the row itself uses, so the test
+                // cannot drift from the strings it is standing in for.
+                progress: DownloadFormat.progress(done: info.bytesDone,
+                                                  total: info.bytesTotal),
+                rate: DownloadFormat.rate(rate.bytesPerSecond),
+                eta: DownloadFormat.eta(
+                    rate.secondsRemaining(bytesDone: info.bytesDone,
+                                          bytesTotal: info.bytesTotal)))
+            nextShown[info.modelId] = DownloadInfo(
+                downloadId: info.downloadId, modelId: info.modelId,
+                state: info.state, bytesDone: info.bytesDone,
+                bytesTotal: info.bytesTotal,
+                speedBps: Int64(rate.bytesPerSecond ?? 0),
+                stage: info.stage, message: info.message,
+                runtimeOnly: info.runtimeOnly)
+        }
+        rates = nextRates
+        if nextRendered != rendered {
+            rendered = nextRendered
+            modelDownloads = nextShown
+        }
+        if ids != downloadingModelIds { downloadingModelIds = ids }
     }
 
     /// Why the last download of a model stopped, kept until that model is

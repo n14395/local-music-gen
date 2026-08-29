@@ -73,14 +73,11 @@ struct SettingsView: View {
             refreshSongCount()
         }
         .onChange(of: env.library.recent.count) { refreshSongCount() }
-        // ⌘F, as the rail's field advertises. In the background rather than as
-        // a modifier on the field: the shortcut has to work from anywhere in
-        // the window, including with the focus inside a text field elsewhere.
-        .background {
-            Button("") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-        }
+        // ⌘F is the Edit menu's item now, not a hidden button: one item that
+        // names where it will land ("Find in Settings") instead of four
+        // invisible ones that claimed the key with nothing to show for it.
+        .focusedSceneValue(\.searchCommand,
+                           SearchCommand(scope: "Settings") { searchFocused = true })
     }
 
     private func refreshSongCount() {
@@ -498,10 +495,10 @@ struct SettingsView: View {
                     + "start — each model still clamps them to what it can "
                     + "do.") {
                 VStack(spacing: 11) {
-                    BenchSliderRow(label: "Length",
-                                   value: settings.defaultDurationS,
-                                   range: 1...120, step: 1, labelWidth: 64,
-                                   format: { String(format: "%.0f s", $0) })
+                    BufferedSliderRow(label: "Length",
+                                      value: settings.defaultDurationS,
+                                      range: 1...120, step: 1, labelWidth: 64,
+                                      format: { String(format: "%.0f s", $0) })
                     HStack(spacing: 12) {
                         Text("Takes")
                             .font(Bench.Typo.secondary)
@@ -701,10 +698,10 @@ struct SettingsView: View {
                 detail: "Where the Workbench footer and the Editor\u{2019}s "
                     + "normalise slider start; each mix can still move it. "
                     + "Everything ends in the same limiter at \u{2212}1 dBTP.") {
-                BenchSliderRow(label: "Target", value: settings.targetLufs,
-                               range: -30...(-6), step: 0.5, labelWidth: 64,
-                               valueWidth: 84,
-                               format: { String(format: "%.1f LUFS", $0) })
+                BufferedSliderRow(label: "Target", value: settings.targetLufs,
+                                  range: -30...(-6), step: 0.5, labelWidth: 64,
+                                  valueWidth: 84,
+                                  format: { String(format: "%.1f LUFS", $0) })
             }
         }
     }
@@ -1143,7 +1140,7 @@ struct SettingsView: View {
                 }
                 SettingsDivider()
                 SettingsWideRow(title: "Counts as small") {
-                    BenchSliderRow(
+                    BufferedSliderRow(
                         label: "At most",
                         value: Binding(
                             get: { Double(env.settings.smallModelBytes)
@@ -1175,7 +1172,7 @@ struct SettingsView: View {
             if env.settings.memGuardPercent > 0 {
                 SettingsDivider()
                 SettingsWideRow(title: "Warn at") {
-                    BenchSliderRow(
+                    BufferedSliderRow(
                         label: "Level",
                         value: Binding(
                             get: { Double(env.settings.memGuardPercent) },
@@ -1270,5 +1267,53 @@ private struct SettingsWindowConfigurator: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         view.window?.backgroundColor = NSColor(Bench.Palette.windowBackground)
+    }
+}
+
+
+/// A settings slider whose value reaches the setting when the drag ends,
+/// not on every frame of it.
+///
+/// The sliders here are bound straight to `AppSettings`, and this window's
+/// header reads `SettingsCatalog.changedCount` — which asks every entry in the
+/// pane whether it still holds its default, and so subscribes the whole
+/// content column to every property in the pane. One slider therefore
+/// re-evaluated the header, all its group cards and the status strip on every
+/// mouse-move. The `UserDefaults` write behind the setting was never the cost;
+/// the pane-wide invalidation was.
+///
+/// Deliberately not applied to the sliders in the Studio or on the Workbench:
+/// those drive a preview you are listening to while you drag, so they have to
+/// stay live. Nothing in Settings previews anything.
+private struct BufferedSliderRow: View {
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double?
+    var labelWidth: CGFloat = 112
+    var valueWidth: CGFloat = 52
+    var format: (Double) -> String = { String(format: "%g", $0) }
+
+    /// Where the knob is while the gesture runs. Only read while `dragging`,
+    /// so a setting changed from anywhere else still shows through at rest.
+    @State private var draft = 0.0
+    @State private var dragging = false
+
+    var body: some View {
+        BenchSliderRow(
+            label: label,
+            value: Binding(
+                get: { dragging ? draft : value },
+                // A caller that moves the value without a gesture — a click
+                // straight onto the track, were the control ever to offer one
+                // — still writes through rather than into a draft nothing
+                // would commit.
+                set: { next in
+                    if dragging { draft = next } else { value = next }
+                }),
+            range: range, step: step, labelWidth: labelWidth,
+            valueWidth: valueWidth, format: format,
+            onEditingBegan: { draft = value; dragging = true },
+            onEditingEnded: { dragging = false; value = draft })
     }
 }

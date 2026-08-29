@@ -141,14 +141,14 @@ final class GenerationFlowTests: XCTestCase {
             let jobId = try XCTUnwrap(created?.jobs.first?.jobId,
                                       "submit failed: \(env.jobsStore.lastError ?? "-")")
             try await waitFor("a preview frame") {
-                env.jobsStore.job(jobId)?.preview != nil
+                env.jobsStore.previewFrame(jobId) != nil
             }
             return jobId
         }
 
         let before = env.library.recent.count
         let discarded = try await renderUntilFirstPreview()
-        let frame = try XCTUnwrap(env.jobsStore.job(discarded)?.preview)
+        let frame = try XCTUnwrap(env.jobsStore.previewFrame(discarded))
         XCTAssertTrue(FileManager.default.fileExists(atPath: frame.path),
                       "the engine wrote a real wav for the frame")
         await env.jobsStore.cancel(discarded)

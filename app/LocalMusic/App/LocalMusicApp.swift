@@ -17,6 +17,17 @@ struct LocalMusicApp: App {
         // content view but not the top of it — SwiftUI keeps a titlebar-sized
         // safe area, which `MainWindow` ignores.
         .windowStyle(.hiddenTitleBar)
+        // The menubar. Declared on the main scene rather than on the app, so
+        // the items belong to the *document* window — the Settings window gets
+        // the stock bar plus whatever it publishes as a focused value of its
+        // own, which is how its ⌘F keeps working.
+        //
+        // Every item reads `appDelegate.env`, which is why the shell's routing
+        // had to move out of `MainWindow` and into `ShellState`: a command is
+        // built with the scene, long before there is a view to hold state for
+        // it, and a menu that cannot reach the state it acts on is a menu of
+        // dead items.
+        .commands { ShellCommands(env: appDelegate.env) }
         // A `Window`, not the `Settings` scene. Settings ignores
         // `.windowStyle(.hiddenTitleBar)` — it keeps its own titlebar, whose
         // material paints an opaque band across the top 28 pt of the content,

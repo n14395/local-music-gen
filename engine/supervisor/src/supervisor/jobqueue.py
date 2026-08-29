@@ -44,6 +44,16 @@ TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
 # past this many total jobs; live jobs are never counted out. 0 = unbounded.
 JOB_HISTORY_CAP = int(os.environ.get("LOCALMUSIC_JOB_HISTORY_CAP") or 200)
 
+# Floor on the gap between two job.progress events of the same stage. Each one
+# is an SSE frame, a decode and a main-thread store mutation in the app, so the
+# rate the adapters happen to report at is the rate the UI has to keep up with.
+# Every adapter throttles itself by convention today (~1-5 Hz); this is the
+# backstop for the one that wires a per-token callback straight through and
+# floods the pipe. Anything that changes what is on screen — a new stage, phase
+# or take, or a finished one — is exempt, so it can only ever drop a frame that
+# the next one supersedes.
+PROGRESS_MIN_INTERVAL_S = 0.1
+
 # How often the cancel watchdog re-checks the deadline it is waiting on. It
 # sleeps on an event the whole time, so this is only the resolution of "the
 # grace period has expired", not a poll of anything expensive.
@@ -109,6 +119,22 @@ def _is_small(model: dict) -> bool:
     return 0 < size <= SMALL_MODEL_BYTES
 
 
+def _job_row(job: "Job", queue_position: int | None) -> dict:
+    """One job as the API returns it (contract 5.2). Position is passed in
+    because working it out needs the queue lock and the whole run order, which
+    a listing resolves for every row at once — see JobQueue.info_many."""
+    return {"job_id": job.id, "group_id": job.group_id,
+            "model_id": job.model_id, "task": job.task,
+            "preview": job.preview, "status": job.status,
+            "priority": job.priority,
+            "queue_position": queue_position, "prompt": job.prompt,
+            "lyrics": job.lyrics, "duration_s": job.duration_s,
+            "count": job.count, "params": job.params,
+            "take_index": job.take_index, "take_of": job.take_of,
+            "created_at": job.created_at, "progress": job.progress,
+            "result": job.result, "error": job.error}
+
+
 class SubmitError(Exception):
     def __init__(self, status: int, code: str, message: str) -> None:
         super().__init__(message)
@@ -154,6 +180,10 @@ class Job:
         # set when work starts; drives the elapsed-based ETA for task jobs
         # (their runtime scales with input length, unknown at submit)
         self.started_monotonic: float | None = None
+        # Backstop-throttle bookkeeping: when the last job.progress went out,
+        # and what it was about. See JobQueue._progress.
+        self.progress_emitted_at = 0.0
+        self.progress_key: tuple | None = None
         # The worker actually running this job. Cancel and crash handling must
         # act on it rather than reaching for the resident slot, which may be
         # holding an unrelated model while a small job runs.
@@ -242,56 +272,61 @@ class JobQueue:
                               f"{mid} needs more memory than this Mac has")
 
         group_id = f"grp_{uuid.uuid4().hex[:12]}"
-        with self.lock:
-            if task == "generate":
-                dur = float(body.get("duration_s", caps["duration"]["default_s"]))
-                # `unlocked_max_s` is the ceiling when a model declares one —
-                # the lock is an app-side affordance (a toggle behind a
-                # warning), not a second server-side rule. Clamping to max_s
-                # here would take an unlocked request and quietly hand back a
-                # shorter take, which is the failure this whole field exists to
-                # avoid. Absent ⇒ max_s is the ceiling, as it always was.
-                ceiling = (caps["duration"].get("unlocked_max_s")
-                           or caps["duration"]["max_s"])
-                dur = max(caps["duration"]["min_s"], min(ceiling, dur))
-            else:
-                # output length derives from the input; echo what was sent
-                raw_dur = body.get("duration_s")
-                dur = float(raw_dur) if raw_dur is not None else None
-            known = {p["key"] for p in caps["params"]}
-            raw = body.get("params") or {}
-            params = {k: v for k, v in raw.items() if k in known}
-            dropped = set(raw) - known
-            # params of type "audio"/"midi" carry an upload id; the worker gets a path
-            from .api.uploads import resolve_upload
+        # Params are prepared and resolved before the lock is taken: resolving
+        # an upload id costs a listdir apiece and a mix spec costs a JSON walk
+        # plus one per embedded id, and the runner thread and every handler
+        # that reports queue state are all waiting on this same lock. Nothing
+        # below touches queue state until the jobs themselves are created.
+        if task == "generate":
+            dur = float(body.get("duration_s", caps["duration"]["default_s"]))
+            # `unlocked_max_s` is the ceiling when a model declares one —
+            # the lock is an app-side affordance (a toggle behind a
+            # warning), not a second server-side rule. Clamping to max_s
+            # here would take an unlocked request and quietly hand back a
+            # shorter take, which is the failure this whole field exists to
+            # avoid. Absent ⇒ max_s is the ceiling, as it always was.
+            ceiling = (caps["duration"].get("unlocked_max_s")
+                       or caps["duration"]["max_s"])
+            dur = max(caps["duration"]["min_s"], min(ceiling, dur))
+        else:
+            # output length derives from the input; echo what was sent
+            raw_dur = body.get("duration_s")
+            dur = float(raw_dur) if raw_dur is not None else None
+        known = {p["key"] for p in caps["params"]}
+        raw = body.get("params") or {}
+        params = {k: v for k, v in raw.items() if k in known}
+        dropped = set(raw) - known
+        # params of type "audio"/"midi" carry an upload id; the worker gets a path
+        from .api.uploads import resolve_upload
+        for spec in caps["params"]:
+            if spec.get("type") not in ("audio", "midi"):
+                continue
+            value = params.get(spec["key"])
+            if value is None:
+                continue
+            path = resolve_upload(self.settings.uploads_dir, value)
+            if path is None:
+                raise SubmitError(422, "VALIDATION",
+                                  f"unknown upload for '{spec['key']}'")
+            params[spec["key"]] = path
+        # "json" params with resolve_uploads: replace embedded up_… ids with
+        # paths so structured specs (mix tracks) reach workers path-resolved
+        for spec in caps["params"]:
+            if spec.get("type") != "json" or not spec.get("resolve_uploads"):
+                continue
+            value = params.get(spec["key"])
+            if value is None:
+                continue
+            params[spec["key"]] = self._resolve_json_uploads(
+                spec["key"], value)
+        if task != "generate":
             for spec in caps["params"]:
-                if spec.get("type") not in ("audio", "midi"):
-                    continue
-                value = params.get(spec["key"])
-                if value is None:
-                    continue
-                path = resolve_upload(self.settings.uploads_dir, value)
-                if path is None:
+                if (spec.get("type") in ("audio", "midi", "json")
+                        and not spec.get("nullable", True)
+                        and params.get(spec["key"]) is None):
                     raise SubmitError(422, "VALIDATION",
-                                      f"unknown upload for '{spec['key']}'")
-                params[spec["key"]] = path
-            # "json" params with resolve_uploads: replace embedded up_… ids with
-            # paths so structured specs (mix tracks) reach workers path-resolved
-            for spec in caps["params"]:
-                if spec.get("type") != "json" or not spec.get("resolve_uploads"):
-                    continue
-                value = params.get(spec["key"])
-                if value is None:
-                    continue
-                params[spec["key"]] = self._resolve_json_uploads(
-                    spec["key"], value)
-            if task != "generate":
-                for spec in caps["params"]:
-                    if (spec.get("type") in ("audio", "midi", "json")
-                            and not spec.get("nullable", True)
-                            and params.get(spec["key"]) is None):
-                        raise SubmitError(422, "VALIDATION",
-                                          f"missing required input '{spec['key']}'")
+                                      f"missing required input '{spec['key']}'")
+        with self.lock:
             # `count: 4` is four jobs, not one job that loops four times.
             # They share the group_id and differ by take_index, so every take
             # is its own row in the queue with its own position, cancel and
@@ -464,16 +499,33 @@ class JobQueue:
     def info(self, job: Job) -> dict:
         with self.lock:
             pos = self._position_locked(job.id)
-        return {"job_id": job.id, "group_id": job.group_id,
-                "model_id": job.model_id, "task": job.task,
-                "preview": job.preview, "status": job.status,
-                "priority": job.priority,
-                "queue_position": pos, "prompt": job.prompt,
-                "lyrics": job.lyrics, "duration_s": job.duration_s,
-                "count": job.count, "params": job.params,
-                "take_index": job.take_index, "take_of": job.take_of,
-                "created_at": job.created_at, "progress": job.progress,
-                "result": job.result, "error": job.error}
+        return _job_row(job, pos)
+
+    def info_many(self, jobs: list[Job]) -> list[dict]:
+        """`info` for a whole list of jobs, taking the lock once and sorting the
+        run order once.
+
+        Per row, both of those are quadratic in the queue depth — the app polls
+        /v1/jobs whenever the queue rail is open, and every one of those sorts
+        was a sort the runner thread had to wait behind.
+        """
+        with self.lock:
+            active_id = self.active.id if self.active else None
+            offset = 1 if self.active else 0
+            positions = {jid: i + offset
+                         for i, jid in enumerate(self._run_order_locked())}
+        rows = []
+        for job in jobs:
+            if job.status in TERMINAL_STATUSES:
+                pos = None
+            elif job.id == active_id:
+                pos = 0
+            else:
+                # Absent from the run order means neither queued nor running:
+                # the same null _position_locked returns for it.
+                pos = positions.get(job.id)
+            rows.append(_job_row(job, pos))
+        return rows
 
     def model_in_use(self, model_id: str) -> bool:
         with self.lock:
@@ -703,6 +755,82 @@ class JobQueue:
                 next_deadline = deadline
         return next_deadline
 
+    def _claim_worker_locked(self, small: bool, family: str) -> Worker | None:
+        """The live worker this job can run on, or None if one has to be built.
+
+        Splitting the claim from the build is the whole point: a claim is a
+        couple of dict lookups, while building a Worker opens a log file, forks
+        and execs the family's venv python and starts two reader threads. That
+        second part must not happen under this lock — `jobs_list`, `/v1/system`,
+        submit and cancel all take it from the event loop, so a spawn held
+        inside it stalls REST and the event stream together, for exactly as long
+        as fork/exec takes under whatever memory pressure the render created.
+        Caller holds self.lock.
+        """
+        if small:
+            # The pool never touches self.worker, so whatever big model is
+            # resident stays loaded (and stays in the titlebar) right through
+            # this job.
+            worker = self.small_workers.get(family)
+            if worker and not worker.is_alive():
+                del self.small_workers[family]
+                return None
+            if worker is not None:
+                worker.idle_since = None
+            return worker
+        worker = self.worker
+        if worker and (worker.family != family or not worker.is_alive()):
+            # Displaced rather than unloaded, so no worker.state "stopped" goes
+            # out: the next thing the app hears about this slot is the incoming
+            # model's "loaded".
+            worker.kill()
+            self.worker = None
+            return None
+        return worker
+
+    def _install_worker_locked(self, worker: Worker, small: bool,
+                               family: str) -> bool:
+        """Put a freshly built worker into its slot, if the slot is still free.
+
+        False means the state moved while the worker was being built and the
+        caller is holding a process with nothing to do. Only the runner thread
+        ever fills a slot, but any thread can empty one (an unload, a family
+        release, a crash reaped elsewhere), so the emptiness is re-established
+        here rather than assumed. Caller holds self.lock.
+        """
+        if small:
+            if family in self.small_workers:
+                return False
+            self._make_room_locked()
+            self.small_workers[family] = worker
+            worker.idle_since = None
+            return True
+        if self.worker is not None:
+            return False
+        self.worker = worker
+        return True
+
+    def _spawn_worker(self, family: str, python: str, small: bool) -> Worker:
+        """Build a worker for this family and put it in its slot, with the lock
+        released across the build itself.
+
+        The retry is not a spin: an install can only be refused by a slot that
+        is occupied, and the claim that follows either hands that occupant back
+        or empties the slot (it was dead), so the second pass always settles.
+        """
+        while True:
+            spawned = Worker(family, python, self.settings, self.bus,
+                             log_suffix="transient" if small else None)
+            with self.lock:
+                if self._install_worker_locked(spawned, small, family):
+                    return spawned
+                existing = self._claim_worker_locked(small, family)
+            # Nothing has been sent to this process, so dropping it costs only
+            # the spawn it took to build.
+            spawned.kill()
+            if existing is not None:
+                return existing
+
     def _kill_worker_locked(self) -> None:
         """Caller holds self.lock."""
         worker = self.worker
@@ -742,9 +870,9 @@ class JobQueue:
                 if worker and (worker.family != family or not worker.is_alive()):
                     self._kill_worker_locked()
                     worker = None
-                if worker is None:
-                    worker = Worker(family, python, self.settings, self.bus)
-                    self.worker = worker
+            if worker is None:
+                # Built with the lock released — see _claim_worker_locked.
+                worker = self._spawn_worker(family, python, False)
             if not worker.ready_seen:
                 worker.wait_until({"ready"}, timeout=60)
                 worker.ready_seen = True
@@ -782,28 +910,9 @@ class JobQueue:
 
         small = _is_small(model)
         with self.lock:
-            if small:
-                # The pool never touches self.worker, so whatever big model is
-                # resident stays loaded (and stays in the titlebar) right
-                # through this job.
-                worker = self.small_workers.get(family)
-                if worker and not worker.is_alive():
-                    del self.small_workers[family]
-                    worker = None
-                if worker is None:
-                    self._make_room_locked()
-                    worker = Worker(family, python, self.settings, self.bus,
-                                    log_suffix="transient")
-                    self.small_workers[family] = worker
-                worker.idle_since = None
-            else:
-                worker = self.worker
-                if worker and (worker.family != family or not worker.is_alive()):
-                    worker.kill()
-                    worker = None
-                if worker is None:
-                    worker = Worker(family, python, self.settings, self.bus)
-                    self.worker = worker
+            worker = self._claim_worker_locked(small, family)
+        if worker is None:
+            worker = self._spawn_worker(family, python, small)
         worker.current_job_id = job.id
         job.worker = worker
 
@@ -1197,5 +1306,25 @@ class JobQueue:
                         "eta_s": eta, "message": message,
                         "phase": phase, "step": step, "steps": steps,
                         "take": take}
+        # What is dropped here is the push, never the state: job.progress above
+        # is always current, so /v1/jobs and the job's own row answer with every
+        # value regardless. A change of stage, phase or take always goes out —
+        # it is a different piece of work, and the first report of one is the
+        # one that names it — and so does a completed fraction.
+        #
+        # A report with no fraction is keyed by its words instead, because words
+        # are all it is: "Installing musicgen runtime…" arrives microseconds
+        # after "preparing runtime" and then stands for the whole of a uv sync,
+        # so dropping it would leave the render card reading the wrong thing for
+        # minutes. Anything measuring itself is keyed by its stage, which is
+        # what the rate limit is actually here to hold down.
+        now = time.monotonic()
+        key = (stage, phase, take, message if fraction is None else None)
+        if (key == job.progress_key
+                and not (fraction is not None and fraction >= 1.0)
+                and now - job.progress_emitted_at < PROGRESS_MIN_INTERVAL_S):
+            return
+        job.progress_key = key
+        job.progress_emitted_at = now
         self.bus.emit_threadsafe("job.progress",
                                  {"job_id": job.id, **job.progress})

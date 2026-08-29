@@ -172,7 +172,8 @@ extension EditorStore {
                         restoredName: (song.editsJSON.flatMap {
                             try? JSONDecoder().decode(
                                 EditDocument.self, from: Data($0.utf8))
-                        })?.originalFileName ?? song.fileName)
+                        })?.originalFileName ?? song.fileName,
+                        reopenWhenDone: false)
         return true
     }
 
@@ -197,24 +198,46 @@ extension EditorStore {
         // from the last keystroke would put the cleared program straight
         // back (the reopen at the end of this method flushes).
         discardPendingWrite()
+        // The restore runs across an await now, and the reopen at the end of
+        // it rebuilds the stack anyway. Dropping the actions here means a ⌘Z
+        // arriving in that window cannot put the cleared program back — the
+        // frozen surface makes that hard to reach, but undo is a menu command
+        // and menus are not part of the surface.
+        undoManager?.removeAllActions()
         let restoredName = document.originalFileName ?? material.fileName
-        guard restoreOriginal(ownerId: material.id,
-                              ownerType: material.ownerType,
-                              backupURL: material.backupURL,
-                              restoredName: restoredName) else { return }
-        // Reload from the records so every readout reflects the restore.
-        let id = material.id
-        material.isPart ? open(partId: id) : open(songId: id)
+        restoreOriginal(ownerId: material.id,
+                        ownerType: material.ownerType,
+                        backupURL: material.backupURL,
+                        restoredName: restoredName,
+                        reopenWhenDone: true)
     }
 
     /// Put the pristine file back and clear the program. Shared by both
     /// entry points, and deliberately id-based: it must work on a track the
     /// Editor is not showing.
-    @discardableResult
+    ///
+    /// The file half is detached. It is a byte-for-byte copy of a whole track
+    /// — the same copy the backup stash makes, which was measured freezing the
+    /// window for its duration — plus an `AVAudioFile` header open, and both
+    /// used to run inline on the main actor.
+    ///
+    /// What makes that safe is the busy stage held across the whole thing.
+    /// `EditorScreen.isFrozen` is `currentApplyStage.isBusy`, so the editing
+    /// surface, its key commands and the undo buttons are all closed while
+    /// this runs; `applyEdits` and `revert` both refuse while `applyStage`
+    /// is busy, so a second render or restore cannot start; and the callers
+    /// have already dropped the pending write and the undo stack, so nothing
+    /// can rewrite the row from underneath. `open` leaves a busy stage alone
+    /// (it only idles one it owns), so switching tracks mid-restore does not
+    /// release the gate.
+    ///
+    /// It no longer reports success: the only caller that read the result
+    /// used it for a "blocked by another render" message, and that answer is
+    /// settled by the pre-checks before any of this starts. A failure of the
+    /// copy itself surfaces as `.failed` on the stage, as it always did.
     private func restoreOriginal(ownerId: String, ownerType: String,
-                                 backupURL: URL,
-                                 restoredName: String) -> Bool {
-        let fm = FileManager.default
+                                 backupURL: URL, restoredName: String,
+                                 reopenWhenDone: Bool) {
         let isPart = ownerType == "part"
         let currentURL: URL? = isPart
             ? ((try? partsRepo.part(id: ownerId)) ?? nil)?.fileURL
@@ -222,19 +245,43 @@ extension EditorStore {
         let restoredURL = isPart
             ? StoragePaths.libraryParts.appendingPathComponent(restoredName)
             : StoragePaths.libraryAudio.appendingPathComponent(restoredName)
-        do {
-            if let currentURL { try? fm.removeItem(at: currentURL) }
-            try? fm.removeItem(at: restoredURL)
-            try fm.copyItem(at: backupURL, to: restoredURL)
-        } catch {
-            if applyOwnerId == nil || applyOwnerId == ownerId {
-                applyStage = .failed("Could not restore the original: "
-                                     + error.localizedDescription)
-                applyOwnerId = ownerId
+        applyOwnerId = ownerId
+        applyStage = .restoring
+        Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                () -> (shape: (durationS: Double?, sampleRate: Int?)?,
+                       failure: String?) in
+                let fm = FileManager.default
+                do {
+                    if let currentURL { try? fm.removeItem(at: currentURL) }
+                    try? fm.removeItem(at: restoredURL)
+                    try fm.copyItem(at: backupURL, to: restoredURL)
+                } catch {
+                    return (nil, error.localizedDescription)
+                }
+                return (Self.audioShape(of: restoredURL), nil)
+            }.value
+            guard let self else { return }
+            if let failure = outcome.failure {
+                self.applyStage = .failed("Could not restore the original: "
+                                          + failure)
+                self.applyOwnerId = ownerId
+            } else {
+                self.finishRestore(ownerId: ownerId, isPart: isPart,
+                                   restoredName: restoredName,
+                                   shape: outcome.shape ?? (nil, nil),
+                                   reopenWhenDone: reopenWhenDone)
             }
-            return false
         }
-        let shape = Self.audioShape(of: restoredURL)
+    }
+
+    /// The main-actor half of a restore: rewrite the row, sweep the backups
+    /// and drop the stale peaks, then release the gate.
+    private func finishRestore(ownerId: String, isPart: Bool,
+                               restoredName: String,
+                               shape: (durationS: Double?, sampleRate: Int?),
+                               reopenWhenDone: Bool) {
+        let fm = FileManager.default
         if isPart {
             if var part = ((try? partsRepo.part(id: ownerId)) ?? nil) {
                 part.fileName = restoredName
@@ -264,7 +311,14 @@ extension EditorStore {
         WaveformExtractor.invalidateCache(
             StoragePaths.libraryWaveforms
                 .appendingPathComponent(ownerId + ".original.peaks"))
-        return true
+        applyStage = .idle
+        applyOwnerId = nil
+        // Reload from the records so every readout reflects the restore —
+        // but only if this is still the track on screen. The user may have
+        // opened another one while the copy ran.
+        if reopenWhenDone, material?.id == ownerId {
+            isPart ? open(partId: ownerId) : open(songId: ownerId)
+        }
     }
 
     // MARK: export (Tier 2.8)
@@ -433,15 +487,28 @@ extension EditorStore {
             finishApply(artifact: artifact, ownerId: ownerId,
                         ownerType: ownerType, documentJSON: documentJSON)
         case .export(let destination, _):
-            let fm = FileManager.default
-            try? fm.removeItem(at: destination)
-            do {
-                try fm.moveItem(at: URL(fileURLWithPath: artifact.path),
-                                to: destination)
-                exportStage = .idle
-            } catch {
-                exportStage = .failed("Could not save the export: "
-                                      + error.localizedDescription)
+            // Off the main actor, unlike `finishApply`'s move: that one lands
+            // inside Application Support and is a same-volume rename, but the
+            // export destination comes from a save panel and is routinely an
+            // external drive or a network share — where "move" is a
+            // copy-and-delete of a whole rendered WAV, seconds of it, right
+            // at the moment the render finishes.
+            let source = URL(fileURLWithPath: artifact.path)
+            Task { [weak self] in
+                let failure: String? = await Task.detached(priority: .userInitiated) {
+                    let fm = FileManager.default
+                    try? fm.removeItem(at: destination)
+                    do {
+                        try fm.moveItem(at: source, to: destination)
+                        return nil
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }.value
+                guard let self else { return }
+                self.exportStage = failure.map {
+                    .failed("Could not save the export: " + $0)
+                } ?? .idle
             }
         case .snippet(let title):
             finishSnippet(job: job, artifact: artifact, title: title)

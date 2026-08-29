@@ -261,10 +261,6 @@ final class JobsStore {
         var progress: JobProgress?
         var status: JobStatus
         var error: APIErrorBody?
-        /// Newest partial-audio frame for this job, when it asked for previews.
-        /// Each frame replaces the last; the engine deletes them all when the
-        /// take succeeds, so this is only ever worth keeping on a cancel.
-        var preview: JobPreview?
         /// What this job put in the library, recorded at ingest so a finished
         /// row can offer to show it. In submission order, so `first` is take
         /// a. Empty for the jobs that produce parts or an analysis rather
@@ -407,6 +403,19 @@ final class JobsStore {
     /// only when a row appears or is dismissed; the lines inside a box change
     /// constantly, and nothing outside the render card observes those.
     private(set) var logs: [String: JobLog] = [:]
+
+    /// Newest partial-audio frame per job, for the jobs that asked for
+    /// previews. Each frame replaces the last; the engine deletes them all
+    /// when the take succeeds, so a frame is only ever worth keeping on a
+    /// cancel — which is `keepPartial`, the only reader.
+    ///
+    /// Stored here rather than on `ActiveJob` for the same reason `logs` is:
+    /// as a field of the row it was part of `ActiveJob`'s synthesized
+    /// equality, so a frame every diffusion step made `displayJobs` and
+    /// `runningJob` differ from their last value and re-rendered all six
+    /// consumers — for a field no view draws. Its own property means a
+    /// preview frame invalidates only what reads previews.
+    private var previewFrames: [String: JobPreview] = [:]
     /// Observed as well as `active`, because `splittingSongIds` is a function
     /// of both and the two are written in either order — a submit fills this
     /// in before the row is adopted, a test after.
@@ -769,6 +778,47 @@ final class JobsStore {
         var summary: AnalysisSummary?
     }
 
+    /// Resolve a whole bench in a fixed number of queries.
+    ///
+    /// The single-ingredient sibling below does three reads — the part, its
+    /// song and its analysis — so an eight-source mix ran two dozen
+    /// synchronous SQLite reads on the main actor between the click and the
+    /// first `await`. This asks each table once and resolves from the answers.
+    /// Order is preserved, and an ingredient that resolves to nothing is
+    /// dropped, exactly as `compactMap` over the sibling did.
+    func resolveIngredients(
+        _ subs: [IngredientSubmission]) -> [ResolvedIngredient] {
+        guard let partsRepo, !subs.isEmpty else { return [] }
+        let ids = subs.map(\.partId)
+        let parts = (try? partsRepo.parts(ids: ids)) ?? [:]
+        // Whatever was not a part is either a whole song used as a source, or
+        // nothing at all.
+        let songIds = ids.filter { parts[$0] == nil }
+        let songsById = (try? repo.songs(ids: songIds)) ?? [:]
+        let titleIds = Array(Set(parts.values.map(\.songId)))
+        let titles = (try? repo.songs(ids: titleIds)) ?? [:]
+        let analyses = (try? partsRepo.analyses(ownerIds: ids)) ?? [:]
+        return subs.compactMap { sub in
+            if let part = parts[sub.partId] {
+                return ResolvedIngredient(
+                    submission: sub, kind: part.kind,
+                    role: PartNaming.leaf(kind: part.kind),
+                    fileURL: part.fileURL, sampleRate: part.sampleRate,
+                    sourceSongTitle: titles[part.songId]?.title
+                        ?? part.modelName,
+                    summary: AnalysisSummary(record: analyses[part.id]))
+            }
+            if let song = songsById[sub.partId] {
+                return ResolvedIngredient(
+                    submission: sub, kind: "song.mix", role: "mix",
+                    fileURL: song.fileURL, sampleRate: song.sampleRate,
+                    sourceSongTitle: song.title,
+                    summary: AnalysisSummary(record: analyses[song.id]))
+            }
+            return nil
+        }
+    }
+
     func resolveIngredient(_ sub: IngredientSubmission) -> ResolvedIngredient? {
         guard let partsRepo else { return nil }
         if let part = ((try? partsRepo.part(id: sub.partId)) ?? nil) {
@@ -898,7 +948,7 @@ final class JobsStore {
                          context: JobContext? = nil)
         async -> JobsCreated? {
         guard let client else { return nil }
-        let resolved = ingredients.compactMap(resolveIngredient)
+        let resolved = resolveIngredients(ingredients)
         guard resolved.count == ingredients.count, !resolved.isEmpty else {
             lastError = "Some parts could not be found in the library"
             return nil
@@ -1291,6 +1341,10 @@ final class JobsStore {
     /// answer — there is nothing to show and nothing that will arrive.
     func log(for jobId: String) -> JobLog { logs[jobId] ?? Self.noLog }
 
+    /// The newest partial-audio frame for a job, for callers outside a view
+    /// body (and for tests).
+    func previewFrame(_ jobId: String) -> JobPreview? { previewFrames[jobId] }
+
     private static let noLog = JobLog()
 
     private func appendLog(jobId: String, line: String) {
@@ -1314,7 +1368,7 @@ final class JobsStore {
     /// why an ordinary cancel still leaves nothing behind.
     @discardableResult
     func keepPartial(_ jobId: String) async -> SongRecord? {
-        let preview = active[jobId]?.preview
+        let preview = previewFrames[jobId]
         let info = active[jobId]?.info
         await cancel(jobId)
         guard let preview, let info else { return nil }
@@ -1378,6 +1432,7 @@ final class JobsStore {
     private func dismissBody(_ jobId: String) {
         active.removeValue(forKey: jobId)
         logs.removeValue(forKey: jobId)
+        previewFrames.removeValue(forKey: jobId)
         pendingContext.removeValue(forKey: jobId)
         canceling.remove(jobId)
         // And the auto-clear stamp: a row dismissed by hand and somehow
@@ -1458,9 +1513,14 @@ final class JobsStore {
     func reconcile() async {
         guard let client else { return }
         if let jobs = try? await client.jobs() {
-            for job in jobs where active[job.jobId] == nil {
-                adopt(ActiveJob(info: job, progress: job.progress,
-                                status: job.status))
+            // One shell update for the whole adoption, not one per row: on a
+            // reconnect with a full queue this ran the sort and every
+            // projection once per job. The `await` is outside the batch.
+            batched {
+                for job in jobs where active[job.jobId] == nil {
+                    adopt(ActiveJob(info: job, progress: job.progress,
+                                    status: job.status))
+                }
             }
         }
     }
@@ -1475,6 +1535,23 @@ final class JobsStore {
 
     func apply(_ event: EngineEvent) {
         batched { applyEvent(event) }
+    }
+
+    /// Route a whole burst of events as one shell update.
+    ///
+    /// The stream's drain already coalesces a burst into a single turn, but
+    /// each event in it still ran its own `apply` — so a take boundary
+    /// (progress + status + take_done + completed) or a queue reorder (which
+    /// re-announces every queued job) recomputed the sort, the `QueueLoad`
+    /// and every gated projection once per event. The recompute also
+    /// deep-compares the ordered queue against the last one, `params`
+    /// dictionaries included, so the no-op events in a burst were not free.
+    ///
+    /// `body` must be synchronous — the same rule `batched` has, and for the
+    /// same reason: holding the shell's derived state stale across an `await`
+    /// would leave it lying for as long as the suspension lasted.
+    func batchingEvents(_ body: () -> Void) {
+        batched(body)
     }
 
     private func applyEvent(_ event: EngineEvent) {
@@ -1497,7 +1574,8 @@ final class JobsStore {
                 active[jobId]?.status = stage
             }
         case .jobPreview(let jobId, let preview):
-            active[jobId]?.preview = preview
+            // Deliberately not routed through `active`: see `previewFrames`.
+            if active[jobId] != nil { previewFrames[jobId] = preview }
         case .jobLog(let jobId, let line):
             appendLog(jobId: jobId, line: line)
         case .jobTakeDone(let jobId, let take, let output):
@@ -1505,7 +1583,7 @@ final class JobsStore {
         case .jobCompleted(let jobId):
             // the engine drops a succeeded job's previews; keeping the path
             // would leave the card drawing from a file that is gone
-            active[jobId]?.preview = nil
+            previewFrames.removeValue(forKey: jobId)
             // A take that landed while the cancel was in flight: the request
             // lost, and the row must stop claiming otherwise.
             canceling.remove(jobId)
@@ -1544,10 +1622,74 @@ final class JobsStore {
             return
         }
         if let task = job.task, task != "generate" {
-            ingestArtifacts(job: job, result: result)
+            // Read and parse the analysis payloads *here*, before the
+            // synchronous ingest below — see `PreparedAnalysis`.
+            let prepared = await Self.prepareAnalyses(result.artifacts ?? [])
+            ingestArtifacts(job: job, result: result, prepared: prepared)
             return
         }
         ingestGenerate(job: job, result: result)
+    }
+
+    /// An analysis artifact, read and parsed before ingest begins.
+    ///
+    /// The ingest of a finished job is synchronous by design — `batched`
+    /// depends on it, and so does the propagation step that reads back the
+    /// analysis it just wrote — so the work cannot simply be detached from
+    /// the middle of it. But it does not have to happen *there*: an analysis
+    /// payload carries the beat grid, the downbeats, the structure and often
+    /// the chords for a whole track, which is megabytes to read off disk,
+    /// decode, and copy into a string, and a six-stem split lands several at
+    /// once. Done inline that is the hitch you feel exactly as a split
+    /// finishes, in the middle of whatever you were listening to.
+    ///
+    /// `ingest` is already an `async` function, so the reading and parsing
+    /// happen off the actor before the synchronous region is entered, and
+    /// what crosses back is a value. Nothing about the ordering changes.
+    struct PreparedAnalysis: Sendable {
+        /// The payload's bytes, kept because the record stores the whole
+        /// thing and the specialist merge re-reads them.
+        var data: Data
+        /// Whether these bytes are a specialist facet (chords, quality)
+        /// rather than an ordinary analysis — the decision, made off-actor.
+        var isSpecialist: Bool
+        /// Decoded ahead of time for the ordinary case; nil for a specialist
+        /// payload, which takes the merge path instead.
+        var payload: AnalysisPayload?
+        /// The bytes as the string the record stores.
+        var json: String
+    }
+
+    /// Read and classify every analysis artifact, off the main actor.
+    nonisolated static func prepareAnalyses(
+        _ artifacts: [JobArtifact]) async -> [String: PreparedAnalysis] {
+        let paths = artifacts.filter { $0.kind == "analysis" }.map(\.path)
+        guard !paths.isEmpty else { return [:] }
+        return await Task.detached(priority: .userInitiated) {
+            var out: [String: PreparedAnalysis] = [:]
+            for path in paths {
+                guard let data = try? Data(
+                    contentsOf: URL(fileURLWithPath: path)) else { continue }
+                // The same two-step test the inline path used: the byte scan
+                // is conclusive for a "no", and only a "maybe" pays for the
+                // parse.
+                var specialist = false
+                if Self.mentionsSpecialistVersion(data),
+                   let raw = (try? JSONSerialization.jsonObject(with: data))
+                    as? [String: Any] {
+                    specialist = raw["analysis_version"] == nil
+                        && (raw["chords_version"] != nil
+                            || raw["quality_version"] != nil)
+                }
+                out[path] = PreparedAnalysis(
+                    data: data,
+                    isSpecialist: specialist,
+                    payload: specialist ? nil : try? BackendClient.decoder
+                        .decode(AnalysisPayload.self, from: data),
+                    json: String(decoding: data, as: UTF8.self))
+            }
+            return out
+        }.value
     }
 
     /// Generate-job ingest (internal for tests): library songs, unless a
@@ -1747,11 +1889,17 @@ final class JobsStore {
 
     /// Route a task job's typed artifacts: stems/notes → parts library,
     /// analysis → the owner's analysis attachment. Internal for tests.
-    func ingestArtifacts(job: JobInfo, result: JobResult) {
-        batched { ingestArtifactsBody(job: job, result: result) }
+    /// `prepared` defaults to empty so the tests — and any caller without an
+    /// async context to parse in — keep the old inline behaviour.
+    func ingestArtifacts(job: JobInfo, result: JobResult,
+                         prepared: [String: PreparedAnalysis] = [:]) {
+        batched {
+            ingestArtifactsBody(job: job, result: result, prepared: prepared)
+        }
     }
 
-    private func ingestArtifactsBody(job: JobInfo, result: JobResult) {
+    private func ingestArtifactsBody(job: JobInfo, result: JobResult,
+                                     prepared: [String: PreparedAnalysis]) {
         let jobId = job.jobId
         let context = pendingContext[jobId]
         guard let partsRepo else {
@@ -1773,7 +1921,7 @@ final class JobsStore {
             // Analysis-only job: no parts are created.
             ingestAnalysis(artifacts, ownerId: ownerId, ownerType: ownerType,
                            modelId: job.modelId, repo: partsRepo,
-                           meta: result.meta)
+                           meta: result.meta, prepared: prepared)
             // Late analysis of an already-split song: stems share its grid,
             // so propagate (mirrors the split-time copy below).
             if ownerType == "song",
@@ -1911,7 +2059,7 @@ final class JobsStore {
             case "analysis":
                 ingestAnalysis([artifact], ownerId: songId, ownerType: "song",
                                modelId: job.modelId, repo: partsRepo,
-                               meta: result.meta)
+                               meta: result.meta, prepared: prepared)
             case "text":
                 // A transcribe run with emit_abc writes each track's notation
                 // beside its midi ("abc:<label>"); a compose lands its ABC
@@ -2143,10 +2291,15 @@ final class JobsStore {
     private func ingestAnalysis(_ artifacts: [JobArtifact], ownerId: String,
                                 ownerType: String, modelId: String,
                                 repo: PartsRepository,
-                                meta: [String: JSONValue]?) {
+                                meta: [String: JSONValue]?,
+                                prepared: [String: PreparedAnalysis]) {
         for artifact in artifacts where artifact.kind == "analysis" {
             let url = URL(fileURLWithPath: artifact.path)
-            guard let data = try? Data(contentsOf: url) else { continue }
+            // Parsed before this turn began, unless the caller had nowhere to
+            // do that — see `PreparedAnalysis`.
+            let ready = prepared[artifact.path]
+            guard let data = ready?.data
+                    ?? (try? Data(contentsOf: url)) else { continue }
             // Specialist analyzers (chords, quality) describe one facet;
             // their payload merges into the owner's stored analysis so the
             // beat grid and key the workbench reads survive the run.
@@ -2158,25 +2311,33 @@ final class JobsStore {
             // properly two lines below. A payload whose bytes contain neither
             // version key cannot satisfy the condition, so skipping the parse
             // for it changes nothing but the cost.
-            if Self.mentionsSpecialistVersion(data),
-               let raw = (try? JSONSerialization.jsonObject(with: data))
-                as? [String: Any],
-               raw["analysis_version"] == nil,
-               raw["chords_version"] != nil || raw["quality_version"] != nil {
-                mergeSpecialistAnalysis(raw, ownerId: ownerId,
-                                        ownerType: ownerType,
-                                        modelId: modelId, repo: repo)
+            let isSpecialist = ready?.isSpecialist ?? {
+                guard Self.mentionsSpecialistVersion(data),
+                      let raw = (try? JSONSerialization.jsonObject(with: data))
+                        as? [String: Any] else { return false }
+                return raw["analysis_version"] == nil
+                    && (raw["chords_version"] != nil
+                        || raw["quality_version"] != nil)
+            }()
+            if isSpecialist {
+                if let raw = (try? JSONSerialization.jsonObject(with: data))
+                    as? [String: Any] {
+                    mergeSpecialistAnalysis(raw, ownerId: ownerId,
+                                            ownerType: ownerType,
+                                            modelId: modelId, repo: repo)
+                }
                 try? FileManager.default.removeItem(at: url)
                 continue
             }
-            let payload = try? BackendClient.decoder.decode(
-                AnalysisPayload.self, from: data)
+            let payload = ready?.payload ?? (try? BackendClient.decoder.decode(
+                AnalysisPayload.self, from: data))
             let record = AnalysisRecord(
                 ownerId: ownerId, ownerType: ownerType,
                 bpm: payload?.tempoBpm ?? meta?["tempo_bpm"]?.doubleValue,
                 keyName: payload?.key,
                 camelot: payload?.camelot,
-                analysisJSON: String(decoding: data, as: UTF8.self),
+                analysisJSON: ready?.json
+                    ?? String(decoding: data, as: UTF8.self),
                 modelId: modelId, createdAt: Date())
             try? repo.upsertAnalysis(record)
             try? FileManager.default.removeItem(at: url)

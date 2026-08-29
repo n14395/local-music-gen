@@ -26,8 +26,8 @@ async def jobs_submit(request: Request, body: dict):
 async def jobs_list(request: Request, status: str | None = None,
                     group_id: str | None = None):
     st = _engine(request)
-    out = []
-    for job in st.queue.jobs.values():
+    matched = []
+    for job in list(st.queue.jobs.values()):
         if group_id and job.group_id != group_id:
             continue
         if status:
@@ -37,8 +37,10 @@ async def jobs_list(request: Request, status: str | None = None,
                 continue
         elif group_id is None and job.status in ("succeeded", "failed", "canceled"):
             continue
-        out.append(st.queue.info(job))
-    return {"jobs": out}
+        matched.append(job)
+    # One call, so the queue lock is taken once and the run order sorted once
+    # for the whole listing rather than once per row.
+    return {"jobs": st.queue.info_many(matched)}
 
 
 @router.get("/v1/jobs/{job_id}")

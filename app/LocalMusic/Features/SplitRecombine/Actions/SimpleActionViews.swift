@@ -26,10 +26,23 @@ struct RenderActionView: View {
     let onBack: () -> Void
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and it
+    /// was being asked for from inside `body`, so both ran again on every
+    /// redraw. The line only depends on the material, so it is resolved with
+    /// it.
+    @State private var sourceMeta: String?
     @State private var selectedModelId: String?
     @State private var choosing = false
     @State private var submitting = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The action log, decoded once rather than at render time.
+    ///
+    /// It lives in `@AppStorage` as a JSON blob, and the rail was asking for
+    /// the whole thing to be parsed from inside `body` — so every redraw
+    /// re-decoded it.
+    @State private var runLog = ActionRunLog()
 
     private var slot: Slot? { recipe.slots.first }
 
@@ -49,9 +62,7 @@ struct RenderActionView: View {
             ActionSourceCard(
                 eyebrow: "NOTES",
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "A notes part. Transcribe a song or a stem first "
                     + "if you have none.",
@@ -103,7 +114,7 @@ struct RenderActionView: View {
             ActionRail(outputs: outputs,
                        explanation: "A new audio part on the same song, sitting "
                             + "beside the stems it was transcribed from.",
-                       lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
+                       lastRun: runLog.runs[recipe.id])
         }
         .onAppear {
             if source == nil, let sourceId {
@@ -112,6 +123,13 @@ struct RenderActionView: View {
             }
             if selectedModelId == nil { selectedModelId = eligible.first?.id }
         }
+        .onChange(of: source) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
+            }
+        }
+        .task { runLog = ActionRunLog.decoded(runsJSON) }
+        .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Notes",
@@ -179,6 +197,13 @@ struct ArrangeActionView: View {
     let onBack: () -> Void
 
     @State private var source: PickedMaterial?
+    /// The source card's second line, resolved when the source changes.
+    ///
+    /// `ActionCopy.sourceMeta` is a song read plus an analysis read, and it
+    /// was being asked for from inside `body`, so both ran again on every
+    /// redraw. The line only depends on the material, so it is resolved with
+    /// it.
+    @State private var sourceMeta: String?
     @State private var choosing = false
     @AppStorage("workbench.lens") private var lens: WorkbenchLens = .rows
 
@@ -199,9 +224,7 @@ struct ArrangeActionView: View {
             ActionSourceCard(
                 eyebrow: "SONG",
                 material: source,
-                meta: source.map {
-                    ActionCopy.sourceMeta($0, library: library, parts: parts)
-                },
+                meta: sourceMeta,
                 playback: playback,
                 placeholder: "Choose the song whose sections you want to move.",
                 chooseTitle: source == nil ? "Choose from Library…" : "Change…",
@@ -243,6 +266,11 @@ struct ArrangeActionView: View {
             if source == nil, let sourceId {
                 source = PickedMaterial.resolve(id: sourceId, parts: parts,
                                                 library: library)
+            }
+        }
+        .onChange(of: source) {
+            sourceMeta = source.map {
+                ActionCopy.sourceMeta($0, library: library, parts: parts)
             }
         }
         .sheet(isPresented: $choosing) {

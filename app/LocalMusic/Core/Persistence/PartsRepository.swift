@@ -29,6 +29,16 @@ struct PartsRepository: Sendable {
         }
     }
 
+    /// Several parts by id, in one round trip — the sibling below, for the
+    /// paths that hold a whole list of ids at once.
+    func parts(ids: [String]) throws -> [String: PartRecord] {
+        guard !ids.isEmpty else { return [:] }
+        let rows = try db.queue.read { database in
+            try PartRecord.filter(ids.contains(Column("id"))).fetchAll(database)
+        }
+        return Dictionary(rows.map { ($0.id, $0) }) { _, last in last }
+    }
+
     func part(id: String) throws -> PartRecord? {
         try db.queue.read { try PartRecord.fetchOne($0, key: id) }
     }

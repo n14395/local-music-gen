@@ -407,8 +407,14 @@ private struct DownloadProgressLine: View {
 }
 
 /// `18.1 / 53.4 GB · 12 MB/S · 48 MIN LEFT`, aligned beside the card tags.
-/// The rate is smoothed here rather than in the store, so the estimate resets
-/// when the row appears instead of carrying a stale average across attempts.
+///
+/// Smoothed twice over, deliberately. The store smooths first, because the
+/// projection this row reads is gated on the numbers it *prints* — an
+/// unsmoothed rate swings on every sample, which would republish the
+/// projection as often as the raw dictionary it exists to insulate the screen
+/// from. The pass here is what makes the estimate reset when the row appears,
+/// rather than carrying a stale average across attempts, and over an already
+/// steady input it costs nothing.
 private struct DownloadProgressStats: View {
     let download: DownloadInfo
     @State private var rate = DownloadRate()

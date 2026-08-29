@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Foundation
 import Observation
@@ -39,6 +40,11 @@ final class EditorStore {
         case rendering(jobId: String, fraction: Double?, etaS: Double?,
                        message: String?)
         case replacing
+        /// Putting the stashed original back. Its own case rather than
+        /// `replacing` because the file work is now detached, and this is
+        /// what holds the editing surface closed while it runs — see
+        /// `restoreOriginal`.
+        case restoring
         case rebuildingPeaks
         case failed(String)
 
@@ -178,6 +184,16 @@ final class EditorStore {
     /// A structural re-arm waiting for a drag to settle — see
     /// `refreshPreviewAfterEdit`.
     private var previewRearmTask: Task<Void, Never>?
+
+    /// A structural edit landed while the preview was paused. `resume` re-arms
+    /// from the items captured at the last `prepare`, so without this the user
+    /// hears the pre-edit cut list — deleted audio plays. Gain changes do not
+    /// set it: the nodes outlive a pause and `updateGains` lands on them
+    /// directly.
+    private var previewStale = false
+
+    /// True between `beginScrub` and `endScrub`.
+    private var scrubbing = false
     /// How many undo steps this session has registered. A slider drag must
     /// add exactly one however many frames it spans — see `perform`.
     private(set) var undoStepsRegistered = 0
@@ -187,7 +203,23 @@ final class EditorStore {
     /// Which material the in-flight apply belongs to. An apply survives
     /// navigating away and opening something else, so every write it makes
     /// is checked against this rather than against whatever is loaded now.
-    var applyOwnerId: String?
+    var applyOwnerId: String? {
+        didSet {
+            guard applyOwnerId != oldValue else { return }
+            // Resolved once, when ownership changes, because the only reader
+            // is a `.help()` tooltip on two buttons — evaluated on every pass
+            // of the top bar for as long as another track is rendering, and
+            // resolving it costs up to two synchronous SQLite reads.
+            resolvedRenderingTitle = applyOwnerId.map { ownerId in
+                if ownerId == material?.id { return material?.title }
+                if let song = library.song(id: ownerId) { return song.title }
+                return ((try? partsRepo.part(id: ownerId)) ?? nil)?.name
+            } ?? nil
+        }
+    }
+
+    /// The title behind `renderingTitle`, resolved when `applyOwnerId` is set.
+    private var resolvedRenderingTitle: String?
 
     func noteSnippetIntent(_ intent: SnippetIntent, jobId: String) {
         snippetIntents[jobId] = intent
@@ -286,10 +318,8 @@ final class EditorStore {
 
     /// What is rendering, for the tooltip that explains a disabled button.
     var renderingTitle: String? {
-        guard applyStage.isBusy, let ownerId = applyOwnerId else { return nil }
-        if ownerId == material?.id { return material?.title }
-        if let song = library.song(id: ownerId) { return song.title }
-        return ((try? partsRepo.part(id: ownerId)) ?? nil)?.name
+        guard applyStage.isBusy, applyOwnerId != nil else { return nil }
+        return resolvedRenderingTitle
     }
 
     /// Why this program cannot be rendered, in plain language — nil when it
@@ -466,18 +496,46 @@ final class EditorStore {
         }
     }
 
+    /// Fetch the beat grid and key for the material being opened.
+    ///
+    /// Off the opening turn: the payload carries the beats, downbeats and
+    /// sections, which on a long analysed track is thousands of doubles to
+    /// decode, on top of up to two synchronous reads. Nothing on the first
+    /// frame needs it — the waveform and the edit list draw without a grid —
+    /// so the track appears immediately and the grid arrives with the
+    /// `rebuild` below, which is the same path a late analysis already took.
+    ///
+    /// Guarded on the material still being the one that asked: switching
+    /// tracks quickly must not stamp the first track's grid onto the second.
     private func loadAnalysis(ownerId: String, parentSongId: String?) {
-        var record = (try? partsRepo.analysis(ownerId: ownerId)) ?? nil
-        if record == nil, let parentSongId {
-            record = (try? partsRepo.analysis(ownerId: parentSongId)) ?? nil
-        }
-        bpm = record?.bpm
-        camelot = record?.camelot
-        analysis = record.flatMap {
-            try? BackendClient.decoder.decode(
-                AnalysisPayload.self, from: Data($0.analysisJSON.utf8))
+        bpm = nil
+        camelot = nil
+        analysis = nil
+        analysisLoad?.cancel()
+        analysisLoad = Task { [weak self, partsRepo] in
+            let loaded = await Task.detached(priority: .userInitiated) {
+                () -> (bpm: Double?, camelot: String?, payload: AnalysisPayload?)? in
+                var record = (try? partsRepo.analysis(ownerId: ownerId)) ?? nil
+                if record == nil, let parentSongId {
+                    record = (try? partsRepo.analysis(ownerId: parentSongId)) ?? nil
+                }
+                guard let record else { return nil }
+                return (record.bpm, record.camelot,
+                        try? BackendClient.decoder.decode(
+                            AnalysisPayload.self,
+                            from: Data(record.analysisJSON.utf8)))
+            }.value
+            guard let self, !Task.isCancelled,
+                  self.material?.id == ownerId else { return }
+            self.bpm = loaded?.bpm
+            self.camelot = loaded?.camelot
+            self.analysis = loaded?.payload
+            self.rebuild()
         }
     }
+
+    /// The analysis fetch in flight, so opening another track cancels it.
+    private var analysisLoad: Task<Void, Never>?
 
     private func finishOpen() {
         selection = nil
@@ -555,7 +613,7 @@ final class EditorStore {
         let joins = EditMixPlan.joinTimes(segments: segments)
         if joins != joinTimes { joinTimes = joins }
         let fades = EditMixPlan.effectiveFades(document: document,
-                                               sourceDuration: sourceDurationS)
+                                               segments: segments)
         let nextFades = Fades(headS: fades.headS, tailS: fades.tailS)
         if nextFades != effectiveFades { effectiveFades = nextFades }
         let amplify = computeAmplifyDbForSelection()
@@ -1152,7 +1210,79 @@ final class EditorStore {
     }
 
     var playheadS: Double {
-        player.state == .stopped ? cursorS : player.currentPosition()
+        if scrubbing { return cursorS }
+        return player.state == .stopped ? cursorS : player.currentPosition()
+    }
+
+    // MARK: zoom
+
+    /// The zoom rail's four verbs, on the store rather than in the view.
+    ///
+    /// They were the waveform view's private methods until the View menu
+    /// needed them: a menu command cannot reach into a view, and copying the
+    /// anchoring arithmetic into a second place would have been the surest way
+    /// to make ⌘+ and the rail's `+` disagree about where they zoom to. The
+    /// rail calls these now, so there is one implementation.
+    ///
+    /// All four are no-ops before the well has been laid out (`wellWidth` 0),
+    /// which is the state a freshly opened Editor is in for one frame.
+    func zoomIn() { scaleZoom(by: 1.33) }
+    func zoomOut() { scaleZoom(by: 0.75) }
+
+    /// Back to the whole file in view. `0` is the store's "not yet zoomed"
+    /// sentinel, which the view resolves to `fitZoom` on the next layout.
+    func zoomToFit() {
+        pxPerSecond = 0
+        visibleStartS = 0
+    }
+
+    /// Fill the well with the selection.
+    ///
+    /// Nothing to do without one, and nothing to do for a zero-length one — a
+    /// selection collapsed to a point has no width to divide by. Nothing to do
+    /// either when an end does not map into the timeline at all:
+    /// `sourceToTimeline` answers nil for a source position that lands in a
+    /// deleted or silenced stretch, and there is no honest window to show for
+    /// a selection whose edge is not on screen anywhere.
+    func zoomToSelection() {
+        guard let selection, selection.length > 0, wellWidth > 0,
+              let start = EditProgram.sourceToTimeline(selection.start,
+                                                       in: segments),
+              let end = EditProgram.sourceToTimeline(selection.end,
+                                                     in: segments)
+        else { return }
+        let span = max(0.001, end - start)
+        pxPerSecond = EditorGeometry.clampZoom(wellWidth / CGFloat(span),
+                                               durationS: timelineDurationS,
+                                               width: wellWidth)
+        let visible = Double(wellWidth / pxPerSecond)
+        visibleStartS = (start + span / 2 - visible / 2)
+            .clamped(to: 0...max(0, timelineDurationS - visible))
+    }
+
+    func scaleZoom(by factor: CGFloat) {
+        let zoom = pxPerSecond > 0
+            ? pxPerSecond
+            : EditorGeometry.fitZoom(durationS: timelineDurationS,
+                                     width: max(1, wellWidth))
+        setZoomKeepingCenter(zoom * factor)
+    }
+
+    /// Anchor on the playhead when it is visible, the window centre otherwise
+    /// — zooming away from what you are listening to is the one thing a zoom
+    /// control must not do.
+    func setZoomKeepingCenter(_ zoom: CGFloat) {
+        let duration = timelineDurationS
+        let width = max(1, wellWidth)
+        let visible = pxPerSecond > 0 ? Double(width / pxPerSecond) : duration
+        let anchor = (playheadS >= visibleStartS
+                      && playheadS <= visibleStartS + visible)
+            ? playheadS : visibleStartS + visible / 2
+        pxPerSecond = EditorGeometry.clampZoom(zoom, durationS: duration,
+                                               width: width)
+        let newVisible = Double(width / pxPerSecond)
+        visibleStartS = (anchor - newVisible / 2)
+            .clamped(to: 0...max(0, duration - newVisible))
     }
 
     var isPlaying: Bool { player.isPlaying }
@@ -1171,7 +1301,11 @@ final class EditorStore {
             stopLoopWatcher()
         case .paused:
             pauseGlobalPlayback()
-            player.resume()
+            if previewStale {
+                resumeFromStaleEdit()
+            } else {
+                player.resume()
+            }
             startLoopWatcher()
         case .stopped:
             playPreview(from: cursorS)
@@ -1182,6 +1316,7 @@ final class EditorStore {
         guard material != nil else { return }
         pauseGlobalPlayback()
         stopAtS = nil
+        previewStale = false
         player.play(items: previewItems(), from: position)
         startLoopWatcher()
     }
@@ -1189,6 +1324,7 @@ final class EditorStore {
     func playSelection() {
         guard let selection else { return }
         pauseGlobalPlayback()
+        previewStale = false
         stopAtS = loopSelection ? nil : selection.end
         player.play(items: previewItems(), from: selection.start)
         startLoopWatcher()
@@ -1198,6 +1334,7 @@ final class EditorStore {
         stopLoopWatcher()
         stopAtS = nil
         auditioningOriginal = false
+        previewStale = false
         player.stop()
     }
 
@@ -1206,6 +1343,8 @@ final class EditorStore {
     func toggleOriginalAudition() {
         guard let sourceURL, material != nil else { return }
         pauseGlobalPlayback()
+        // Both arms re-arm from scratch, so nothing is left stale either way.
+        previewStale = false
         if auditioningOriginal {
             let sourcePosition = player.currentPosition()
             let editPosition = EditProgram.sourceToTimeline(
@@ -1244,9 +1383,33 @@ final class EditorStore {
 
     func seekPreview(to t: Double) {
         cursorS = t.clamped(to: 0...max(0, timelineDurationS))
-        if player.state != .stopped {
-            player.seek(to: cursorS)
-        }
+        // Mid-gesture the position moves but the graph does not: see
+        // `beginScrub`.
+        guard !scrubbing, player.state != .stopped else { return }
+        player.seek(to: cursorS)
+    }
+
+    /// A scrub gesture started.
+    ///
+    /// `player.seek` is not cheap: it disarms every node and re-arms them
+    /// against a fresh anchor placed ~120 ms in the future, so a drag that
+    /// calls it per mouse-move schedules audio sixty times a second and
+    /// throws each schedule away ~16 ms later. The result is a drag that
+    /// holds the main thread and plays nothing.
+    ///
+    /// So a gesture moves `cursorS` alone and the seek happens once, at the
+    /// end — the same shape the selection drags already use. `playheadS`
+    /// follows the cursor while this is set, so the thumb still tracks the
+    /// pointer even though the player has not moved yet.
+    func beginScrub() { scrubbing = true }
+
+    /// The gesture ended: put the player where the pointer left off. A tap on
+    /// the ruler runs both halves in one turn, so it still seeks at once.
+    func endScrub() {
+        guard scrubbing else { return }
+        scrubbing = false
+        guard player.state != .stopped else { return }
+        player.seek(to: cursorS)
     }
 
     /// Loop and play-selection bounds — checked beside the position tick.
@@ -1302,8 +1465,21 @@ final class EditorStore {
     ///   whatever is still outstanding when the drag ends.
     /// - **Structural, settled.** Re-arm now, from the same timeline moment so
     ///   tweaking a cut mid-listen does not restart the track.
+    /// - **Paused.** The graph is up but not running. A gain change still
+    ///   lands on the live nodes, which survive the pause; a structural one
+    ///   cannot, so it is remembered and applied when playback resumes.
     private func refreshPreviewAfterEdit() {
-        guard player.state == .playing, !auditioningOriginal else { return }
+        guard !auditioningOriginal else { return }
+        if player.state == .paused {
+            let items = previewItems()
+            if MultiPartPlayer.Schedule(items) == player.armedSchedule {
+                player.updateGains(items: items)
+            } else {
+                previewStale = true
+            }
+            return
+        }
+        guard player.state == .playing else { return }
         let items = previewItems()
         if MultiPartPlayer.Schedule(items) == player.armedSchedule {
             cancelPreviewRearm()
@@ -1332,6 +1508,17 @@ final class EditorStore {
     private func rearmPreview() {
         cancelPreviewRearm()
         guard player.state == .playing, !auditioningOriginal else { return }
+        previewStale = false
+        let position = min(player.currentPosition(),
+                           max(0, timelineDurationS - 0.01))
+        player.play(items: previewItems(), from: position)
+    }
+
+    /// Resume after the timeline was re-cut while paused: arm the current cut
+    /// list rather than the stale one `resume` would replay, holding the
+    /// moment the user paused at.
+    private func resumeFromStaleEdit() {
+        previewStale = false
         let position = min(player.currentPosition(),
                            max(0, timelineDurationS - 0.01))
         player.play(items: previewItems(), from: position)
@@ -1391,9 +1578,11 @@ final class EditorStore {
             guard frames > 0, let source = buffer.floatChannelData,
                   let target = flipped.floatChannelData else { break }
             for channel in 0..<Int(format.channelCount) {
-                for i in 0..<frames {
-                    target[channel][i] = source[channel][frames - 1 - i]
-                }
+                // `vDSP_vrvrs` reverses in place, so the chunk is copied
+                // across and then flipped. Same answer as the scalar loop,
+                // vectorised — this runs over every sample of the track.
+                target[channel].update(from: source[channel], count: frames)
+                vDSP_vrvrs(target[channel], 1, vDSP_Length(frames))
             }
             flipped.frameLength = AVAudioFrameCount(frames)
             try out.write(from: flipped)

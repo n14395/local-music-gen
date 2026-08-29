@@ -59,6 +59,13 @@ struct ActionsScreen: View {
     @State private var category: RecipeCategory?
     @AppStorage("actions.onlyRunnable") private var onlyRunnable = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
+    /// The "Recently used" menu, resolved when the log changes rather than
+    /// when the gallery redraws.
+    ///
+    /// The log lives in `@AppStorage` as a JSON blob, and this was decoding
+    /// the whole thing from inside `body` — once per keystroke in the gallery
+    /// search field, to fill a menu that only changes when a run is recorded.
+    @State private var recentRecipes: [Recipe] = []
     /// The Models screen's own disclosure. Written here only when routing to a
     /// model that would otherwise be hidden — see `featuredCanSatisfy`.
 
@@ -95,6 +102,8 @@ struct ActionsScreen: View {
             .task { refreshCardStates() }
             .onChange(of: catalog.version) { refreshCardStates() }
             .onChange(of: catalog.readiness) { refreshCardStates() }
+            .task { refreshRecentRecipes() }
+            .onChange(of: runsJSON) { refreshRecentRecipes() }
             .sheet(isPresented: $pickingForEditor) {
                 PartPickerSheet(
                     slotLabel: "Song or part",
@@ -124,8 +133,8 @@ struct ActionsScreen: View {
             }
     }
 
-    private var recentRecipes: [Recipe] {
-        ActionRunLog.decoded(runsJSON).recentRecipeIds
+    private func refreshRecentRecipes() {
+        recentRecipes = ActionRunLog.decoded(runsJSON).recentRecipeIds
             .compactMap { RecipeCatalog.recipe(id: $0) }
     }
 

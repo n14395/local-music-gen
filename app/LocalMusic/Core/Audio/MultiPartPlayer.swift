@@ -61,6 +61,8 @@ final class MultiPartPlayer {
     private var anchorPosition: Double = 0
     private var frozenPosition: Double?
     private var tick: Timer?
+    /// Whether the meter tap is on the mixer — see `prepare`.
+    private var meterTapInstalled = false
 
     var isPlaying: Bool { state == .playing }
 
@@ -108,8 +110,12 @@ final class MultiPartPlayer {
 
     @discardableResult
     func play(items: [Item], from position: Double = 0) -> Bool {
-        stop()
-        guard prepare(items: items) else { return false }
+        disarm()
+        guard prepare(items: items) else {
+            state = .stopped
+            frozenPosition = nil
+            return false
+        }
         return arm(from: position)
     }
 
@@ -204,11 +210,35 @@ final class MultiPartPlayer {
 
     // MARK: graph lifecycle
 
-    /// Build the graph once; seeking and pausing re-arm it rather than tearing
-    /// it down, so nodes are not attached and detached mid-session.
+    /// Bring the graph into line with `items`, keeping everything that
+    /// survives the change.
+    ///
+    /// Structural edits re-enter here constantly — every delete, trim, split
+    /// or paste while the preview runs, and every settle of a speed or pitch
+    /// drag. Rebuilding from nothing each time meant `engine.stop()`, a
+    /// detach of every node, an `AVAudioFile` reopened from disk per segment
+    /// and `engine.start()` again: on a heavily cut track that is dozens of
+    /// file opens and two blocking HAL calls on the main thread, for an edit
+    /// that usually moves one boundary.
+    ///
+    /// So a clip keeps its node and its open file when its id and url both
+    /// survive; only genuinely new clips are opened and attached, only
+    /// departed ones are detached, and the engine keeps running throughout.
+    /// The url has to be part of that test — the Editor swaps every item onto
+    /// a reversed copy of the source, which is the same ids pointing at
+    /// different audio.
     private func prepare(items: [Item]) -> Bool {
+        var nextNodes: [String: AVAudioPlayerNode] = [:]
+        var nextFiles: [String: AVAudioFile] = [:]
         var prepared: [Item] = []
         for item in items where !item.muted {
+            if let file = files[item.id], file.url == item.url,
+               let node = nodes[item.id] {
+                nextNodes[item.id] = node
+                nextFiles[item.id] = file
+                prepared.append(item)
+                continue
+            }
             guard let file = try? AVAudioFile(forReading: item.url) else {
                 continue
             }
@@ -216,32 +246,47 @@ final class MultiPartPlayer {
             engine.attach(node)
             engine.connect(node, to: engine.mainMixerNode,
                            format: file.processingFormat)
-            node.volume = Float(pow(10.0, item.gainDb / 20.0))
-            nodes[item.id] = node
-            files[item.id] = file
+            nextNodes[item.id] = node
+            nextFiles[item.id] = file
             prepared.append(item)
         }
+        // Anything the new list does not use — a deleted clip, or one whose
+        // audio moved to another file — leaves the graph.
+        for (id, node) in nodes where nextNodes[id] !== node {
+            node.stop()
+            engine.detach(node)
+        }
+        nodes = nextNodes
+        files = nextFiles
         guard !prepared.isEmpty else {
             lastError = "Nothing to play"
             teardown()
             return false
+        }
+        // Set every pass, not just for new nodes: a reused node is carrying
+        // the gain it was given last time.
+        for item in prepared {
+            nodes[item.id]?.volume = Float(pow(10.0, item.gainDb / 20.0))
         }
         // Summing N clips with no normalisation clips the mixer; the mix job
         // normalises and limits, the preview does neither.
         engine.mainMixerNode.outputVolume = sumsConcurrently
             ? Float(min(1.0, 4.0 / Double(prepared.count).squareRoot()))
             : 1.0
-        do {
-            try engine.start()
-        } catch {
-            lastError = "Audio engine unavailable: \(error.localizedDescription)"
-            teardown()
-            return false
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                lastError = "Audio engine unavailable: \(error.localizedDescription)"
+                teardown()
+                return false
+            }
         }
         // After start, not before: the mixer only resolves its output format
         // once the engine is running, and installing a tap with a 0-channel
-        // format throws.
-        if metersEnabled { installMeterTap() }
+        // format throws. Tracked rather than re-installed per pass, because
+        // the graph now outlives the edit that changed it.
+        if metersEnabled, !meterTapInstalled { installMeterTap() }
         armedItems = prepared
         durationS = Self.timelineDurationS(prepared, fileDurations: fileDurations())
         return true
@@ -295,7 +340,12 @@ final class MultiPartPlayer {
     private func disarm() {
         tick?.invalidate()
         tick = nil
-        for node in nodes.values where node.isPlaying {
+        // Every node, not just the sounding ones: `stop()` is also what
+        // clears a node's scheduled segments, and since nodes now survive a
+        // re-prepare, one that was scheduled against a future anchor but had
+        // not started yet would otherwise keep that schedule and play the
+        // pre-edit audio alongside the new.
+        for node in nodes.values {
             node.stop()
         }
     }
@@ -313,6 +363,7 @@ final class MultiPartPlayer {
         let format = engine.mainMixerNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { return }
         engine.mainMixerNode.removeTap(onBus: 0)
+        meterTapInstalled = true
         engine.mainMixerNode.installTap(
             onBus: 0, bufferSize: 2048, format: format
         ) { @Sendable [weak self] buffer, _ in
@@ -352,7 +403,10 @@ final class MultiPartPlayer {
     }
 
     private func teardown() {
-        if metersEnabled { engine.mainMixerNode.removeTap(onBus: 0) }
+        // Unconditional: `metersEnabled` may have been switched off since the
+        // tap went in, and removing a bus that has none is a no-op.
+        engine.mainMixerNode.removeTap(onBus: 0)
+        meterTapInstalled = false
         meterDb = nil
         engine.stop()
         for node in nodes.values {

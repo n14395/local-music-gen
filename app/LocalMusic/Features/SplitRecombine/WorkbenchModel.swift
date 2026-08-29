@@ -1,5 +1,19 @@
 import Foundation
 
+/// The two fields the bench takes off a stored analysis.
+///
+/// `AnalysisPayload` also carries the beat and downbeat lists, a
+/// beat-synchronous chroma matrix and a 512-dimension CLAP embedding, and
+/// decoding all of that costs real time — which was being spent on the click,
+/// once per part, by a three-part drop onto the bench and by reopening an
+/// eight-part mix. A decoder only builds the keys it is asked for, so naming
+/// two of them is the whole fix. `Section` is shared rather than restated: the
+/// clips keep the same type they always did.
+struct ClipAnalysis: Decodable, Sendable {
+    var sections: [AnalysisPayload.Section]?
+    var durationS: Double?
+}
+
 /// State behind the Workbench, in both of its lenses.
 ///
 /// A **lane** is presentation plus a mixer bus: the wire has no lane concept,
@@ -287,7 +301,7 @@ final class WorkbenchModel {
         if let record = parts?.analysis(for: material.id) {
             clip.summary = AnalysisSummary(record: record)
             let payload = try? BackendClient.decoder.decode(
-                AnalysisPayload.self, from: Data(record.analysisJSON.utf8))
+                ClipAnalysis.self, from: Data(record.analysisJSON.utf8))
             clip.sections = payload?.sections ?? []
             clip.sourceDurationS = material.durationS ?? payload?.durationS
         }

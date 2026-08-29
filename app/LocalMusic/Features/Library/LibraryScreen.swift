@@ -64,6 +64,8 @@ struct LibraryScreen: View {
     /// Read from the whole table rather than from `results`, so picking an
     /// artist doesn't narrow the menu you picked it from down to that one name.
     @State private var artists: [String] = []
+    /// The in-flight badge read — see `refreshBadgeCounts`.
+    @State private var badgeTask: Task<Void, Never>?
     @State private var models: [ModelChoice] = []
     @State private var camelotCodes: Set<String> = []
     @State private var partGroups: [LibraryPartGroup] = []
@@ -96,29 +98,41 @@ struct LibraryScreen: View {
             .frame(maxHeight: .infinity)
         }
         .background(Bench.Palette.windowBackground)
-        .background {
-            Button("") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-        }
+        // ⌘F is the Edit menu's item now, not a hidden button: one item that
+        // names where it will land ("Find in Library") instead of four
+        // invisible ones that claimed the key with nothing to show for it.
+        .focusedSceneValue(\.searchCommand,
+                           SearchCommand(scope: "Library") { searchFocused = true })
         .onAppear {
+            // `applyScope` already runs the search inline when it actually
+            // changes a filter — that is `filtersChanged`'s click path. What
+            // is left for arriving on the screen is a confirmation read, and
+            // it goes through the coalesced off-actor pair rather than the
+            // synchronous siblings: nothing here is a click waiting on a row,
+            // and this used to run five unbounded queries plus a full parts
+            // read on the main actor for every visit to the tab.
             applyScope()
-            library.refreshSearch()
-            parts.refresh()
+            library.refreshRecentSoon()
+            parts.refreshSoon()
             refreshDerived()
         }
         // The scope's filters belong to this screen, not to the stores — left
         // set, the sidebar's library count and every picker elsewhere in the
         // app would silently be showing "renders only", or "hearted only".
         .onDisappear {
-            library.filters.origin = .any
-            library.filters.favoritesOnly = false
-            library.filters.hasEdits = false
-            if promotedSort, library.filters.sort == .recentlyEdited {
-                library.filters.sort = settings.libraryDefaultSort
+            // One assignment, as in `applyScope`, and for the same reason:
+            // five separate writes ran five searches on the way out of a
+            // screen nobody is looking at any more.
+            var next = library.filters
+            next.origin = .any
+            next.favoritesOnly = false
+            next.hasEdits = false
+            if promotedSort, next.sort == .recentlyEdited {
+                next.sort = settings.libraryDefaultSort
                 promotedSort = false
             }
-            library.filters.artist = nil
+            next.artist = nil
+            library.filters = next
             parts.filters.favoritesOnly = false
         }
         // `initial` because the reveal is usually set in the same turn that
@@ -353,15 +367,18 @@ struct LibraryScreen: View {
                 }
             }
             .buttonStyle(.bench(.accent))
-            // The design writes this as bare Tab, but `keyboardShortcut` is
-            // window-scoped rather than view-scoped: a bare Tab claimed here
-            // swallows the window's focus chain for as long as a comparison is
-            // running, so the search field cannot be left and the lists cannot
-            // be reached — and the lists need focus for `onMoveCommand`'s arrow
-            // keys. ⌥ is not part of that chain, so the affordance survives
-            // with the same finger already on Tab. Both labels have to move
-            // with it, hence `LibraryCompare.switchKey`.
-            .keyboardShortcut(.tab, modifiers: .option)
+            // ⌥Tab, not the bare Tab the design writes: a bare Tab shortcut
+            // is window-scoped rather than view-scoped and would swallow the
+            // window's focus chain for as long as a comparison ran, so the
+            // search field could not be left and the lists — which need focus
+            // for `onMoveCommand`'s arrow keys — could not be reached. ⌥ is
+            // not part of that chain, so the affordance survives with the same
+            // finger already on Tab. Both labels move with it, hence
+            // `LibraryCompare.switchKey`.
+            //
+            // The key itself now belongs to Playback ▸ Switch A/B Side. It is
+            // not repeated here: two claimants on one shortcut is ambiguous,
+            // and the button's own label already names the key.
             .help("Switch to the other take at the same position")
         } else if checked.count >= 2 {
             HStack(spacing: 10) {
@@ -753,10 +770,17 @@ struct LibraryScreen: View {
     /// switch. The exception is the artist filter: it is offered in the
     /// Imported scope alone, so carrying it out would filter a list by a
     /// control that is no longer on screen.
+    /// Built as one value and assigned once.
+    ///
+    /// `filters` refreshes in its own `didSet`, so writing five properties in
+    /// a row ran the search — an FTS match, a tag read and a count, inline on
+    /// this actor — five times for one scope change, and four of those against
+    /// a half-applied filter set whose results were thrown away.
     private func applyScope() {
-        library.filters.origin = scope.origin.map { .only($0.rawValue) } ?? .any
-        library.filters.favoritesOnly = scope == .favourites
-        library.filters.hasEdits = scope == .edited
+        var next = library.filters
+        next.origin = scope.origin.map { .only($0.rawValue) } ?? .any
+        next.favoritesOnly = scope == .favourites
+        next.hasEdits = scope == .edited
         // The Edited scope is a list of edits, so it leads with the newest
         // one — but only as its own default; a sort you chose survives. It
         // is put back on the way out, or every other scope would sit on a
@@ -764,18 +788,19 @@ struct LibraryScreen: View {
         // default, not `.newest` — a user who defaults to rating has not
         // chosen anything either.
         if scope == .edited {
-            if library.filters.sort == settings.libraryDefaultSort {
-                library.filters.sort = .recentlyEdited
+            if next.sort == settings.libraryDefaultSort {
+                next.sort = .recentlyEdited
                 promotedSort = true
             }
-        } else if promotedSort, library.filters.sort == .recentlyEdited {
+        } else if promotedSort, next.sort == .recentlyEdited {
             // Only the promotion is undone. Choosing "recently edited"
             // yourself, in any scope, is a choice — putting it back on the
             // way out would be overriding it.
-            library.filters.sort = settings.libraryDefaultSort
+            next.sort = settings.libraryDefaultSort
             promotedSort = false
         }
-        if scope != .imported { library.filters.artist = nil }
+        if scope != .imported { next.artist = nil }
+        library.filters = next
         parts.filters.favoritesOnly = scope == .favourites
     }
 
@@ -822,8 +847,7 @@ struct LibraryScreen: View {
             let visible = Set(songs.map(\.id))
             if !checked.isSubset(of: visible) { checked.formIntersection(visible) }
         }
-        partCounts = (try? parts.repository.partCounts()) ?? [:]
-        artists = (try? library.repository.distinctArtists()) ?? []
+        refreshBadgeCounts()
         rebuildModelChoices()
         // `countsByOrigin`, `favoriteCount`, the parts' `favorites()` and
         // `editedCount` used to run here too, to fill a `ScopeCounts` that
@@ -834,22 +858,40 @@ struct LibraryScreen: View {
         refreshSiblings()
     }
 
+    /// The two whole-table reads behind the row badges and the artist menu.
+    ///
+    /// Off the actor and coalesced, because `refreshDerived` runs on every
+    /// publish of either store — which includes every settled keystroke while
+    /// searching — and these two are a `GROUP BY` over the part table and a
+    /// `DISTINCT` over the song table. Neither is on the path of a click:
+    /// they fill a count badge and a filter menu, so arriving a frame later
+    /// than the rows is invisible, and a stale answer is never wrong for
+    /// longer than the query takes.
+    private func refreshBadgeCounts() {
+        badgeTask?.cancel()
+        let partsRepo = parts.repository
+        let libraryRepo = library.repository
+        badgeTask = Task {
+            let answer = await Task.detached(priority: .userInitiated) {
+                (counts: (try? partsRepo.partCounts()) ?? [:],
+                 artists: (try? libraryRepo.distinctArtists()) ?? [])
+            }.value
+            guard !Task.isCancelled else { return }
+            if partCounts != answer.counts { partCounts = answer.counts }
+            if artists != answer.artists { artists = answer.artists }
+        }
+    }
+
     private func rebuildGroups() {
         let results = parts.results
-        // One query per distinct song, not three. The titles pass fetched the
-        // song, and then `groupMeta` fetched the very same row again and an
-        // analysis beside it — so a parts list drawn from fifty songs issued
-        // about a hundred and fifty synchronous queries, on the main actor,
-        // every time either store published.
-        let songIds = Set(results.map(\.songId))
-        var songs: [String: SongRecord] = [:]
-        for id in songIds {
-            if let song = (try? library.repository.song(id: id)) ?? nil {
-                songs[id] = song
-            }
-        }
-        let analyses = (try? parts.repository.analyses(ownerIds: Array(songIds)))
-            ?? [:]
+        // Two queries for the whole list, not three per distinct song. The
+        // titles pass used to fetch each song and `groupMeta` then fetched the
+        // very same row again with an analysis beside it, so a parts list
+        // drawn from fifty songs issued about a hundred and fifty synchronous
+        // queries — on the main actor, every time either store published.
+        let songIds = Array(Set(results.map(\.songId)))
+        let songs = (try? library.repository.songs(ids: songIds)) ?? [:]
+        let analyses = (try? parts.repository.analyses(ownerIds: songIds)) ?? [:]
         var titles: [String: String] = [:]
         var origins: [String: SongOrigin] = [:]
         for id in songIds {

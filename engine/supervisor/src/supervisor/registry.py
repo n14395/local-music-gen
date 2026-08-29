@@ -167,6 +167,12 @@ class Registry:
                                _TEST_MODEL_PATTERNS, _TEST_MODEL_SPLIT,
                                _TEST_MODEL_PROVISION]
         self.models: dict[str, dict] = {m["id"]: m for m in models}
+        # model_id -> (marker mtime_ns, bytes). Sizing an installed model means
+        # walking its repo directories, and /v1/models asks for every entry at
+        # once. A plain dict with no lock: each entry is written and read in a
+        # single dict operation, which the GIL makes atomic, and the worst a
+        # racing writer can do is replace one entry with an equally valid one.
+        self._bytes_cache: dict[str, tuple[int, int]] = {}
         os.makedirs(self.markers_dir, exist_ok=True)
         for m in self._load_user_models():
             self.models.setdefault(m["id"], m)
@@ -424,17 +430,60 @@ class Registry:
                 continue
             shutil.rmtree(self.ms_repo_dir(repo["repo_id"]), ignore_errors=True)
 
+    def _installed_bytes(self, model_id: str) -> int:
+        """`cache_bytes` memoised on the install marker's mtime.
+
+        The bytes an installed model occupies cannot change while the marker
+        that says its download finished stays put, and every event that could
+        change them — a re-download, a repair, a delete — rewrites or removes
+        that marker, so a stale answer misses the cache by construction. A
+        model with no marker is not cached at all: its bytes are whatever a
+        download is writing right now.
+        """
+        try:
+            mtime = os.stat(self._marker_path(model_id)).st_mtime_ns
+        except OSError:
+            return self.cache_bytes(model_id)
+        hit = self._bytes_cache.get(model_id)
+        if hit is not None and hit[0] == mtime:
+            return hit[1]
+        total = self.cache_bytes(model_id)
+        self._bytes_cache[model_id] = (mtime, total)
+        return total
+
+    def _any_cache_dir(self, model_id: str) -> bool:
+        """Is any of this entry's repos present on disk at all?
+
+        A few stats standing in for a walk: most of the catalog has never been
+        touched on any given machine, and for those entries `cache_bytes` can
+        only ever return 0 after opening every repo directory to find out.
+        Shared repos mean a never-attempted entry can still have bytes on
+        disk, which is why this asks about the directories rather than
+        assuming from the marker.
+        """
+        model = self.models[model_id]
+        for repo in model["hf_repos"]:
+            if os.path.exists(self.repo_cache_dir(repo["repo_id"])):
+                return True
+        for repo in self.ms_repos(model):
+            if os.path.exists(self.ms_repo_dir(repo["repo_id"])):
+                return True
+        return False
+
     def info(self, model_id: str, active_download_state: str | None = None) -> dict:
         m = dict(self.models[model_id])
         if self.is_installed(model_id):
             installed_bytes = (self.marked_bytes(model_id)
-                               or self.cache_bytes(model_id))
+                               or self._installed_bytes(model_id))
             state = "installed"
         elif active_download_state:
             state, installed_bytes = "downloading", self.cache_bytes(model_id)
         else:
-            installed_bytes = self.cache_bytes(model_id)
-            state = "partial" if self.was_attempted(model_id) else "not_installed"
+            attempted = self.was_attempted(model_id)
+            installed_bytes = (self.cache_bytes(model_id)
+                               if attempted or self._any_cache_dir(model_id)
+                               else 0)
+            state = "partial" if attempted else "not_installed"
         m["install_state"] = state
         m["installed_bytes"] = installed_bytes
         return m

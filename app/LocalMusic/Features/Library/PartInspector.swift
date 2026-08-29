@@ -56,15 +56,16 @@ struct PartInspector: View {
     /// pane moves to another part. The field reverts on refusal, so without
     /// this the name would simply spring back with no explanation.
     @State private var renameError: String?
+    /// The part's size on disk.
+    ///
+    /// Measured once per part rather than read from `metadata`, for the reason
+    /// `EditorStore.hasBackup` sets out: a `stat` is a syscall, and a view
+    /// body has no business making one. A part's file is written by the split
+    /// that made it and never rewritten, so moving to another part is the only
+    /// thing that can change the answer.
+    @State private var fileSize: String?
 
     private var stem: Color { Bench.Palette.stem(part.kind) }
-    private var isCurrent: Bool { playback.currentSongId == part.id }
-    private var duration: Double { part.durationS ?? 0 }
-
-    private var playedFraction: Double {
-        guard isCurrent, duration > 0 else { return 0 }
-        return playback.currentTime / duration
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,8 +73,11 @@ struct PartInspector: View {
                 VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 14) {
                         header
-                        hero
-                        transportLine
+                        PartInspectorHero(
+                            part: part, playback: playback, stem: stem,
+                            subtitle: subtitle,
+                            emptyMessage: emptyHeroMessage,
+                            onRate: { parts.setRating(part, to: $0) })
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 20).padding(.bottom, 14)
@@ -120,6 +124,7 @@ struct PartInspector: View {
                 .padding(.top, 16).padding(.bottom, 20)
         }
         .background(Bench.Palette.panel)
+        .task(id: part.id) { await loadFileSize() }
         .confirmationDialog("Delete “\(part.name)”?", isPresented: $confirmDelete) {
             Button("Delete part and its files", role: .destructive) {
                 deleteNow()
@@ -139,6 +144,14 @@ struct PartInspector: View {
         playback.stop(songId: part.id)
         parts.delete(part)
         onDeleted()
+    }
+
+    /// Measure the part's file, off the actor.
+    private func loadFileSize() async {
+        let url = part.fileURL
+        fileSize = await Task.detached(priority: .userInitiated) {
+            LibraryFormat.fileSize(of: url)
+        }.value
     }
 
     // MARK: header
@@ -231,30 +244,6 @@ struct PartInspector: View {
 
     // MARK: hero
 
-    /// The well draws the part's own signal or nothing at all. For a notes part
-    /// that is the WAV the split rendered beside the MIDI — the same file the
-    /// play button below plays — so the hero and the transport always describe
-    /// one recording rather than two different ideas of the part.
-    @ViewBuilder
-    private var hero: some View {
-        if let url = part.auditionURL {
-            BenchWaveformWell(height: 96) {
-                BenchWaveformLoader(audioURL: url, cacheURL: part.waveformURL,
-                                    playedFraction: playedFraction,
-                                    tint: stem, barPitch: 2.5,
-                                    onSeek: seek)
-            }
-        } else {
-            BenchWaveformWell(height: 96) {
-                Text(emptyHeroMessage)
-                    .font(Bench.Typo.small)
-                    .foregroundStyle(Bench.Palette.textFaint)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .leading)
-            }
-        }
-    }
-
     /// `auditionURL` is nil for two unrelated reasons, and only one of them is
     /// "not audio": a features part never had any, while a notes part is
     /// waiting for the render the action grid below is offering. Branching on
@@ -275,47 +264,12 @@ struct PartInspector: View {
         }
     }
 
-    @ViewBuilder
-    private var transportLine: some View {
-        HStack(spacing: 12) {
-            if let url = part.auditionURL {
-                BenchTransportButton(isPlaying: isCurrent && playback.isPlaying,
-                                     size: 32) {
-                    playback.play(url: url, songId: part.id, title: part.name,
-                                  duration: duration, subtitle: subtitle)
-                }
-                Text("\(LibraryFormat.clock(isCurrent ? playback.currentTime : 0))"
-                     + " / \(LibraryFormat.clock(duration))")
-                    .font(Bench.Typo.mono(12))
-                    .foregroundStyle(Bench.Palette.textTertiary)
-            }
-            Spacer(minLength: 8)
-            // Outside the audio branch on purpose. The list draws five stars
-            // on every part, so every part needs somewhere to fill them —
-            // including the notes and features parts that have no transport
-            // to sit beside.
-            RatingStars(rating: part.rating, size: 15, spacing: 2,
-                        onRate: { parts.setRating(part, to: $0) })
-        }
-    }
-
     /// `BAGPIPES PLAYING A… · 107 BPM · 8B` — the transport bar's second line.
     private var subtitle: String {
         var fields = [sourceTitle]
         if let bpm = analysis?.bpm { fields.append("\(Int(bpm.rounded())) BPM") }
         if let camelot = analysis?.camelot { fields.append(camelot) }
         return fields.joined(separator: " · ").uppercased()
-    }
-
-    private func seek(_ fraction: Double) {
-        guard let url = part.auditionURL else { return }
-        // Load first, seek second — seeking before the item is replaced moves
-        // whatever was playing before this part.
-        if !isCurrent {
-            playback.play(url: url, songId: part.id, title: part.name,
-                          duration: duration, subtitle: subtitle)
-        }
-        playback.seek(to: fraction * duration)
     }
 
     // MARK: metadata
@@ -333,14 +287,15 @@ struct PartInspector: View {
             if let tempoAndKey = LibraryFormat.tempoAndKey(analysis) {
                 BenchInfoRow("Tempo · key", tempoAndKey, mono: true)
             }
-            let grid = LibraryFormat.beatGrid(analysis)
-            BenchInfoRow("Beat grid", grid.text,
-                         color: grid.detected ? Bench.Palette.ok
-                                              : Bench.Palette.textMuted)
-            if let chords = LibraryFormat.chordSummary(analysis) {
+            // Three rows, asked for once — see `AnalysisSummaryMemo`.
+            let summary = AnalysisSummaryMemo.summary(of: analysis)
+            BenchInfoRow("Beat grid", summary.beatGrid,
+                         color: summary.beatsDetected
+                             ? Bench.Palette.ok : Bench.Palette.textMuted)
+            if let chords = summary.chords {
                 BenchInfoRow("Chords", chords, mono: true)
             }
-            if let quality = LibraryFormat.qualitySummary(analysis) {
+            if let quality = summary.quality {
                 // Speech-trained scores: they rank takes of the same
                 // material; they do not grade music.
                 BenchInfoRow("Quality", quality, mono: true)
@@ -351,8 +306,8 @@ struct PartInspector: View {
                         + "\($0.formatted(.number)) Hz"
                 } ?? "\(LibraryFormat.seconds(seconds)) s", mono: true)
             }
-            if let size = LibraryFormat.fileSize(of: part.fileURL) {
-                BenchInfoRow("Size", size, mono: true)
+            if let fileSize {
+                BenchInfoRow("Size", fileSize, mono: true)
             }
             BenchInfoRow("Created",
                          part.createdAt.formatted(date: .abbreviated,
@@ -465,5 +420,155 @@ struct PartInspector: View {
             guard response == .OK, let url = panel.url else { return }
             parts.export(part, to: url)
         }
+    }
+}
+
+/// The waveform well and the transport row: the two pieces of the pane the
+/// playhead moves, and nothing else.
+///
+/// Its own view rather than two properties on the inspector, because under
+/// Observation a body is subscribed to every property it reads — so reading
+/// `playback.currentTime` from `PartInspector.body` put the whole pane on the
+/// transport's 4 Hz tick, analysis decode and file measurement included.
+/// Fenced in here, the tick redraws a waveform and a clock, which is what it
+/// is for.
+private struct PartInspectorHero: View {
+    let part: PartRecord
+    let playback: PlaybackController
+    let stem: Color
+    /// The transport bar's second line — and the same string a scrub that has
+    /// to start playback hands it, so the two cannot disagree.
+    let subtitle: String
+    /// What the well says when there is nothing to draw. Decided by
+    /// `PartInspector.emptyHeroMessage`, which knows what routes are live.
+    let emptyMessage: String
+    let onRate: (Int) -> Void
+
+    private var isCurrent: Bool { playback.currentSongId == part.id }
+    private var duration: Double { part.durationS ?? 0 }
+
+    /// `currentSongId` first and the guard before `currentTime`, the order
+    /// `LibrarySongRow.playedFraction` explains: it is the difference between
+    /// this view redrawing while its own part plays and it redrawing while
+    /// anything does.
+    private var playedFraction: Double {
+        guard isCurrent, duration > 0 else { return 0 }
+        return playback.currentTime / duration
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            hero
+            transportLine
+        }
+    }
+
+    /// The well draws the part's own signal or nothing at all. For a notes part
+    /// that is the WAV the split rendered beside the MIDI — the same file the
+    /// play button below plays — so the hero and the transport always describe
+    /// one recording rather than two different ideas of the part.
+    @ViewBuilder
+    private var hero: some View {
+        if let url = part.auditionURL {
+            BenchWaveformWell(height: 96) {
+                BenchWaveformLoader(audioURL: url, cacheURL: part.waveformURL,
+                                    playedFraction: playedFraction,
+                                    tint: stem, barPitch: 2.5,
+                                    onSeek: seek)
+            }
+        } else {
+            BenchWaveformWell(height: 96) {
+                Text(emptyMessage)
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textFaint)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var transportLine: some View {
+        HStack(spacing: 12) {
+            if let url = part.auditionURL {
+                BenchTransportButton(isPlaying: isCurrent && playback.isPlaying,
+                                     size: 32) {
+                    playback.play(url: url, songId: part.id, title: part.name,
+                                  duration: duration, subtitle: subtitle)
+                }
+                Text("\(LibraryFormat.clock(isCurrent ? playback.currentTime : 0))"
+                     + " / \(LibraryFormat.clock(duration))")
+                    .font(Bench.Typo.mono(12))
+                    .foregroundStyle(Bench.Palette.textTertiary)
+            }
+            Spacer(minLength: 8)
+            // Outside the audio branch on purpose. The list draws five stars
+            // on every part, so every part needs somewhere to fill them —
+            // including the notes and features parts that have no transport
+            // to sit beside.
+            RatingStars(rating: part.rating, size: 15, spacing: 2,
+                        onRate: { onRate($0) })
+        }
+    }
+
+    private func seek(_ fraction: Double) {
+        guard let url = part.auditionURL else { return }
+        // Load first, seek second — seeking before the item is replaced moves
+        // whatever was playing before this part.
+        if !isCurrent {
+            playback.play(url: url, songId: part.id, title: part.name,
+                          duration: duration, subtitle: subtitle)
+        }
+        playback.seek(to: fraction * duration)
+    }
+}
+
+/// The three analysis rows the inspector prints, kept against the JSON they
+/// were read out of.
+///
+/// `LibraryFormat.beatGrid`, `chordSummary` and `qualitySummary` each decode
+/// the whole `AnalysisPayload` to answer their own question, and a beat track
+/// is hundreds of entries long. Drawing the metadata block was three of those
+/// decodes — and while the part played, three per transport tick.
+///
+/// The JSON *is* the identity of the answer, the argument `EditCountMemo`
+/// makes about an edit program: a re-analysed part carries a different string,
+/// so keying on it is exact rather than a guess about when to invalidate. A
+/// miss still costs what a pass used to; there is one per part.
+@MainActor
+enum AnalysisSummaryMemo {
+    struct Summary {
+        var beatGrid: String
+        var beatsDetected: Bool
+        var chords: String?
+        var quality: String?
+    }
+
+    private static var summaries: [String: Summary] = [:]
+
+    /// Enough for every part of every song a session is likely to open. Past
+    /// it the memo starts over rather than growing for the rest of the
+    /// session — the same backstop, not an eviction policy.
+    private static let capacity = 512
+
+    static func summary(of analysis: AnalysisRecord?) -> Summary {
+        guard let analysis else {
+            // A nil record answers "not analysed" without decoding anything,
+            // and that copy belongs to `LibraryFormat` rather than here.
+            let grid = LibraryFormat.beatGrid(nil)
+            return Summary(beatGrid: grid.text, beatsDetected: grid.detected,
+                           chords: nil, quality: nil)
+        }
+        let key = analysis.analysisJSON
+        if let known = summaries[key] { return known }
+        let grid = LibraryFormat.beatGrid(analysis)
+        let answer = Summary(beatGrid: grid.text, beatsDetected: grid.detected,
+                             chords: LibraryFormat.chordSummary(analysis),
+                             quality: LibraryFormat.qualitySummary(analysis))
+        if summaries.count >= capacity {
+            summaries.removeAll(keepingCapacity: true)
+        }
+        summaries[key] = answer
+        return answer
     }
 }

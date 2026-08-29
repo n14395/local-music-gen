@@ -293,6 +293,16 @@ struct PartPickerSheet: View {
     /// and typing into its search field re-read the entire parts table on
     /// every keystroke, twice, and again on every redraw in between.
     @State private var everyPart: [PartRecord] = []
+    /// Song titles by song id — the second line of every part row.
+    ///
+    /// Read with `everyPart` and for the same reason. A part names the song it
+    /// came out of by id only, so the list was resolving one title per row
+    /// with a single-row query from inside `body`: a hundred parts meant a
+    /// hundred queries on every keystroke and every redraw, twice over. One
+    /// read of the song table answers all of them. Nothing can rename a song
+    /// while this sheet is up — it is modal — so a map that refreshes with the
+    /// parts is as live as the rows it labels.
+    @State private var sourceTitles: [String: String] = [:]
 
     /// The tab on screen: the user's, or the caller's opening one while it
     /// still has something on it.
@@ -355,14 +365,16 @@ struct PartPickerSheet: View {
         return (try? library.repository.search(filters)) ?? []
     }
 
-    private var songs: [SongRecord] {
-        guard case .songs(let origin) = tab else { return matchingSongs }
-        return matchingSongs.filter { $0.originKind == origin }
+    /// `matchingSongs`, narrowed by the origin tab when one is showing.
+    /// Takes the search results rather than reaching for them, because the
+    /// pass that draws this list has already paid for them once.
+    private func songsOnTab(_ matched: [SongRecord]) -> [SongRecord] {
+        guard case .songs(let origin) = tab else { return matched }
+        return matched.filter { $0.originKind == origin }
     }
 
     /// `All 132 · Generated 96 · Imported 30 · Renders 2 · Parts 4`.
-    private var tabs: [BenchSegmented<PickerTab>.Option] {
-        let rows = allListed
+    private func tabs(_ rows: [Listed]) -> [BenchSegmented<PickerTab>.Option] {
         var counts: [SongOrigin: Int] = [:]
         for row in rows {
             if let origin = row.origin { counts[origin, default: 0] += 1 }
@@ -394,10 +406,21 @@ struct PartPickerSheet: View {
 
     private func reloadParts() {
         everyPart = (try? parts.repository.parts(.init())) ?? []
+        let songs = (try? library.repository.search(.init())) ?? []
+        sourceTitles = Dictionary(songs.map { ($0.id, $0.title) },
+                                  uniquingKeysWith: { first, _ in first })
     }
 
     private var content: some View {
-        VStack(spacing: 0) {
+        // The whole list, read once and handed down. The tab strip's counts
+        // and the rows underneath it are two views of the same thing, and
+        // building it is a library search plus a row per part — asked for
+        // separately, as they were, every keystroke in the search field paid
+        // for all of it twice.
+        let matched = showsSongs ? matchingSongs : []
+        let rows = allListed(matched)
+        let options = tabs(rows)
+        return VStack(spacing: 0) {
             BenchPanelHeader {
                 Text(slotLabel)
                     .font(Bench.Typo.inspectorTitle)
@@ -413,8 +436,8 @@ struct PartPickerSheet: View {
             // whole list: a filter you have to scroll back to is one you stop
             // reaching for, and it sits beside the search box that feeds its
             // counts.
-            if !tabs.isEmpty {
-                BenchSegmented(selection: tabBinding, options: tabs,
+            if !options.isEmpty {
+                BenchSegmented(selection: tabBinding, options: options,
                                fills: true)
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .overlay(alignment: .bottom) {
@@ -423,9 +446,9 @@ struct PartPickerSheet: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if tab.isMerged { mergedSection }
+                    if tab.isMerged { mergedSection(rows) }
                     else if tab == .parts { partsSection }
-                    else { songsSection }
+                    else { songsSection(matched) }
                     if tab.showsParts { otherPartsSection }
                     if matchingParts.isEmpty && !songAccepted
                         && autoDerive == nil {
@@ -476,14 +499,13 @@ struct PartPickerSheet: View {
     /// library could be six rows below the oldest. The tabs are where you go
     /// when you want one kind; All is where you go when you want the newest.
     /// Every row the sheet could list, before a tab narrows it.
-    private var allListed: [Listed] {
+    private func allListed(_ songs: [SongRecord]) -> [Listed] {
         Self.merge(parts: matchingParts, sourceTitle: sourceTitle,
-                   songs: showsSongs ? matchingSongs : [],
-                   songsArePickable: songAccepted)
+                   songs: songs, songsArePickable: songAccepted)
     }
 
-    private var listed: [Listed] {
-        allListed.filter { tab.admits(edited: $0.isEdited, loved: $0.isLoved) }
+    private func listed(_ rows: [Listed]) -> [Listed] {
+        rows.filter { tab.admits(edited: $0.isEdited, loved: $0.isLoved) }
     }
 
     /// The interleave, kept out of the view so the rule can be read and tested
@@ -512,10 +534,8 @@ struct PartPickerSheet: View {
     /// list that is both would be a label for something else. The caption
     /// stays, because what happens when you pick a *song* is not obvious from
     /// the row and is the one thing the old heading was really saying.
-    private var mergedSection: some View {
-        // Read once: `listed` runs two database queries, and asking it both
-        // for the count and for the rows ran all four.
-        let rows = listed
+    private func mergedSection(_ all: [Listed]) -> some View {
+        let rows = listed(all)
         return VStack(alignment: .leading, spacing: 8) {
             if !mergedCaption.isEmpty {
                 Text(mergedCaption.uppercased()).metaLine()
@@ -530,7 +550,9 @@ struct PartPickerSheet: View {
                 ForEach(rows) { row in
                     if let song = row.splittable {
                         HStack(spacing: 10) {
-                            materialRow(row.material, origin: row.origin)
+                            PickerMaterialRow(material: row.material,
+                                              origin: row.origin,
+                                              parts: parts, playback: playback)
                                 .opacity(0.6)
                             splitNowButton(song)
                         }
@@ -568,8 +590,7 @@ struct PartPickerSheet: View {
     }
 
     private func sourceTitle(_ part: PartRecord) -> String {
-        ((try? library.repository.song(id: part.songId)) ?? nil)?.title
-            ?? part.modelName
+        sourceTitles[part.songId] ?? part.modelName
     }
 
     @ViewBuilder
@@ -638,8 +659,9 @@ struct PartPickerSheet: View {
     // MARK: songs
 
     @ViewBuilder
-    private var songsSection: some View {
+    private func songsSection(_ matched: [SongRecord]) -> some View {
         if songAccepted || autoDerive != nil {
+            let songs = songsOnTab(matched)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
                     Text("SONGS").eyebrow()
@@ -660,7 +682,9 @@ struct PartPickerSheet: View {
                             pickRow(PickedMaterial(song: song))
                         } else if autoDerive != nil {
                             HStack(spacing: 10) {
-                                materialRow(PickedMaterial(song: song))
+                                PickerMaterialRow(
+                                    material: PickedMaterial(song: song),
+                                    parts: parts, playback: playback)
                                     .opacity(0.6)
                                 splitNowButton(song)
                             }
@@ -689,7 +713,8 @@ struct PartPickerSheet: View {
             onPick(material)
             dismiss()
         } label: {
-            materialRow(material, origin: origin)
+            PickerMaterialRow(material: material, origin: origin,
+                              parts: parts, playback: playback)
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                              style: .continuous)
@@ -702,11 +727,62 @@ struct PartPickerSheet: View {
         .buttonStyle(.plain)
     }
 
-    private func materialRow(_ material: PickedMaterial,
-                             origin: SongOrigin? = nil) -> some View {
-        let isCurrent = playback.currentSongId == material.id
+    @ViewBuilder
+    private func splitNowButton(_ song: SongRecord) -> some View {
+        if splittingSongIds.contains(song.id) {
+            HStack(spacing: 6) {
+                BenchSpinner(size: 12)
+                Text("SPLITTING…").metaLine()
+            }
+        } else if let model = splitModel {
+            Button("Split now") {
+                splittingSongIds.insert(song.id)
+                onSplitStarted?(song.id)
+                Task {
+                    await jobs.submitSplit(
+                        modelId: model.id, songId: song.id,
+                        sourceTitle: song.title, sourceURL: song.fileURL,
+                        params: [:])
+                }
+            }
+            .buttonStyle(.bench(.accent))
+        } else {
+            Button("Get a separation model") {
+                onOpenModels()
+                dismiss()
+            }
+            .buttonStyle(.benchSecondary)
+        }
+    }
+}
+
+/// One row of the picker: audition button, stem colour, the words, the
+/// waveform, and whatever has been measured about it.
+///
+/// A view of its own rather than a method on the sheet, because that is what
+/// decides how much of the screen a transport tick touches. SwiftUI's
+/// granularity is the body that read the property, and read from inside
+/// `PartPickerSheet.body` the playhead rebuilt the *whole sheet* four times a
+/// second for the length of every audition — search, tab counts and forty
+/// other rows included. Here the tick reaches the one row that is playing.
+/// Same shape and same reason as `ActionMaterialRow`.
+private struct PickerMaterialRow: View {
+    let material: PickedMaterial
+    var origin: SongOrigin?
+    let parts: PartsStore
+    let playback: PlaybackController
+
+    /// Read before the play position everywhere below, and short-circuited
+    /// with a ternary rather than folded into the strip: a body only observes
+    /// what it actually read, so on every row but the one playing
+    /// `playedFraction` — and through it `currentTime` — is never touched, and
+    /// the tick redraws one row instead of the list. `LibrarySongRow` keeps
+    /// the same rule for the same reason.
+    private var isCurrent: Bool { playback.currentSongId == material.id }
+
+    var body: some View {
         let analysis = parts.analysis(for: material.id)
-        return HStack(spacing: 11) {
+        HStack(spacing: 11) {
             BenchPlayButton(isPlaying: isCurrent && playback.isPlaying,
                             isCurrent: isCurrent, size: 26) {
                 guard let url = material.auditionURL else { return }
@@ -748,34 +824,6 @@ struct PartPickerSheet: View {
             if let bpm = analysis?.bpm {
                 BenchBadge("\(Int(bpm.rounded())) BPM")
             }
-        }
-    }
-
-    @ViewBuilder
-    private func splitNowButton(_ song: SongRecord) -> some View {
-        if splittingSongIds.contains(song.id) {
-            HStack(spacing: 6) {
-                BenchSpinner(size: 12)
-                Text("SPLITTING…").metaLine()
-            }
-        } else if let model = splitModel {
-            Button("Split now") {
-                splittingSongIds.insert(song.id)
-                onSplitStarted?(song.id)
-                Task {
-                    await jobs.submitSplit(
-                        modelId: model.id, songId: song.id,
-                        sourceTitle: song.title, sourceURL: song.fileURL,
-                        params: [:])
-                }
-            }
-            .buttonStyle(.bench(.accent))
-        } else {
-            Button("Get a separation model") {
-                onOpenModels()
-                dismiss()
-            }
-            .buttonStyle(.benchSecondary)
         }
     }
 }
