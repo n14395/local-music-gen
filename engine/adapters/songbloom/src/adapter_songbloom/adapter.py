@@ -36,7 +36,8 @@ import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter,
+                                     ProgressCb, aux_dir)
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
 # to CPU instead of aborting the render. Harmless on the CPU route.
@@ -55,14 +56,6 @@ class SongBloomAdapter(ModelAdapter):
                            or "songbloom_full_150s_dpo")
         self.device = str(self.settings.get("device") or "cpu")
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "songbloom")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _snapshot(self) -> str:
         # By needle, not exact id: the weights moved from ModelScope
         # (AI-ModelScope/SongBloom) to the user-owned HF mirror
@@ -75,7 +68,7 @@ class SongBloomAdapter(ModelAdapter):
     def load(self, progress_cb: ProgressCb) -> None:
         import torch
 
-        cache = self._cache_dir()
+        cache = aux_dir("songbloom")
         repo = os.path.join(cache, f"SongBloom-{REPO_COMMIT}")
 
         def adopt_extracted() -> None:

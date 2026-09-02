@@ -735,11 +735,72 @@ struct LibraryInfo: Codable, Sendable {
     let diskTotalBytes: Int64?
     let diskFreeBytes: Int64?
     let repos: [LibraryRepo]
+    /// Weights the engine's adapters fetch themselves. A root the engine owns
+    /// outright, so every byte in it is ours and there is no `folderBytes`
+    /// counterpart to report.
+    let aux: LibraryRoot
+    /// ModelScope-hosted weights. Owned like `aux`, but unlike `aux` it does
+    /// not travel with the library folder.
+    let modelscope: LibraryRoot
+    /// Ours across all three roots — the honest answer to "how much disk".
+    let totalBytes: Int64
     let operation: LibraryOperation?
 
     var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
-    /// What the folder holds for anything that is not this app.
-    var foreignBytes: Int64 { max(0, folderBytes - bytes) }
+    /// What the folder holds for anything that is not this app. Once the
+    /// library has been moved the auxiliary root lives inside the folder, so
+    /// its bytes are in `folderBytes` too and have to come back out — drawn as
+    /// another tool's share they would be alarming and wrong.
+    var foreignBytes: Int64 {
+        let ours = bytes + (aux.inLibraryFolder == true ? aux.bytes : 0)
+        return max(0, folderBytes - ours)
+    }
+    /// Everything outside the Hugging Face folder, which the card reports as
+    /// one line: the split between the two roots is an engine detail.
+    var otherRootBytes: Int64 { aux.bytes + modelscope.bytes }
+    /// The directories a clear would actually take — everything of ours except
+    /// the user's own kept files. What "Clear all models" frees, and what its
+    /// sheet must list: a sheet that named a capture library it does not touch
+    /// would be promising to delete something it then leaves behind.
+    var clearableDirs: [LibraryRootDir] {
+        (aux.dirs + modelscope.dirs).filter { !$0.isKept }
+    }
+
+    var clearableBytes: Int64 {
+        bytes + clearableDirs.reduce(0) { $0 + $1.bytes }
+    }
+
+    /// The user's own files in the auxiliary root, counted separately because
+    /// no destructive action here reaches them.
+    var keptBytes: Int64 {
+        aux.dirs.filter(\.isKept).reduce(0) { $0 + $1.bytes }
+    }
+}
+
+/// One of the roots the engine owns outright, and what is in it.
+struct LibraryRoot: Codable, Sendable {
+    let path: String
+    let bytes: Int64
+    /// Whether this root sits inside the library folder, which it does after a
+    /// relocate. When it does, `folderBytes` already counts it.
+    let inLibraryFolder: Bool?
+    let dirs: [LibraryRootDir]
+
+    var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
+}
+
+struct LibraryRootDir: Codable, Sendable, Identifiable {
+    /// An aux directory name, or a ModelScope repo id.
+    let name: String
+    let path: String
+    let bytes: Int64
+    /// The user's own files — downloaded amp captures — which a clear leaves
+    /// alone and every relocate carries across. Absent on older engines,
+    /// where nothing was kept.
+    let kept: Bool?
+
+    var id: String { path }
+    var isKept: Bool { kept == true }
 }
 
 struct LibraryOperationStarted: Codable, Sendable {
@@ -773,9 +834,15 @@ struct LibraryOperation: Codable, Sendable {
     let message: String
     let error: APIErrorBody?
     let destination: String?
+    /// Where the auxiliary weights went. Reported rather than derived: which
+    /// folder they land in depends on whether `destination` is the shared
+    /// Hugging Face cache, and the engine is the one that decides.
+    let auxDestination: String?
     /// `move` | `delete` | `leave` — what became of the models left behind.
     let disposition: String?
     let repoCount: Int?
+    /// Aux (and, for a clear, ModelScope) directories in the operation.
+    let dirCount: Int?
     let restartRequired: Bool?
     let canceled: Bool?
     let removedModelIds: [String]?

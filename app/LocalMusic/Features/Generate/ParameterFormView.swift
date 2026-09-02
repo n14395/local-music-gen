@@ -116,6 +116,15 @@ struct ParameterFormView: View {
     /// type for upload plumbing but carry non-library payloads (a .nam amp
     /// capture), so the library has nothing to offer them.
     var materialPicker: MaterialPickerContext?
+    /// A slot the host fills with a picker of its own. Called when "Choose…"
+    /// is pressed; returning true means the host has presented something and
+    /// neither the library picker nor the system panel should open.
+    ///
+    /// The re-amp card's `nam_file` is the case this exists for: a capture is
+    /// neither library material nor a file most people keep in Finder — it is
+    /// a thing the app downloads and keeps — so the host offers its own
+    /// library of them.
+    var customPicker: ((ParamSpec) -> Bool)?
 
     /// The audio/MIDI param a library pick is currently open for.
     private struct MaterialPick: Identifiable {
@@ -431,8 +440,11 @@ struct ParameterFormView: View {
                     .foregroundStyle(Bench.Palette.textFaintest)
             }
             Spacer(minLength: 4)
-            Button("Choose…") {
-                if materialPicker != nil, !spec.key.hasSuffix("_file") {
+            Button(spec.key.hasSuffix("_file") && customPicker != nil
+                   ? "Choose capture…" : "Choose…") {
+                if customPicker?(spec) == true {
+                    // handled by the host
+                } else if materialPicker != nil, !spec.key.hasSuffix("_file") {
                     materialPick = MaterialPick(key: spec.key,
                                                 label: spec.label,
                                                 isMidi: spec.type == .midi)

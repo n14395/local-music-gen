@@ -70,15 +70,15 @@ struct EditorScreen: View {
                  : "The edit list is cleared. Nothing has been applied, so "
                    + "the file is already the original.")
         }
-        // Bare Space stays here rather than going to the Playback menu: a menu
-        // item's shortcut is installed window-wide and fires ahead of the
-        // focused control, so a bare Space in the menubar would eat the space
-        // bar in every prompt box and search field in the app. Scoped to this
-        // screen it is safe, because the Editor has no free-text field in the
-        // well. Everything else that used to live in this block — Cut, Copy,
-        // Paste, Delete, Select All, ⌥Space — is now a real menu item fed by
-        // the focused value below.
-        .background { spaceKeyCommand }
+        // Bare Space and bare Delete stay here rather than going to the
+        // menubar: a menu item's shortcut is installed window-wide and fires
+        // ahead of the focused control, so either in the menubar would eat the
+        // key in every prompt box and search field in the app. Scoped to this
+        // screen they are safe, because the Editor has no free-text field
+        // anywhere in it. Cut, Copy, Paste, Select All and ⌥Space are menu
+        // items — the first four the system's own, reached through the
+        // responder chain, the last fed by the focused value below.
+        .background { keyCommands }
         // What the Edit, View and Playback menus may do to this screen while
         // it is the one on show. Published from here rather than assembled in
         // the menus, because only the Editor knows whether there is a
@@ -96,44 +96,33 @@ struct EditorScreen: View {
 
     // MARK: key commands
 
-    private var spaceKeyCommand: some View {
-        Button("") { store.togglePlayback() }
-            .keyboardShortcut(.space, modifiers: [])
-            .opacity(0)
-            .frame(width: 0, height: 0)
-            .disabled(store.material == nil || isFrozen
-                      || isBlockedByAnotherRender)
+    private var keyCommands: some View {
+        Group {
+            Button("") { store.togglePlayback() }
+                .keyboardShortcut(.space, modifiers: [])
+                .disabled(!store.isCommandable)
+            // The Edit menu's Delete item carries no key equivalent — that is
+            // ⌫'s day job in a text field, and the stock menu leaves it alone.
+            // The waveform's ⌫ is therefore claimed here, where it is live
+            // only while this screen is up.
+            Button("") { store.deleteSelection() }
+                .keyboardShortcut(.delete, modifiers: [])
+                .disabled(!store.isCommandable
+                          || (store.selection?.length ?? 0) == 0)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
     }
 
     /// The bundle the menubar reads. Rebuilt on each body evaluation, which is
     /// what keeps `hasSelection` and `canPaste` honest — they change as you
     /// drag, and an item that stayed enabled after the selection was cleared
     /// would delete the wrong thing.
-    private var editorCommands: EditorCommands {
-        EditorCommands(
-            isEditable: store.material != nil && !isFrozen
-                && !isBlockedByAnotherRender,
-            hasSelection: (store.selection?.length ?? 0) > 0,
-            canPaste: store.canPaste,
-            cut: { store.cutSelection() },
-            copy: { store.copySelection() },
-            paste: { store.paste() },
-            delete: { store.deleteSelection() },
-            selectAll: { store.selectAll() },
-            zoomIn: { store.zoomIn() },
-            zoomOut: { store.zoomOut() },
-            zoomToFit: { store.zoomToFit() },
-            zoomToSelection: { store.zoomToSelection() },
-            toggleOriginal: { store.toggleOriginalAudition() },
-            isAuditioningOriginal: store.auditioningOriginal,
-            playSelection: { store.playSelection() },
-            export: { store.exportSheetOpen = true },
-            // Nil, not a closure that does nothing, when there is no file yet
-            // — the File menu dims Reveal on exactly this.
-            reveal: store.sourceURL.map { url in
-                { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-            })
-    }
+    ///
+    /// Assembled by `EditorCommands(store:)` rather than here, because the
+    /// same bundle is built a second time by `AppDelegate` when a stock Edit
+    /// menu item reaches the responder chain.
+    private var editorCommands: EditorCommands { EditorCommands(store: store) }
 
     // MARK: top bar
 
@@ -378,13 +367,13 @@ struct EditorScreen: View {
         store.currentApplyStage.isBusy || isApplyFailed
     }
 
-    private var isFrozen: Bool { store.currentApplyStage.isBusy }
+    private var isFrozen: Bool { store.applyIsFrozen }
 
     /// A render is running somewhere — possibly for a track that is not
     /// open. Only one runs at a time, so Apply and Revert wait for it
     /// wherever they are offered.
     private var isBlockedByAnotherRender: Bool {
-        store.isRenderingAnything && !store.applyBelongsToCurrentMaterial
+        store.blockedByAnotherRender
     }
 
     private var blockedNote: String {

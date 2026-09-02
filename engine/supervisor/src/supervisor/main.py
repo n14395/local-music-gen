@@ -12,6 +12,7 @@ import uvicorn
 
 from . import CONTRACT, VERSION
 from .api import build_app
+from .aux_cache import migrate_legacy
 from .config import Settings
 from .events import EventBus
 from .retention import outputs_retention_days, sweep_outputs
@@ -52,6 +53,10 @@ async def retention_loop(state: EngineState, settings: Settings) -> None:
 
 async def run(settings: Settings) -> None:
     settings.ensure_dirs()
+    # Weights the old sibling-of-HF_HOME derivation left in ~/.cache. Cheap
+    # after the first launch (a marker file), and it must happen before any
+    # worker can start looking for them.
+    migrate_legacy(settings)
 
     bus = EventBus(asyncio.get_running_loop())
     state = EngineState(settings, bus)

@@ -81,6 +81,8 @@ class Worker:
 
         env = {**os.environ,
                "HF_HOME": settings.hf_cache_dir,
+               # Weights the adapter fetches itself (engine_protocol.aux_dir).
+               "LOCALMUSIC_AUX_CACHE": settings.aux_cache_dir,
                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
                "TOKENIZERS_PARALLELISM": "false",
                # torchcodec (torchaudio ≥2.9's audio I/O) dlopens Homebrew's

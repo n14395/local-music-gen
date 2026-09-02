@@ -10,6 +10,11 @@ dependencies = [
     "neural-amp-modeler==0.10.0",
     # resampy-era transitive imports still want pkg_resources
     "setuptools<81",
+    # nam 0.10's package __init__ imports its training GUI, which does a bare
+    # `import requests` without declaring it. It used to arrive transitively
+    # via transformers 4.x; transformers 5 dropped requests, so `import nam`
+    # now dies with ModuleNotFoundError before any re-amping happens.
+    "requests",
     "soundfile>=0.12",
     "soxr",
     "numpy",

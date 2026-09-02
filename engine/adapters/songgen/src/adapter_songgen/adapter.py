@@ -29,7 +29,8 @@ import urllib.request
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter, ProgressCb,
+                                     clear_stale_link)
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
 # to CPU instead of aborting the render. Harmless on the CPU route.
@@ -97,6 +98,7 @@ def _stage_xcodec(snapshot: str) -> None:
     os.makedirs(ckpts, exist_ok=True)
 
     dest = os.path.join(ckpts, XCODEC_FILE)
+    clear_stale_link(dest)   # a library move strands this link
     if not os.path.exists(dest):
         src = os.path.join(snapshot, XCODEC_FILE)
         if not os.path.exists(src):
@@ -108,6 +110,7 @@ def _stage_xcodec(snapshot: str) -> None:
             shutil.copy(src, dest)
 
     config_dest = os.path.join(ckpts, XCODEC_CONFIG)
+    clear_stale_link(config_dest)
     if not os.path.exists(config_dest):
         config_src = os.path.join(snapshot, XCODEC_CONFIG)
         if os.path.exists(config_src):
@@ -122,6 +125,23 @@ def _stage_xcodec(snapshot: str) -> None:
                     open(part, "wb") as f:
                 f.write(resp.read())
             os.replace(part, config_dest)
+
+
+def _define_missing_torch_flag() -> None:
+    """SongGen vendored transformers' `isin_mps_friendly` but not the module
+    global it reads: `is_torch_greater_or_equal_than_2_4` only exists in
+    transformers >= 4.44, and this stack pins 4.43. Python short-circuits the
+    name away unless the tensor is on MPS, so the NameError fires only on the
+    GPU route, at the first sampled token — after a 5 GB load. Define it from
+    the torch actually installed; on >= 2.4 that also selects plain
+    `torch.isin`, which is what their workaround exists to avoid needing."""
+    import torch
+    from packaging.version import parse
+    from songgen import logits_processors
+
+    if not hasattr(logits_processors, "is_torch_greater_or_equal_than_2_4"):
+        release = parse(torch.__version__.split("+")[0]).release
+        logits_processors.is_torch_greater_or_equal_than_2_4 = release >= (2, 4)
 
 
 class SongGenAdapter(ModelAdapter):
@@ -154,6 +174,8 @@ class SongGenAdapter(ModelAdapter):
         progress_cb(None, "loading SongGen (5 GB)")
         from songgen import (SongGenMixedForConditionalGeneration,
                              SongGenProcessor)
+
+        _define_missing_torch_flag()
 
         ckpt = self._snapshot("songgen")
         self.model = SongGenMixedForConditionalGeneration.from_pretrained(

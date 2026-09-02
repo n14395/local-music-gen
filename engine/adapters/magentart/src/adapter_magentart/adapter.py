@@ -23,7 +23,8 @@ import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter,
+                                     ProgressCb, aux_dir)
 
 FRAMES_PER_S = 25
 CHUNK_FRAMES = 50  # 2 s per generate() call: fine-grained cancel + progress
@@ -35,16 +36,8 @@ class MagentaRTAdapter(ModelAdapter):
         self.mrt = None
         self.size = str(self.settings.get("size") or "mrt2_small")
 
-    def _magenta_home(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "magenta-home")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _ensure_assets(self, progress_cb: ProgressCb) -> None:
-        root = os.path.join(self._magenta_home(), "magenta-rt-v2")
+        root = os.path.join(aux_dir("magenta-home"), "magenta-rt-v2")
         resources = os.path.join(root, "resources")
         model_dir = os.path.join(root, "models", self.size)
         resource_files = (
@@ -70,7 +63,7 @@ class MagentaRTAdapter(ModelAdapter):
             os.path.join(model_dir, f"{self.size}_state.safetensors"),
         )
         mrt_cli = os.path.join(os.path.dirname(sys.executable), "mrt")
-        env = {**os.environ, "MAGENTA_HOME": self._magenta_home()}
+        env = {**os.environ, "MAGENTA_HOME": aux_dir("magenta-home")}
         # `mrt models init` has two independent resource directories. A
         # partially interrupted fetch leaves the parent nonempty but cannot
         # embed text or decode generated audio.
@@ -92,7 +85,7 @@ class MagentaRTAdapter(ModelAdapter):
 
     def load(self, progress_cb: ProgressCb) -> None:
         # Read at magenta_rt import time — must be set before the import.
-        os.environ["MAGENTA_HOME"] = self._magenta_home()
+        os.environ["MAGENTA_HOME"] = aux_dir("magenta-home")
         self._ensure_assets(progress_cb)
 
         progress_cb(None, "loading Magenta RT 2 (MLX)")

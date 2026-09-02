@@ -17,23 +17,36 @@ struct LibraryRelocateSheet: View {
     @State private var disposition = "move"
 
     private var affected: [LibraryRepo] { info.repos }
-    private var hasModels: Bool { !affected.isEmpty }
+    /// Auxiliary directories travel with the folder, so they are part of every
+    /// figure and every decision on this sheet.
+    private var auxDirs: [LibraryRootDir] { info.aux.dirs }
+    private var hasModels: Bool { !affected.isEmpty || !auxDirs.isEmpty }
+    /// What a move actually moves. ModelScope weights are excluded on purpose:
+    /// they live in the app's own folder and never travel.
+    private var movingBytes: Int64 { info.bytes + info.aux.bytes }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             pathSummary
             if hasModels {
-                Text("THE \(affected.count) THAT ARE THERE NOW").eyebrow()
-                LibraryRepoList(repos: affected)
+                if !affected.isEmpty {
+                    Text("THE \(affected.count) THAT ARE THERE NOW").eyebrow()
+                    LibraryRepoList(repos: affected)
+                }
+                if !auxDirs.isEmpty {
+                    Text("AND \(auxDirs.count) AUXILIARY FOLDER"
+                         + (auxDirs.count == 1 ? "" : "S")).eyebrow()
+                    LibraryDirList(dirs: auxDirs)
+                }
                 choices
                 if disposition == "delete" && info.isDefault {
                     SharedFolderWarning(verb: "delete")
                 }
                 consequence
             } else {
-                Text("There are no models of ours in the current folder, so "
-                     + "there is nothing to move.")
+                Text("There are no models of ours to move, so the new folder "
+                     + "is simply where the next download goes.")
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(Bench.Palette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -61,25 +74,40 @@ struct LibraryRelocateSheet: View {
             BenchInfoRow("To", destination.path, mono: true, labelWidth: 44,
                          color: Bench.Palette.textPrimary)
             Text("Weights land in a \u{201C}hub\u{201D} folder inside it, the "
-                 + "layout Hugging Face tools expect.")
+                 + "layout Hugging Face tools expect. " + auxNote)
                 .font(Bench.Typo.caption)
                 .foregroundStyle(Bench.Palette.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Where the auxiliary weights end up, in words rather than a path: the
+    /// engine decides the folder, and the one thing the app can say for
+    /// certain is the rule it already applies to the library folder itself —
+    /// the shared Hugging Face cache is the one destination we never write our
+    /// own directories into.
+    private var auxNote: String {
+        AppEnvironment.librarySetting(for: destination.path) == nil
+            ? "Weights the app downloads directly go back to its own folder, "
+              + "which is where they live when the library is the shared cache."
+            : "Weights the app downloads directly move too, into a "
+              + "\u{201C}localmusic-aux\u{201D} folder beside the hub."
     }
 
     private var choices: some View {
         VStack(alignment: .leading, spacing: 7) {
             choice("move", "Move them to the new folder",
                    "Nothing is re-downloaded. On the same disk this is instant; "
-                   + "onto a different disk it copies \(ByteFormat.gb(info.bytes)) "
-                   + "and takes as long as that does.")
+                   + "onto a different disk it copies "
+                   + "\(ByteFormat.gb(movingBytes)) and takes as long as that "
+                   + "does.")
             choice("delete", "Delete them from the old folder",
-                   "Frees \(ByteFormat.gb(info.bytes)) now. The new folder "
+                   "Frees \(ByteFormat.gb(movingBytes)) now. The new folder "
                    + "starts empty and every model you want is downloaded again.")
             choice("leave", "Leave them where they are",
-                   "Nothing is moved or deleted. \(ByteFormat.gb(info.bytes)) "
-                   + "stays in the old folder doing nothing, and the new folder "
-                   + "starts empty.")
+                   "Nothing is moved or deleted. "
+                   + "\(ByteFormat.gb(movingBytes)) stays where it is doing "
+                   + "nothing, and the new folder starts empty.")
         }
     }
 
@@ -170,6 +198,10 @@ struct LibraryClearSheet: View {
     @State private var typed = ""
 
     private var finished: [LibraryRepo] { info.repos.filter { !$0.isPartial } }
+    /// The roots we own outright. "All" clears these too — they are ours
+    /// without qualification, so a sheet that hid them would be under-stating
+    /// what the button does.
+    private var otherDirs: [LibraryRootDir] { info.clearableDirs }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -178,19 +210,28 @@ struct LibraryClearSheet: View {
                 Text("Delete every downloaded model")
                     .font(Bench.Typo.inspectorTitle)
                     .foregroundStyle(Bench.Palette.textPrimary)
-                Text("Frees \(ByteFormat.gb(info.bytes)) in \(info.path). "
-                     + "Each model has to be downloaded again before it can be "
-                     + "used — for the largest that is a several-hour download.")
+                Text("Frees \(ByteFormat.gb(info.clearableBytes)), most of it "
+                     + "in \(info.path). Each model has to be downloaded "
+                     + "again before it can be used — for the largest that is "
+                     + "a several-hour download.")
                     .font(Bench.Typo.secondary)
                     .foregroundStyle(Bench.Palette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("WHAT GOES").eyebrow()
             LibraryRepoList(repos: info.repos)
+            if !otherDirs.isEmpty {
+                LibraryDirList(dirs: otherDirs)
+            }
             if info.isDefault { SharedFolderWarning(verb: "delete") }
             Text("Your songs, parts and renders are somewhere else entirely and "
                  + "are not touched. Family runtimes are removed with the last "
-                 + "model that needed them.")
+                 + "model that needed them."
+                 + (info.keptBytes > 0
+                    ? " Your downloaded amp captures "
+                      + "(\(ByteFormat.gb(info.keptBytes))) are kept — remove "
+                      + "those from the capture picker in a re-amp action."
+                    : ""))
                 .font(Bench.Typo.caption)
                 .foregroundStyle(Bench.Palette.textFaint)
                 .fixedSize(horizontal: false, vertical: true)

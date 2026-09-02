@@ -95,6 +95,10 @@ final class AppEnvironment {
     let catalog: ModelCatalogStore
     let downloadsStore: DownloadsStore
     let modelLibrary = ModelLibraryStore()
+    /// Amp captures kept on this Mac (`tone3000-tones/` in the auxiliary
+    /// root). App-wide because it is a collection, not a sheet's scratch
+    /// state — two views must never disagree about what is in it.
+    let toneLibrary: ToneLibraryStore
     let library: LibraryStore
     let partsStore: PartsStore
     /// Text documents on songs and parts — what the music-to-text models
@@ -148,6 +152,7 @@ final class AppEnvironment {
          database: DatabaseManager? = nil,
          settings: AppSettings? = nil) {
         self.settings = settings ?? AppSettings()
+        self.toneLibrary = ToneLibraryStore(settings: self.settings)
         let status = BackendStatusStore()
         self.backendStatus = status
         self.catalog = ModelCatalogStore(backend: status)
@@ -548,6 +553,12 @@ final class AppEnvironment {
                 // rest can be downloaded again.
                 if op.restartRequired == true, let destination = op.destination {
                     settings.hfHomePath = Self.librarySetting(for: destination)
+                    // Where the auxiliary weights went is the engine's call —
+                    // it depends on whether the chosen folder is the shared
+                    // cache — so this is read off the event, never recomputed.
+                    settings.auxCachePath = op.auxDestination.flatMap {
+                        Self.auxSetting(for: $0)
+                    }
                 }
             case .engineWarning(let message):
                 backendStatus.appendStderr("[warning] \(message)")
@@ -566,6 +577,16 @@ final class AppEnvironment {
         let shared = URL(fileURLWithPath: NSString(string: "~/.cache/huggingface")
             .expandingTildeInPath).standardizedFileURL.path
         return chosen == shared ? nil : chosen
+    }
+
+    /// The same rule for the auxiliary root: nil means "the engine's own
+    /// default", which is `aux-cache` inside its data dir.
+    static func auxSetting(for path: String) -> String? {
+        let chosen = URL(fileURLWithPath: path).standardizedFileURL.path
+        let engineDefault = StoragePaths.engineData
+            .appendingPathComponent("aux-cache", isDirectory: true)
+            .standardizedFileURL.path
+        return chosen == engineDefault ? nil : chosen
     }
 
     var hasRunningJob: Bool { jobsStore.load.jobs > 0 }

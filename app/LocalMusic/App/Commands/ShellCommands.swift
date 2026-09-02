@@ -23,7 +23,7 @@ struct ShellCommands: Commands {
 
     var body: some Commands {
         FileCommands(env: env)
-        EditCommands(env: env)
+        EditCommands()
         ViewCommands(env: env)
         PlaybackCommands(env: env)
         TrackCommands(env: env)
@@ -135,48 +135,19 @@ private struct DeleteItem: View {
 
 /// The menu macOS users reach for on reflex, made true.
 ///
-/// Undo and Redo are left to the stock items: `EditorStore` registers with the
-/// window's own `UndoManager` and names each step, so the system items already
-/// read "Undo Trim" and already dim correctly. Everything else here replaces
-/// the invisible `Button("")` block the Editor used to carry — same keys, now
-/// with somewhere to see them and something to dim when they do not apply.
+/// Undo, Redo and the whole clipboard block are left to the stock items.
+/// `EditorStore` registers with the window's own `UndoManager` and names each
+/// step, so the system items already read "Undo Trim" and already dim
+/// correctly; Cut, Copy, Paste, Delete and Select All are the standard
+/// first-responder items, which is the only way ⌘X/⌘C/⌘V/⌘A work in a text
+/// field at all — AppKit has no key bindings for them, just the menu, so an
+/// app that replaces those items takes the shortcuts away from every field it
+/// owns. The Editor is served from the responder chain instead; see
+/// `AppDelegate`'s pasteboard actions.
 struct EditCommands: Commands {
-    let env: AppEnvironment
-
     var body: some Commands {
-        CommandGroup(replacing: .pasteboard) {
-            EditorClipboardItems()
-        }
         CommandGroup(replacing: .textEditing) {
             FindItem()
-        }
-    }
-}
-
-private struct EditorClipboardItems: View {
-    @FocusedValue(\.editorCommands) private var editor
-
-    var body: some View {
-        let commands = editor ?? EditorCommands()
-        let live = commands.isEditable
-        Group {
-            Button("Cut", action: commands.cut)
-                .keyboardShortcut("x", modifiers: .command)
-                .disabled(!live || !commands.hasSelection)
-            Button("Copy", action: commands.copy)
-                .keyboardShortcut("c", modifiers: .command)
-                .disabled(!live || !commands.hasSelection)
-            Button("Paste", action: commands.paste)
-                .keyboardShortcut("v", modifiers: .command)
-                .disabled(!live || !commands.canPaste)
-            Button("Delete", action: commands.delete)
-                // Bare Delete, as the Editor already had it.
-                .keyboardShortcut(.delete, modifiers: [])
-                .disabled(!live || !commands.hasSelection)
-            Divider()
-            Button("Select All", action: commands.selectAll)
-                .keyboardShortcut("a", modifiers: .command)
-                .disabled(!live)
         }
     }
 }

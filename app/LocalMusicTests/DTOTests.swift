@@ -6,6 +6,90 @@ final class DTOTests: XCTestCase {
         try BackendClient.decoder.decode(T.self, from: Data(json.utf8))
     }
 
+    /// The library payload carries three roots (contract 4.4): the shared
+    /// Hugging Face folder, whose figures stay scoped to it, and the two the
+    /// engine owns outright, which are what `totalBytes` adds on top.
+    func testLibraryInfoFixture() throws {
+        let json = """
+        {
+          "path": "/Users/x/.cache/huggingface", "is_default": true,
+          "bytes": 3000, "installed_bytes": 2000, "partial_bytes": 1000,
+          "folder_bytes": 5000, "model_count": 2, "partial_count": 1,
+          "disk_total_bytes": 100000, "disk_free_bytes": 40000,
+          "repos": [{"repo_id": "a/b", "path": "/p", "bytes": 3000,
+                     "state": "partial", "model_ids": ["m"]}],
+          "aux": {"path": "/aux", "bytes": 700, "in_library_folder": false,
+                  "dirs": [{"name": "msst-weights", "path": "/aux/msst-weights",
+                            "bytes": 500, "kept": false},
+                           {"name": "tone3000-tones", "path": "/aux/tones",
+                            "bytes": 200, "kept": true}]},
+          "modelscope": {"path": "/ms", "bytes": 50,
+                         "in_library_folder": false,
+                         "dirs": [{"name": "o/r", "path": "/ms/o--r",
+                                   "bytes": 50, "kept": false}]},
+          "total_bytes": 3750,
+          "operation": null
+        }
+        """
+        let info = try decode(LibraryInfo.self, json)
+        XCTAssertEqual(info.bytes, 3000)
+        // Scoped to the Hugging Face folder: the gap against `folder_bytes` is
+        // other tools', and the owned roots are not in either figure.
+        XCTAssertEqual(info.foreignBytes, 2000)
+        XCTAssertEqual(info.aux.dirs.first?.name, "msst-weights")
+        XCTAssertEqual(info.otherRootBytes, 750)
+        XCTAssertEqual(info.totalBytes, 3750)
+        // A clear takes neither the kept captures nor their bytes, and the
+        // sheet that names what goes must agree with what goes.
+        XCTAssertEqual(info.keptBytes, 200)
+        XCTAssertEqual(info.clearableDirs.map(\.name),
+                       ["msst-weights", "o/r"])
+        XCTAssertEqual(info.clearableBytes, 3550)
+    }
+
+    /// Once the library has been moved the auxiliary root is inside the
+    /// folder, so its bytes are in `folder_bytes` too and must not be drawn as
+    /// another tool's share.
+    func testAuxInsideTheLibraryFolderIsNotForeign() throws {
+        let json = """
+        {
+          "path": "/Volumes/Big/Models", "is_default": false,
+          "bytes": 3000, "installed_bytes": 3000, "partial_bytes": 0,
+          "folder_bytes": 3700, "model_count": 1, "partial_count": 0,
+          "disk_total_bytes": null, "disk_free_bytes": null, "repos": [],
+          "aux": {"path": "/Volumes/Big/Models/localmusic-aux", "bytes": 700,
+                  "in_library_folder": true, "dirs": []},
+          "modelscope": {"path": "/ms", "bytes": 0,
+                         "in_library_folder": false, "dirs": []},
+          "total_bytes": 3700, "operation": null
+        }
+        """
+        let info = try decode(LibraryInfo.self, json)
+        XCTAssertEqual(info.foreignBytes, 0)
+    }
+
+    /// A relocate names where the auxiliary root lands, because which folder
+    /// that is depends on the destination and only the engine decides it.
+    func testLibraryOperationCarriesAuxDestination() throws {
+        let json = """
+        {
+          "operation_id": "lib_1", "mode": "relocate", "state": "succeeded",
+          "fraction": 1.0, "bytes_done": 10, "bytes_total": 10,
+          "message": "done", "error": null,
+          "destination": "/Volumes/Big/Models",
+          "aux_destination": "/Volumes/Big/Models/localmusic-aux",
+          "disposition": "move", "repo_count": 1, "dir_count": 2,
+          "restart_required": true, "canceled": false,
+          "removed_model_ids": null, "moved_repo_ids": ["a/b"],
+          "skipped_repo_ids": []
+        }
+        """
+        let op = try decode(LibraryOperation.self, json)
+        XCTAssertEqual(op.auxDestination, "/Volumes/Big/Models/localmusic-aux")
+        XCTAssertEqual(op.dirCount, 2)
+        XCTAssertEqual(op.restartRequired, true)
+    }
+
     func testModelInfoFixture() throws {
         let json = """
         {

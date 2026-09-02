@@ -537,13 +537,34 @@ engine restarts. A failed pin load emits `engine.warning` and clears the pin.
 
 ### 4.4 The model library
 
-Weights live in a Hugging Face cache directory — `HF_HOME`, defaulting to
-`~/.cache/huggingface`. That folder is **shared**: other Hugging Face tooling on
-the machine reads and writes the same cache, and repositories the app never
-asked for are the normal case. Every figure and every action in this section is
+Weights live in **three roots**, and the difference between them is whether the
+engine owns the folder or borrows it:
+
+| root | where | env | ours | relocatable |
+|---|---|---|---|---|
+| Hugging Face cache | `~/.cache/huggingface` by default | `HF_HOME` | only what the catalog names | yes |
+| auxiliary cache | `<data-dir>/aux-cache` by default | `LOCALMUSIC_AUX_CACHE` | all of it | yes, with the library folder |
+| ModelScope cache | `<data-dir>/ms-cache` | — | all of it | no |
+
+The Hugging Face folder is **shared**: other Hugging Face tooling on the machine
+reads and writes the same cache, and repositories the app never asked for are
+the normal case. Every figure and every action against *that* folder is
 therefore scoped through the catalog. A repository is *ours* when some entry in
 `GET /v1/models` names it in `hf_repos`; nothing else in the folder is measured,
 moved or removed, and an engine implementing this contract must hold that line.
+
+The other two roots the engine owns outright, so every byte in them counts.
+The auxiliary root holds weights an adapter fetches for itself — direct URLs,
+torch hub, source tarballs — under fixed per-tool directory names the engine
+declares. It also holds a second class of directory, flagged `kept`: files the
+*user* chose rather than weights the engine can fetch again — downloaded amp
+captures. These are counted and always moved, and no clear and no relocate
+disposition ever deletes them; re-acquiring one needs the user's own
+credentials and their memory of which of several hundred thousand they had
+picked, which is not a thing a "reclaim disk" button may assume. It is not inside the Hugging Face folder, because on the default
+setting that folder belongs to the whole machine; it travels with the library
+folder anyway, because it holds gigabytes and a client that moved one without
+the other would strand them.
 
 Two states of ours, distinguished because they mean different things to a user:
 **installed** (some entry referencing it has completed its download) and
@@ -571,13 +592,39 @@ of file sizes reports a library substantially larger than the disk holds.
   "repos": [{"repo_id": "facebook/musicgen-small", "path": "…",
              "bytes": 2371000000, "state": "installed" | "partial",
              "model_ids": ["musicgen-small"]}],
+  // The roots the engine owns outright. No `folder_bytes` counterpart: there
+  // is nobody else's share to explain.
+  "aux": {"path": "…/aux-cache", "bytes": 4388000000,
+          "in_library_folder": false,   // true after a relocate — see below
+          "dirs": [{"name": "msst-weights", "path": "…", "bytes": 3800000000,
+                    "kept": false},
+                   {"name": "tone3000-tones", "path": "…", "bytes": 41000000,
+                    "kept": true}]},
+  "modelscope": {"path": "…/ms-cache", "bytes": 0,
+                 "in_library_folder": false, "dirs": []},
+  "total_bytes": 37673996544,   // bytes + aux.bytes + modelscope.bytes
   "operation": LibraryOperation | null   // see below
 }
 ```
 
+`in_library_folder` says whether that root sits inside the library folder,
+which it does once the library has been moved. When it is true its bytes are
+inside `folder_bytes` as well, and a client working out what *other tools* hold
+must subtract them — drawn as somebody else's share they would be both alarming
+and wrong.
+
+`bytes` and `folder_bytes` stay scoped to the Hugging Face folder — they exist
+to explain the gap between our share and the Finder's figure, and there is no
+such gap in a root we own. `total_bytes` is the answer to "how much disk do
+this app's models take", and is what a client should draw as the app's share.
+
 `folder_bytes` is reported beside `bytes` deliberately: in the shared default
 the two differ by whatever else is cached there, and a client showing only the
 app's own figure disagrees with the Finder for reasons the user cannot see.
+
+Auxiliary directories carry no install marker — nothing downloads them ahead of
+time, and only the adapter that fetches one knows when it is complete — so they
+appear in `aux.dirs` and in the sizes, and never in `verify`.
 
 `GET /v1/models/library/verify` → a check of every completed download against
 the files actually present. An install marker is a claim about history; weights
@@ -599,15 +646,32 @@ any job is queued or running — rearranging weights under a live worker is a
 crash.
 
 `POST /v1/models/library/clear {"scope": "all" | "partial"}` → remove models of
-ours from the current folder; `partial` takes only the interrupted downloads,
-which is a different decision from throwing away working models. Family
-runtimes go with the last model that needed them, exactly as a single delete
-does (§4.2). `409 LIBRARY_EMPTY` when the chosen scope matches nothing,
-`422 VALIDATION` for an unknown scope.
+ours; `partial` takes only the interrupted downloads, which is a different
+decision from throwing away working models. Family runtimes go with the last
+model that needed them, exactly as a single delete does (§4.2).
+`409 LIBRARY_EMPTY` when the chosen scope matches nothing, `422 VALIDATION` for
+an unknown scope.
+
+`all` reaches into all three roots but stops at every `kept` directory;
+`partial` is Hugging Face only, since the owned roots have no notion of an
+unfinished download to reclaim. The operation reports `dir_count` beside
+`repo_count` for what it took from them.
 
 `POST /v1/models/library/relocate {"path": "…", "disposition": "…"}` — point the
-library at a new folder. `disposition` says what becomes of the models in the
-old one:
+library at a new folder. The auxiliary root moves with it, to
+`<path>/localmusic-aux` — except when `path` is the shared
+`~/.cache/huggingface`, where it returns to `<data-dir>/aux-cache` rather than
+put a directory of ours in a folder the whole machine uses. The engine decides
+this and reports it as `aux_destination` on every event for the operation; a
+client applies that value rather than deriving it. ModelScope weights are not
+in the folder being left behind and no disposition touches them.
+
+`disposition` says what becomes of the models in the old folder — and, equally,
+of the auxiliary directories in the old auxiliary root. `kept` directories are
+the exception and are always moved: "delete them" and "leave them where they
+are" are answers about weights that can be fetched again, and applying either
+to a collection the user curated would destroy or orphan it. `kept_dir_count`
+reports how many travelled that way.
 
 | disposition | effect |
 |---|---|
@@ -616,9 +680,12 @@ old one:
 | `leave`  | untouched; the new folder starts empty and those bytes are orphaned |
 
 Refusals: `422 VALIDATION` for an unknown disposition, an unwritable
-destination, the current folder, or a destination inside the current folder.
+destination (either root), the current folder, a destination inside the current
+folder, or a destination inside the current auxiliary root.
+`409 INSUFFICIENT_DISK` is checked per root against its own destination — the
+two can be on different volumes.
 
-**The engine reads `HF_HOME` once, at launch.** This endpoint only rearranges
+**The engine reads `HF_HOME` and `LOCALMUSIC_AUX_CACHE` once, at launch.** This endpoint only rearranges
 files; the client applies the new path and restarts the engine afterwards.
 Every event for a relocate carries `restart_required: true` — including a
 failed one, which needs the restart *more*, since some repositories are already
@@ -1291,15 +1358,22 @@ Under `~/Library/Application Support/LocalMusic/` (the app passes the concrete d
 - App-owned (engine never touches): `Database/`, `Library/`.
 - Engine-owned (rooted at `--data-dir` / `--output-dir`): `envs/`, `Outputs/`
   (retention-swept, see 5.2), `Backend/logs/`, `installed/` (markers),
-  `uploads/`. `worker-<family>.log` files are bounded: a log past 10 MB starts
+  `uploads/`, `aux-cache/` (weights adapters fetch themselves, plus the
+  `kept` directories holding the user's own downloaded captures — relocatable
+  with the library folder, see 4.4), `ms-cache/` (ModelScope repos — *not*
+  relocatable). `worker-<family>.log` files are bounded: a log past 10 MB starts
   over at the next worker spawn. The daily `backend-YYYY-MM-DD.log` files are
   written by the *app*, which also prunes them on the outputs retention window.
-- Model weights live in the **shared system Hugging Face cache**
+- Hugging Face weights live in the **shared system cache**
   (`~/.cache/huggingface`, standard `HF_HOME` semantics; an inherited `HF_HOME`
   env var overrides — the verification suite uses that for isolation). Weights
   there are shared with any other HF tooling on the machine; deleting a model
   in the app removes its repos from the shared cache unless another installed
   catalog entry still references them.
+- Everything else an adapter downloads goes to the engine-owned `aux-cache/`
+  above, never to a directory derived from `HF_HOME`. Pre-aux-cache installs
+  put these beside the Hugging Face folder (`~/.cache/<name>`); the engine
+  migrates those into the aux root once, on startup.
 
 The library database of record is the app's (GRDB). The engine keeps no durable state
 besides model weights, venvs, and a transient job queue; it may be killed and restarted

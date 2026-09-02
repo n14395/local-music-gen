@@ -11,12 +11,15 @@ model that had nothing to say.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]
-                       / "engine/supervisor/src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "engine/supervisor/src"))
+sys.path.insert(0, str(ROOT / "engine/protocol/src"))
 
+from engine_protocol.adapter import AUX_DIRS        # noqa: E402
 from supervisor.logmirror import LogMirror          # noqa: E402
 from supervisor.worker import Worker                # noqa: E402
 
@@ -128,10 +131,36 @@ def check_no_job_no_mirror() -> None:
           worker.bus.events == [])
 
 
+# MARK: - aux cache
+
+
+def check_aux_dirs() -> None:
+    """AUX_DIRS is the list the library counts, moves and clears. A directory
+    an adapter writes without naming it there is one the app cannot see — the
+    exact bug the aux root exists to have fixed — so the two must agree."""
+    used: set[str] = set()
+    legacy: list[str] = []
+    for path in sorted((ROOT / "engine/adapters").glob("*/src/*/*.py")):
+        src = path.read_text()
+        used.update(re.findall(r'aux_dir\("([^"]+)"\)', src))
+        if "dirname(hf_home)" in src or 'dirname(os.environ["HF_HOME"])' in src:
+            legacy.append(str(path.relative_to(ROOT)))
+
+    unlisted = sorted(used - set(AUX_DIRS))
+    check("every aux_dir() name is in AUX_DIRS", not unlisted,
+          "unlisted: " + ", ".join(unlisted))
+    unused = sorted(set(AUX_DIRS) - used)
+    check("every AUX_DIRS name is used by an adapter", not unused,
+          "unused: " + ", ".join(unused))
+    check("no adapter still derives its cache from HF_HOME", not legacy,
+          ", ".join(legacy))
+
+
 if __name__ == "__main__":
     check_log_mirror()
     check_worker_stderr()
     check_no_job_no_mirror()
+    check_aux_dirs()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} check(s) failed: " + ", ".join(FAILURES))

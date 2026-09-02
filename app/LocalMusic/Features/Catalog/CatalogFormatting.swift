@@ -20,6 +20,23 @@ enum ByteFormat {
     static func wholeGB(_ bytes: Int64) -> String {
         String(Int((Double(bytes) / 1_073_741_824).rounded()))
     }
+
+    /// `412 KB` · `2.1 MB` · `9.4 GB` — the unit that suits the number.
+    ///
+    /// Models are always gigabytes, so `gb` is right for them and says so in
+    /// its name. Amp captures are kilobytes to a few megabytes, and a library
+    /// of forty of them rendered as "0.0 GB" forty times is the reason this
+    /// exists.
+    static func compact(_ bytes: Int64) -> String {
+        let value = Double(bytes)
+        if value >= 1_073_741_824 {
+            return String(format: "%.1f GB", value / 1_073_741_824)
+        }
+        if value >= 1_048_576 {
+            return String(format: "%.1f MB", value / 1_048_576)
+        }
+        return String(format: "%.0f KB", (value / 1024).rounded(.up))
+    }
 }
 
 // MARK: - Readiness

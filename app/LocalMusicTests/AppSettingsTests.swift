@@ -155,7 +155,8 @@ final class AppSettingsTests: XCTestCase {
         let config = EngineLaunchConfig(
             memGuardBytes: 123, smallWarmSlots: 3, smallWarmTTLS: 0,
             smallModelBytes: 2_000_000_000, maxActiveDownloads: 2,
-            hfHome: nil, logLevel: "debug", outputsRetentionDays: 7)
+            hfHome: nil, auxCache: nil, logLevel: "debug",
+            outputsRetentionDays: 7)
         let env = config.environment
         XCTAssertEqual(env["LOCALMUSIC_MEM_GUARD_BYTES"], "123")
         XCTAssertEqual(env["LOCALMUSIC_SMALL_WARM_SLOTS"], "3")
@@ -164,11 +165,37 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(env["LOCALMUSIC_MAX_ACTIVE_DOWNLOADS"], "2")
         XCTAssertEqual(env["LOCALMUSIC_OUTPUTS_RETENTION_DAYS"], "7")
         XCTAssertNil(env["HF_HOME"])
+        XCTAssertNil(env["LOCALMUSIC_AUX_CACHE"])
         XCTAssertEqual(config.arguments, ["--log-level", "debug"])
 
         var withCache = config
         withCache.hfHome = "/Volumes/Big/hf"
         XCTAssertEqual(withCache.environment["HF_HOME"], "/Volumes/Big/hf")
+        // The two roots move together but not to the same place, so the
+        // auxiliary one is carried as its own value rather than derived.
+        withCache.auxCache = "/Volumes/Big/hf/localmusic-aux"
+        XCTAssertEqual(withCache.environment["LOCALMUSIC_AUX_CACHE"],
+                       "/Volumes/Big/hf/localmusic-aux")
+    }
+
+    /// A relocate is the only thing that sets these, and it sets both: the
+    /// engine names the auxiliary destination on the completion event, and
+    /// nil means "wherever the engine puts it by default".
+    func testAuxCachePathPersistsLikeTheLibraryFolder() {
+        var settings = AppSettings(defaults: defaults)
+        XCTAssertNil(settings.auxCachePath)
+        XCTAssertNil(settings.engineLaunchConfig.auxCache)
+
+        settings.hfHomePath = "/Volumes/Big/Models"
+        settings.auxCachePath = "/Volumes/Big/Models/localmusic-aux"
+        settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.auxCachePath,
+                       "/Volumes/Big/Models/localmusic-aux")
+        XCTAssertEqual(settings.engineLaunchConfig.environment[
+            "LOCALMUSIC_AUX_CACHE"], "/Volumes/Big/Models/localmusic-aux")
+
+        settings.auxCachePath = nil
+        XCTAssertNil(AppSettings(defaults: defaults).auxCachePath)
     }
 
     func testEngineConfigFromSettings() {

@@ -43,6 +43,17 @@ class Settings:
         return os.path.join(self.data_dir, "ms-cache")
 
     @property
+    def aux_cache_dir(self) -> str:
+        # Weights adapters fetch themselves — direct URLs, torch hub, source
+        # tarballs (engine_protocol.adapter.AUX_DIRS names them all). Owned by
+        # the engine like ms-cache, but relocatable with the library folder,
+        # because unlike ms-cache it holds real gigabytes. These used to be
+        # derived per-adapter as a sibling of HF_HOME, which meant a library
+        # move silently stranded them; one root, named here, is the fix.
+        return (os.environ.get("LOCALMUSIC_AUX_CACHE")
+                or os.path.join(self.data_dir, "aux-cache"))
+
+    @property
     def envs_dir(self) -> str:
         return os.path.join(self.data_dir, "envs")
 
@@ -71,8 +82,11 @@ class Settings:
             except OSError:
                 pass
         for d in (self.data_dir, self.output_dir, self.hf_cache_dir,
-                  self.ms_cache_dir, self.envs_dir, self.logs_dir,
-                  self.uploads_dir):
+                  self.ms_cache_dir, self.aux_cache_dir, self.envs_dir,
+                  self.logs_dir, self.uploads_dir):
             os.makedirs(d, exist_ok=True)
         # Every hub download (supervisor or worker) goes through the app's cache dir.
         os.environ["HF_HOME"] = self.hf_cache_dir
+        # Likewise every adapter's own download; the worker sets this explicitly
+        # too, so the two agree whatever the import order turns out to be.
+        os.environ["LOCALMUSIC_AUX_CACHE"] = self.aux_cache_dir

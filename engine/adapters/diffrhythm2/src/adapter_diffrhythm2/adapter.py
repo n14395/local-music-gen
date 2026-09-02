@@ -37,7 +37,8 @@ import urllib.request
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter,
+                                     ProgressCb, aux_dir)
 
 REPO_ID = "ASLP-lab/DiffRhythm2"
 REPO_COMMIT = "7804f821b797b4f276090e1a9dcd37e97d9915d5"
@@ -69,20 +70,12 @@ class DiffRhythm2Adapter(ModelAdapter):
         self.repo: str | None = None
         self.device = str(self.settings.get("device") or "cpu")
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "diffrhythm2")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def load(self, progress_cb: ProgressCb) -> None:
         if not os.path.exists(ESPEAK_DYLIB):
             raise RuntimeError(
                 "espeak-ng is required for the lyrics front-end: "
                 "`brew install espeak-ng` and try again")
-        cache = self._cache_dir()
+        cache = aux_dir("diffrhythm2")
         repo = os.path.join(cache, f"DiffRhythm2-{REPO_COMMIT}")
         if not os.path.isdir(repo):
             progress_cb(None, "fetching DiffRhythm2 code (pinned snapshot, "

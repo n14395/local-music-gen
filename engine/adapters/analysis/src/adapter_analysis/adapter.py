@@ -18,7 +18,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir, clear_stale_link)
 
 from . import features, keys, structure
 
@@ -61,10 +61,7 @@ class AnalysisAdapter(ModelAdapter):
         self._squim = None
 
     def load(self, progress_cb: ProgressCb) -> None:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        os.environ.setdefault("TORCH_HOME", os.path.join(base, "torch-cache"))
+        os.environ.setdefault("TORCH_HOME", aux_dir("torch-cache"))
         progress_cb(None, "analysis toolkit ready")
 
     def generate(self, prompt, lyrics, params, out_path, progress_cb,
@@ -108,14 +105,6 @@ class AnalysisAdapter(ModelAdapter):
         return next((p for r, p in self.model_paths.items()
                      if "clap" in r.lower()),
                     next(iter(self.model_paths.values())))
-
-    def _cache_dir(self, name: str) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, name)
-        os.makedirs(d, exist_ok=True)
-        return d
 
     def run_task(self, task: str, params: dict, out_dir: str,
                  progress_cb: ProgressCb, cancel: CancelToken) -> TaskResult:
@@ -249,7 +238,7 @@ class AnalysisAdapter(ModelAdapter):
         from . import btc
 
         if getattr(self, "_btc", None) is None:
-            cache = self._cache_dir("btc-chords")
+            cache = aux_dir("btc-chords")
             # The catalog entry ships both checkpoints in the assets-mirror
             # snapshot (rtikw/localmusic-assets, analysis/btc_model*.pt —
             # unmodified mirrors of the MIT files committed in the upstream
@@ -259,6 +248,7 @@ class AnalysisAdapter(ModelAdapter):
                 for name in ("btc_model.pt", "btc_model_large_voca.pt"):
                     staged = os.path.join(snap, "analysis", name)
                     dst = os.path.join(cache, name)
+                    clear_stale_link(dst)   # a library move strands this link
                     if os.path.exists(staged) and not os.path.exists(dst):
                         try:
                             os.symlink(staged, dst)
@@ -360,7 +350,7 @@ class AnalysisAdapter(ModelAdapter):
         if getattr(self, "_squim", None) is None:
             progress_cb(0.05, "loading SQUIM (downloads on first use)")
             os.environ.setdefault("TORCH_HOME",
-                                  self._cache_dir("torch-cache"))
+                                  aux_dir("torch-cache"))
             from torchaudio.pipelines import SQUIM_OBJECTIVE
 
             self._squim = SQUIM_OBJECTIVE.get_model()

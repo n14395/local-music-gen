@@ -27,7 +27,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 REPO_COMMIT = "6d7c453781cdaf286227ba7a51e79d57b19fad71"
 REPO_TARBALL = (f"https://github.com/GiantAILab/YingMusic-Singer/archive/"
@@ -109,14 +109,6 @@ class YingMusicAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "yingmusic")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _snapshot(self) -> str:
         if not self.model_paths:
             raise RuntimeError("model has no downloaded snapshot")
@@ -124,7 +116,7 @@ class YingMusicAdapter(ModelAdapter):
 
     def load(self, progress_cb: ProgressCb) -> None:
         _patch_langsegment()
-        cache = self._cache_dir()
+        cache = aux_dir("yingmusic")
         repo = os.path.join(cache, f"YingMusic-Singer-{REPO_COMMIT}")
         if not os.path.isdir(repo):
             progress_cb(None, "fetching the YingMusic code (pinned "

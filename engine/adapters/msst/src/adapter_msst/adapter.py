@@ -42,7 +42,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 MSST_COMMIT = "b15aa41299f852c4d8b0e482abcae9d9ad8479a4"
 MSST_TARBALL = ("https://github.com/ZFTurbo/Music-Source-Separation-Training/"
@@ -75,14 +75,6 @@ class MSSTAdapter(ModelAdapter):
         self.repo: str | None = None
         self.device = str(self.settings.get("device") or "cpu")
 
-    def _cache(self, name: str) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, name)
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _engine(self) -> str:
         engine = str(self.settings.get("engine") or "msst")
         if engine not in ("msst", "bsrnn"):
@@ -91,7 +83,7 @@ class MSSTAdapter(ModelAdapter):
 
     def _ensure_repo(self, url: str, commit: str, repo_name: str,
                      progress_cb: ProgressCb) -> str:
-        cache = self._cache("msst")
+        cache = aux_dir("msst")
         repo = os.path.join(cache, f"{repo_name}-{commit}")
         if not os.path.isdir(repo):
             tar_path = os.path.join(cache, f"{repo_name}.tar.gz")
@@ -198,7 +190,7 @@ class MSSTAdapter(ModelAdapter):
 
     def _msst_cmd(self, src: str, out_dir: str, progress_cb: ProgressCb):
         model_type = str(self.settings["model_type"])
-        weights = self._cache("msst-weights")
+        weights = aux_dir("msst-weights")
         config = os.path.join(weights,
                               os.path.basename(self.settings["config_url"]))
         ckpt = os.path.join(weights,
@@ -231,7 +223,7 @@ class MSSTAdapter(ModelAdapter):
              if "bsrnn" in repo.lower()
              and os.path.exists(os.path.join(path, "vocals.ckpt"))), None)
         if model_dir is None:
-            weights_root = self._cache("bsrnn-weights")
+            weights_root = aux_dir("bsrnn-weights")
             model_dir = os.path.join(weights_root, "bsrnn-large")
             if not os.path.isdir(model_dir):
                 zip_path = os.path.join(weights_root, "bsrnn-large.zip")

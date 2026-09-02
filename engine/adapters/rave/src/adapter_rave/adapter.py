@@ -21,7 +21,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 MODEL_URL = "https://play.forum.ircam.fr/rave-vst-api/get_model/{name}"
 
@@ -37,18 +37,10 @@ class RaveAdapter(ModelAdapter):
         self.model_sr = 44100
         self.name = str(self.settings.get("rave_model") or "percussion")
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "rave-models")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def load(self, progress_cb: ProgressCb) -> None:
         import torch
 
-        path = os.path.join(self._cache_dir(), f"{self.name}.ts")
+        path = os.path.join(aux_dir("rave-models"), f"{self.name}.ts")
         if not os.path.exists(path):
             progress_cb(None, f"fetching the {self.name} model from IRCAM "
                               f"(first use only)")

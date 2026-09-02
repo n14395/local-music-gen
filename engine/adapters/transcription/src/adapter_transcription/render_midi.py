@@ -18,6 +18,8 @@ import urllib.request
 
 import numpy as np
 
+from engine_protocol.adapter import aux_dir
+
 SOUNDFONT_URL = ("https://ftp.osuosl.org/pub/musescore/soundfont/"
                  "MuseScore_General/MuseScore_General.sf3")
 SOUNDFONT_NAME = "MuseScore_General.sf3"
@@ -35,14 +37,6 @@ PEAK_TARGET = 0.9
 MAX_RENDER_S = 900.0
 
 
-def _cache_dir() -> str:
-    hf_home = os.environ.get("HF_HOME")
-    base = os.path.dirname(hf_home) if hf_home else os.path.expanduser("~/.cache")
-    d = os.path.join(base, "localmusic-soundfonts")
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -58,7 +52,7 @@ def ensure_soundfont(progress_cb=None) -> str:
     both a cached copy and a fresh download are sha256-verified: a bad cached
     file is deleted and refetched in the same call; a bad download is deleted
     and reported."""
-    path = os.path.join(_cache_dir(), SOUNDFONT_NAME)
+    path = os.path.join(aux_dir("localmusic-soundfonts"), SOUNDFONT_NAME)
     if os.path.exists(path) and os.path.getsize(path) >= SOUNDFONT_MIN_BYTES:
         if _sha256(path) == SOUNDFONT_SHA256:
             return path

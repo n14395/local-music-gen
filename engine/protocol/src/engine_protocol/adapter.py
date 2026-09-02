@@ -7,10 +7,73 @@ loaded only inside worker processes.
 
 from __future__ import annotations
 
+import os
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Protocol
+
+# Every non-Hugging-Face cache directory this engine owns: weights adapters
+# fetch themselves, from direct URLs, torch hub, or source tarballs.
+#
+# Adding one means adding its name here. scripts/check_supervisor.py fails the
+# build otherwise, and an unlisted directory is one the library cannot count,
+# move or clear — which is the bug this list exists to have fixed.
+AUX_DIRS = ("audio-separator-models", "bsrnn-weights", "btc-chords",
+            "bytedance-piano", "diffrhythm2", "essentia-models",
+            "inspiremusic", "localmusic-soundfonts", "magenta-home",
+            "mossmusic", "msst", "msst-weights", "mt3-checkpoints",
+            "rave-models", "seedvc", "songbloom", "torch-cache", "yingmusic")
+
+
+# Directories in the aux root that hold the *user's* files rather than weights
+# the engine can fetch again on demand. Counted and moved with everything else,
+# and never cleared: re-downloading one of these needs the user's own API key
+# and, worse, needs them to remember which of TONE3000's several hundred
+# thousand captures they had chosen.
+#
+# Written by the app, not by any adapter, which is why they are not in
+# AUX_DIRS: `aux_dir()` refuses them and the adapter guard never looks for them.
+AUX_KEPT_DIRS = ("tone3000-tones",)
+
+
+def aux_root() -> str:
+    """Where adapter-fetched weights live.
+
+    The worker always sets `LOCALMUSIC_AUX_CACHE`. The fallback is the pre-aux
+    derivation — a sibling of `HF_HOME` — kept only so an adapter still lands
+    somewhere sane when it is driven directly by the verify scripts.
+    """
+    root = os.environ.get("LOCALMUSIC_AUX_CACHE")
+    if root:
+        return root
+    hf_home = os.environ.get("HF_HOME")
+    return (os.path.dirname(hf_home) if hf_home
+            else os.path.expanduser("~/.cache"))
+
+
+def clear_stale_link(path: str) -> None:
+    """Remove `path` if it is a symlink whose target is gone.
+
+    Staging links cross from an adapter's own tree (or the aux cache) into an
+    HF snapshot, and the two roots move independently — relocating the library
+    strands every link that still names the old root. `os.path.exists` follows
+    the link, so a dangling one reads as *absent*: an "already staged?" guard
+    re-stages, `os.symlink` then raises EEXIST, and a `shutil.copy` fallback
+    writes *through* the dead link and reports ENOENT on the destination —
+    which reads as a missing checkpoint when the weights are really fine.
+    Call this before every such guard; re-staging then just works.
+    """
+    if os.path.islink(path) and not os.path.exists(path):
+        os.unlink(path)
+
+
+def aux_dir(name: str) -> str:
+    """One aux cache directory, created on demand."""
+    assert name in AUX_DIRS, f"unlisted aux dir {name!r} — add it to AUX_DIRS"
+    d = os.path.join(aux_root(), name)
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 class ProgressCb(Protocol):

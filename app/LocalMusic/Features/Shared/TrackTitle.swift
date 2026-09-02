@@ -4,8 +4,10 @@ import SwiftUI
 /// `track007 - warm lo-fi beat with vinyl crackle`.
 ///
 /// Generated tracks are named `trackNNN`, so the prompt is what actually tells
-/// them apart at a glance. The name always stays whole; the prompt takes
-/// whatever width is left and truncates.
+/// them apart at a glance. The name is served first and the prompt takes
+/// whatever width is left, so it is the prompt that truncates — until the name
+/// alone outruns the row, and then it truncates too rather than spilling over
+/// whatever shares the line.
 struct TrackTitle: View {
     let title: String
     let prompt: String
@@ -35,7 +37,12 @@ struct TrackTitle: View {
                 .foregroundStyle(Bench.Palette.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .fixedSize(horizontal: keepsTitleWhole, vertical: false)
+                // Priority, not `fixedSize`: the name is served first out of
+                // the row's width, so a `trackNNN` still comes through whole
+                // and the prompt beside it truncates — but a name longer than
+                // the row itself now takes an ellipsis of its own instead of
+                // running out over the waveform and the stars.
+                .layoutPriority(keepsTitleWhole ? 1 : 0)
             if let promptSuffix {
                 Text(promptSuffix)
                     .font(font)
@@ -46,10 +53,12 @@ struct TrackTitle: View {
         }
     }
 
-    /// The name is held at full width only while the prompt trails it and can
-    /// absorb the truncation. Alone, it has to yield like any other label —
-    /// otherwise a long title with no prompt suffix squeezes whatever shares
-    /// its row (the library's rating stars wrapped one per line, then vanished).
+    /// The name is served first only while the prompt trails it and can absorb
+    /// the truncation. Alone, it has to yield like any other label — otherwise
+    /// a long title with no prompt suffix squeezes whatever shares its row (the
+    /// library's rating stars wrapped one per line, then vanished). Either way
+    /// the name is bounded by the width it is offered: it truncates there
+    /// rather than overflowing.
     var keepsTitleWhole: Bool { promptSuffix != nil }
 
     /// nil when the prompt would add nothing: imported and recombined tracks

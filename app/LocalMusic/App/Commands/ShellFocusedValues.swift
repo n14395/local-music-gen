@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// What the screen currently on show lets the menubar do to it.
@@ -53,6 +54,43 @@ struct EditorCommands {
     var export: () -> Void = {}
     /// Show the file the Editor is working on in Finder.
     var reveal: (() -> Void)?
+}
+
+extension EditorCommands {
+    /// The bundle, read straight from the store — which is where every fact in
+    /// it already lives.
+    ///
+    /// One initialiser because there are two callers and they must agree: the
+    /// Editor publishes it as a focused value for the menus that only exist
+    /// while that screen is up, and `AppDelegate` builds it again when a stock
+    /// Edit-menu item comes down the responder chain with nothing else to
+    /// service it. Two hand-written copies of "is there a selection" would be
+    /// two chances for the menu to offer a cut the screen cannot make.
+    @MainActor
+    init(store: EditorStore) {
+        self.init(
+            isEditable: store.isCommandable,
+            hasSelection: (store.selection?.length ?? 0) > 0,
+            canPaste: store.canPaste,
+            cut: { store.cutSelection() },
+            copy: { store.copySelection() },
+            paste: { store.paste() },
+            delete: { store.deleteSelection() },
+            selectAll: { store.selectAll() },
+            zoomIn: { store.zoomIn() },
+            zoomOut: { store.zoomOut() },
+            zoomToFit: { store.zoomToFit() },
+            zoomToSelection: { store.zoomToSelection() },
+            toggleOriginal: { store.toggleOriginalAudition() },
+            isAuditioningOriginal: store.auditioningOriginal,
+            playSelection: { store.playSelection() },
+            export: { store.exportSheetOpen = true },
+            // Nil, not a closure that does nothing, when there is no file yet
+            // — the File menu dims Reveal on exactly this.
+            reveal: store.sourceURL.map { url in
+                { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            })
+    }
 }
 
 private struct EditorCommandsKey: FocusedValueKey {

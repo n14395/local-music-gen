@@ -1,11 +1,26 @@
-"""The model library: what of the Hugging Face cache belongs to this app.
+"""The model library: where weights live, and which of them are ours.
 
-The cache is not ours. By default it is `~/.cache/huggingface`, shared with
-every other Hugging Face tool on the machine, and a folder full of repos we
-never asked for is the normal case rather than the exception. So every figure
-and every destructive act here is scoped through the catalog: a repo counts as
-ours when some entry in `Registry.models` names it, and nothing else in that
-folder is read, measured, moved or removed.
+Weights sit in three roots, and the difference between them is the difference
+between a folder we borrow and folders we own:
+
+  * The **Hugging Face cache** — `HF_HOME`, by default `~/.cache/huggingface`.
+    Not ours. It is shared with every other Hugging Face tool on the machine,
+    and a folder full of repos we never asked for is the normal case rather
+    than the exception. So every figure and every destructive act against it is
+    scoped through the catalog: a repo counts as ours when some entry in
+    `Registry.models` names it in `hf_repos`, and nothing else in that folder
+    is read, measured, moved or removed.
+  * The **aux root** — weights adapters fetch themselves, from direct URLs,
+    torch hub or source tarballs (`engine_protocol.adapter.AUX_DIRS` names
+    every directory). Ours outright, so all of it counts. It relocates with the
+    library folder, because it holds real gigabytes. A second class lives
+    beside them, `AUX_KEPT_DIRS`: the user's own files — downloaded amp
+    captures — which are counted and always moved, and which no clear and no
+    relocate disposition ever deletes.
+  * The **ModelScope root** — `ms_repos`, engine-owned and *not* relocatable:
+    there is no ModelScope tooling on the machine to share a location with, and
+    keeping it in the data dir means wiping that dir is still a clean slate.
+    Counted here, never moved.
 
 Two states of "ours", because the difference matters to the user:
 
@@ -32,11 +47,17 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from engine_protocol.adapter import AUX_DIRS, AUX_KEPT_DIRS
+
 from .events import EventBus
 from .registry import Registry
 
 # Dispositions for the models already in the folder being left behind.
 DISPOSITIONS = ("move", "delete", "leave")
+
+# The aux root's name inside a chosen library folder. Only used when the folder
+# is not the shared default — see `aux_destination`.
+AUX_FOLDER_NAME = "localmusic-aux"
 
 
 class LibraryError(Exception):
@@ -60,6 +81,24 @@ class RepoOnDisk:
         return {"repo_id": self.repo_id, "path": self.path, "bytes": self.bytes,
                 "state": "installed" if self.installed else "partial",
                 "model_ids": sorted(self.model_ids)}
+
+
+@dataclass
+class DirOnDisk:
+    """One directory in a root we own outright — an aux cache directory, or a
+    ModelScope repo. No install marker and so no installed/partial split: the
+    adapter that fetched it is the only thing that knows what "complete" means
+    for it, and every byte counts either way."""
+
+    name: str
+    path: str
+    bytes: int
+    #: The user's own files (AUX_KEPT_DIRS), which a clear must not take.
+    kept: bool = False
+
+    def info(self) -> dict:
+        return {"name": self.name, "path": self.path, "bytes": self.bytes,
+                "kept": self.kept}
 
 
 def dir_bytes(path: str) -> int:
@@ -103,6 +142,14 @@ class LibraryManager:
     def root(self) -> str:
         return self.registry.settings.hf_cache_dir
 
+    @property
+    def aux_root(self) -> str:
+        return self.registry.settings.aux_cache_dir
+
+    @property
+    def ms_root(self) -> str:
+        return self.registry.settings.ms_cache_dir
+
     def _repo_owners(self) -> dict[str, list[str]]:
         """repo_id -> the catalog entries that want it. This mapping is the
         whole definition of "ours"; anything not in it is someone else's."""
@@ -127,6 +174,51 @@ class LibraryManager:
                                   installed=installed, model_ids=model_ids))
         return out
 
+    def aux_dirs_on_disk(self) -> list[DirOnDisk]:
+        """Aux directories that actually have bytes. Scanned by name rather
+        than by listing the root: an unlisted directory there is not something
+        we put in it, and this is the same "ours is what the code names" line
+        the Hugging Face side holds.
+
+        Both kinds are returned — engine caches and the user's kept files —
+        because both are counted and both move. Only the clear tells them
+        apart.
+        """
+        out = []
+        for name in sorted(AUX_DIRS + AUX_KEPT_DIRS):
+            path = os.path.join(self.aux_root, name)
+            if not os.path.isdir(path):
+                continue
+            size = dir_bytes(path)
+            if size == 0 and not os.listdir(path):
+                continue
+            out.append(DirOnDisk(name=name, path=path, bytes=size,
+                                 kept=name in AUX_KEPT_DIRS))
+        return out
+
+    def ms_dirs_on_disk(self) -> list[DirOnDisk]:
+        """ModelScope repos of ours with bytes on disk."""
+        out = []
+        seen: set[str] = set()
+        for model in self.registry.models.values():
+            for repo in self.registry.ms_repos(model):
+                repo_id = repo["repo_id"]
+                if repo_id in seen:
+                    continue
+                seen.add(repo_id)
+                path = self.registry.ms_repo_dir(repo_id)
+                if not os.path.isdir(path):
+                    continue
+                size = dir_bytes(path)
+                if size == 0 and not os.listdir(path):
+                    continue
+                out.append(DirOnDisk(name=repo_id, path=path, bytes=size))
+        return sorted(out, key=lambda d: d.name)
+
+    def _aux_inside_library(self) -> bool:
+        root = os.path.realpath(self.root)
+        return os.path.realpath(self.aux_root).startswith(root + os.sep)
+
     def info(self) -> dict:
         """Everything the Settings group draws, in one request.
 
@@ -134,10 +226,20 @@ class LibraryManager:
         the two differ by whatever other Hugging Face tooling has cached there,
         and a single "size" figure that silently disagrees with the Finder is
         the kind of number people stop trusting. Naming both explains the gap.
+
+        `bytes` and `folder_bytes` stay scoped to the Hugging Face folder for
+        the same reason — they exist to explain that gap, and there is no gap
+        to explain in a root we own. The other two roots are reported beside
+        them, and `total_bytes` is the honest answer to "how much disk is this
+        app's models".
         """
         repos = self.repos_on_disk()
         installed = [r for r in repos if r.installed]
         partial = [r for r in repos if not r.installed]
+        aux = self.aux_dirs_on_disk()
+        ms = self.ms_dirs_on_disk()
+        aux_bytes = sum(d.bytes for d in aux)
+        ms_bytes = sum(d.bytes for d in ms)
         try:
             usage = shutil.disk_usage(_nearest_existing(self.root))
             total, free = usage.total, usage.free
@@ -159,6 +261,18 @@ class LibraryManager:
             "disk_total_bytes": total,
             "disk_free_bytes": free,
             "repos": [r.info() for r in repos],
+            # Roots we own outright. Every byte in them is ours, so there is no
+            # `folder_bytes` counterpart to report.
+            "aux": {"path": self.aux_root, "bytes": aux_bytes,
+                    # After a relocate the aux root sits inside the library
+                    # folder, so `folder_bytes` counts it. Without this flag a
+                    # client subtracting ours from the folder would draw our
+                    # own weights as another tool's.
+                    "in_library_folder": self._aux_inside_library(),
+                    "dirs": [d.info() for d in aux]},
+            "modelscope": {"path": self.ms_root, "bytes": ms_bytes,
+                           "dirs": [d.info() for d in ms]},
+            "total_bytes": sum(r.bytes for r in repos) + aux_bytes + ms_bytes,
             "operation": self.operation,
         }
 
@@ -169,6 +283,11 @@ class LibraryManager:
         cache folder leaves it standing over nothing, and the symptom is a job
         that fails inside a worker rather than a Download button. This is the
         cheap way to ask the question on purpose.
+
+        Aux directories are deliberately absent: they carry no install marker,
+        because nothing downloads them ahead of time. Only the adapter that
+        fetches one knows what a complete `torch-cache` looks like, and a check
+        that guessed would report problems that are not problems.
         """
         findings = []
         for model_id, model in sorted(self.registry.models.items()):
@@ -269,30 +388,47 @@ class LibraryManager:
         `scope` is "all", or "partial" for the interrupted downloads alone —
         reclaiming those is a different decision from throwing away working
         models, and the one people reach for first.
+
+        "all" reaches into the aux and ModelScope roots too. Both are ours
+        outright, so there is no shared-folder question to weigh — and a clear
+        that left them would leave the largest single directory on some
+        installs (`msst-weights`) sitting behind a zero.
         """
         if scope not in ("all", "partial"):
             raise LibraryError(422, "VALIDATION",
                                'scope must be "all" or "partial"')
         repos = self.repos_on_disk()
+        aux: list[DirOnDisk] = []
+        ms: list[DirOnDisk] = []
         if scope == "partial":
+            # Aux directories have no partial state to reclaim (no marker, no
+            # notion of a finished download), so this scope stays HF-only.
             repos = [r for r in repos if not r.installed]
-        if not repos:
+        else:
+            aux = [d for d in self.aux_dirs_on_disk() if not d.kept]
+            ms = self.ms_dirs_on_disk()
+        if not repos and not aux and not ms:
             raise LibraryError(
                 409, "LIBRARY_EMPTY",
                 "there are no unfinished downloads in this folder"
                 if scope == "partial"
-                else "there is nothing of ours in this folder")
-        total = sum(r.bytes for r in repos)
+                else "there is nothing of ours to remove")
+        total = sum(r.bytes for r in repos) + sum(d.bytes for d in aux + ms)
+        count = len(repos) + len(aux) + len(ms)
 
         def run(op: dict) -> None:
-            self._clear(op, repos)
+            self._clear(op, repos, aux + ms)
 
         return self._start("clear", run,
                            {"bytes_total": total, "scope": scope,
-                            "message": f"removing {len(repos)} repositories",
-                            "repo_count": len(repos)})
+                            "message": f"removing {count} directories",
+                            "repo_count": len(repos),
+                            "dir_count": len(aux) + len(ms)})
 
-    def _clear(self, op: dict, repos: list[RepoOnDisk]) -> None:
+    def _clear(self, op: dict, repos: list[RepoOnDisk],
+               dirs: list[DirOnDisk] | None = None) -> int:
+        """Returns the byte count reached, so a relocate that clears and then
+        moves can run both halves on one progress bar."""
         done = 0
         removed = []
         outstanding = {r.repo_id: r for r in repos}
@@ -342,11 +478,46 @@ class LibraryManager:
                 self.registry.clear_attempt(model_id)
             done += repo.bytes
             del outstanding[repo.repo_id]
+        # Last, the roots we own outright. No marker to clear and no model to
+        # tell about it: the directory is the whole of the state.
+        for d in dirs or []:
+            if self._cancel.is_set():
+                break
+            self._progress(op, done, f"removing {d.name}")
+            shutil.rmtree(d.path, ignore_errors=True)
+            done += d.bytes
         self._progress(op, done, "done")
         op["removed_model_ids"] = removed
         op["canceled"] = self._cancel.is_set()
+        return done
 
     # MARK: relocate
+
+    def aux_destination(self, dest: str) -> str:
+        """Where the aux root goes when the library moves to `dest`.
+
+        Inside the chosen folder, so one pick puts every weight this app
+        downloads in one place — except when the pick is the shared
+        `~/.cache/huggingface`, where a directory of ours would be litter in
+        someone else's folder. That case goes back to the data dir, which is
+        also the default, so "put it back where it was" needs no special case.
+        """
+        settings = self.registry.settings
+        shared = os.path.realpath(os.path.expanduser("~/.cache/huggingface"))
+        if os.path.realpath(dest) == shared:
+            return os.path.join(settings.data_dir, "aux-cache")
+        return os.path.join(dest, AUX_FOLDER_NAME)
+
+    def _probe_writable(self, path: str) -> None:
+        try:
+            os.makedirs(path, exist_ok=True)
+            probe = os.path.join(path, ".localmusic-write-test")
+            with open(probe, "w") as f:
+                f.write("")
+            os.unlink(probe)
+        except OSError as e:
+            raise LibraryError(422, "VALIDATION",
+                               f"cannot write to {path}: {e}") from None
 
     def start_relocate(self, dest: str, disposition: str) -> dict:
         if disposition not in DISPOSITIONS:
@@ -360,35 +531,58 @@ class LibraryManager:
         if os.path.realpath(dest).startswith(src_root + os.sep):
             raise LibraryError(422, "VALIDATION",
                                "the new folder cannot be inside the old one")
-        try:
-            os.makedirs(dest, exist_ok=True)
-            probe = os.path.join(dest, ".localmusic-write-test")
-            with open(probe, "w") as f:
-                f.write("")
-            os.unlink(probe)
-        except OSError as e:
-            raise LibraryError(422, "VALIDATION",
-                               f"cannot write to {dest}: {e}") from None
+        aux_dest = self.aux_destination(dest)
+        aux_src = os.path.realpath(self.aux_root)
+        if os.path.realpath(aux_dest).startswith(aux_src + os.sep):
+            raise LibraryError(
+                422, "VALIDATION",
+                "the new folder cannot be inside the auxiliary cache")
+        self._probe_writable(dest)
+        if os.path.realpath(aux_dest) != aux_src:
+            self._probe_writable(aux_dest)
 
-        repos = self.repos_on_disk() if disposition != "leave" else []
+        moving = disposition != "leave"
+        repos = self.repos_on_disk() if moving else []
+        all_aux = self.aux_dirs_on_disk()
+        # The user's own files always travel. "Delete them" and "leave them
+        # where they are" are decisions about weights that can be fetched
+        # again; neither is a decision anyone means to make about a collection
+        # they curated, and a library that arrived without it would look empty.
+        kept = [d for d in all_aux if d.kept]
+        plain = [d for d in all_aux if not d.kept] if moving else []
+        aux = kept + (plain if disposition == "move" else [])
+        # ModelScope weights are not in the folder being left behind — they
+        # live in the data dir and stay there — so no disposition touches them.
         total = sum(r.bytes for r in repos)
-        if disposition == "move" and total:
-            free = shutil.disk_usage(dest).free
-            same_volume = os.stat(dest).st_dev == os.stat(
-                _nearest_existing(self.root)).st_dev
-            # A same-volume move is a rename and costs no space at all; only a
-            # real copy has to fit.
-            if not same_volume and free < total:
-                raise LibraryError(
-                    409, "INSUFFICIENT_DISK",
-                    f"moving needs {total >> 30} GB and that disk has "
-                    f"{free >> 30} GB free")
+        aux_total = sum(d.bytes for d in kept + plain)
+        if disposition == "move":
+            # Each root is checked against its own destination: they can be on
+            # different volumes, and a same-volume move is a rename that costs
+            # no space at all — only a real copy has to fit.
+            for label, size, to, frm in (
+                    ("moving", total, dest, self.root),
+                    ("moving the auxiliary cache", aux_total, aux_dest,
+                     self.aux_root)):
+                if not size:
+                    continue
+                if os.stat(_nearest_existing(to)).st_dev == os.stat(
+                        _nearest_existing(frm)).st_dev:
+                    continue
+                free = shutil.disk_usage(_nearest_existing(to)).free
+                if free < size:
+                    raise LibraryError(
+                        409, "INSUFFICIENT_DISK",
+                        f"{label} needs {size >> 30} GB and that disk has "
+                        f"{free >> 30} GB free")
         # restart_required is stated in the plan, not on success: the engine
         # reads HF_HOME once at launch, so a relocate that fell over halfway
         # needs the restart *more* than one that finished — some repos are at
         # the destination and the client has to point there to see them.
-        plan = {"bytes_total": total, "destination": dest,
+        plan = {"bytes_total": total + aux_total, "destination": dest,
+                "aux_destination": aux_dest,
                 "disposition": disposition, "repo_count": len(repos),
+                "dir_count": len(aux),
+                "kept_dir_count": len(kept),
                 "restart_required": True,
                 "message": {"move": "moving models",
                             "delete": "removing models from the old folder",
@@ -396,57 +590,86 @@ class LibraryManager:
                             }[disposition]}
 
         def run(op: dict) -> None:
-            if disposition == "move":
-                self._move(op, repos, dest)
-            elif disposition == "delete":
-                self._clear(op, repos)
+            done = 0
+            if disposition == "delete":
+                done = self._clear(op, repos, plain)
+            if disposition == "move" or kept:
+                # For delete and leave this carries the kept directories alone,
+                # picking up the byte count the clear left off at so the bar
+                # does not walk backwards.
+                self._move(op, repos if disposition == "move" else [], dest,
+                           aux, aux_dest, done=done)
 
         return self._start("relocate", run, plan)
 
-    def _move(self, op: dict, repos: list[RepoOnDisk], dest: str) -> None:
+    def _move(self, op: dict, repos: list[RepoOnDisk], dest: str,
+              aux: list[DirOnDisk] | None = None,
+              aux_dest: str | None = None, done: int = 0) -> int:
         hub = os.path.join(dest, "hub")
         os.makedirs(hub, exist_ok=True)
-        done = 0
         moved, skipped = [], []
-        for repo in repos:
-            if self._cancel.is_set():
-                break
-            target = os.path.join(hub, os.path.basename(repo.path))
-            self._progress(op, done, f"moving {repo.repo_id}")
+
+        def relocate(src: str, target: str, label: str, size: int) -> None:
+            """One directory, renamed if we can and copied if we must."""
+            nonlocal done
+            self._progress(op, done, f"moving {label}")
             try:
                 if not os.path.exists(target):
                     # Same volume: a rename is the whole move, instantly, with
                     # the blob/symlink structure intact. Across volumes this
                     # raises EXDEV and we pay for the copy below.
                     try:
-                        os.rename(repo.path, target)
-                        done += repo.bytes
-                        moved.append(repo.repo_id)
-                        continue
+                        os.rename(src, target)
+                        done += size
+                        moved.append(label)
+                        return
                     except OSError:
                         pass
-                done = self._copy_repo(op, repo, target, done)
-                shutil.rmtree(repo.path, ignore_errors=True)
-                moved.append(repo.repo_id)
-            except Exception:  # noqa: BLE001 — report the repo, keep the rest going
-                skipped.append(repo.repo_id)
-                done += repo.bytes
+                done = self._copy_tree(op, src, label, target, done)
+                shutil.rmtree(src, ignore_errors=True)
+                moved.append(label)
+            except Exception:  # noqa: BLE001 — report it, keep the rest going
+                skipped.append(label)
+                done += size
+
+        for repo in repos:
+            if self._cancel.is_set():
+                break
+            relocate(repo.path, os.path.join(hub, os.path.basename(repo.path)),
+                     repo.repo_id, repo.bytes)
+        # The aux root travels as its directories, not as one tree: the
+        # destination can already hold some of them from an earlier stint in
+        # that folder, and per-directory is what makes that a merge rather
+        # than a collision.
+        if aux and aux_dest:
+            os.makedirs(aux_dest, exist_ok=True)
+            for d in aux:
+                if self._cancel.is_set():
+                    break
+                relocate(d.path, os.path.join(aux_dest, d.name), d.name,
+                         d.bytes)
         self._progress(op, done, "done")
         op["moved_repo_ids"] = moved
         op["skipped_repo_ids"] = skipped
         op["canceled"] = self._cancel.is_set()
+        return done
 
-    def _copy_repo(self, op: dict, repo: RepoOnDisk, target: str,
+    def _copy_tree(self, op: dict, src: str, label: str, target: str,
                    done: int) -> int:
-        """Copy one repo across volumes, symlinks kept as symlinks.
+        """Copy one directory across volumes, symlinks kept as symlinks.
 
         `copytree` would do this in a line, but it is opaque: a 57 GB repo
         would sit at the same percentage for twenty minutes. Walking it here
         buys a byte count — and buys the merge, for a destination that already
-        holds some of this repo from a previous stint in that folder.
+        holds some of this directory from a previous stint in that folder.
+
+        Symlinks are preserved for two reasons now: a cached repo is `blobs/`
+        plus a `snapshots/` tree of links into it, and the aux root holds at
+        least one link that points outside itself (InspireMusic's, into the
+        Hugging Face snapshot). Copying either as files would be wrong.
         """
-        for root, dirs, files in os.walk(repo.path, followlinks=False):
-            rel = os.path.relpath(root, repo.path)
+        for root, dirs, files in os.walk(src, followlinks=False):
+            rel = os.path.relpath(root, src)
             out_root = target if rel == "." else os.path.join(target, rel)
             os.makedirs(out_root, exist_ok=True)
             for d in dirs:
@@ -473,7 +696,7 @@ class LibraryManager:
                     continue
                 shutil.copy2(src, dst)
                 done += size
-                self._progress(op, done, f"moving {repo.repo_id}")
+                self._progress(op, done, f"moving {label}")
         return done
 
 

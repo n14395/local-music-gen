@@ -2956,23 +2956,28 @@ NEW_ENTRIES = [
     task_entry(
         "reamp-nam", "nam", [],
         "Re-amp (Neural Amp Modeler)",
-        "Run any track through a captured amp, pedal or full rig. The "
-        "capture is a .nam file you pick per job — tone3000.com hosts "
-        "hundreds of thousands, free — and the render is 26× faster than "
-        "realtime. The de-facto standard for amp capture.",
+        "Run any track through a captured amp, pedal or full rig. Captures "
+        "come from tone3000.com — hundreds of thousands of them, free — and "
+        "the ones you download are kept in your library, so the rig you used "
+        "last time is one click away. The render is 26× faster than realtime. "
+        "The de-facto standard for amp capture.",
         task_caps(["reamp"], [
             source_audio_param("The track to re-amp — a DI guitar or a "
                                "separated stem responds best"),
             {"key": "nam_file", "type": "audio", "label": "Amp capture (.nam)",
              "default": None, "nullable": False,
-             "help": "A Neural Amp Modeler capture file. Download one from "
-                     "tone3000.com (or capture your own rig with NAM's "
-                     "trainer) and pick it here"},
+             "help": "The captured rig to play through. Choose one you have "
+                     "already downloaded, search TONE3000 for a new one, or "
+                     "add a .nam file of your own — including a capture you "
+                     "made yourself with NAM's trainer"},
         ], est_realtime_factor=0.05),
         4, "fast", MIT, size_hint_bytes=5_000_000,
-        notes="The NAM runtime is MIT; each capture carries its own terms "
-              "on the site it came from. Captures are tiny (KB–MB) and are "
-              "not stored by the app — they ride the job."),
+        notes="The NAM runtime is MIT; each capture carries its own terms on "
+              "the site it came from, and the app keeps the author and "
+              "licence beside every capture it stores. Captures are tiny "
+              "(KB–MB) and are kept in the model library's auxiliary folder — "
+              "counted with your models and moved with them, but never "
+              "removed by a clear."),
     # ---- Voice: seed-vc zero-shot conversion (task `convert-voice`) -------
     task_entry(
         "convert-voice-seedvc", "seedvc", [],

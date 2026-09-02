@@ -388,6 +388,26 @@ final class AppSettings {
         didSet { setOrRemove(hfHomePath, "settings.engine.hfHome") }
     }
 
+    /// Root for weights the engine's adapters fetch themselves — separators,
+    /// timbre models, soundfonts (`LOCALMUSIC_AUX_CACHE`); nil = the engine's
+    /// own default inside its data dir. Set by a relocate, never typed in: it
+    /// travels with `hfHomePath` and the engine is what decides where to.
+    var auxCachePath: String? {
+        didSet { setOrRemove(auxCachePath, "settings.engine.auxCache") }
+    }
+
+    /// The auxiliary root as a URL, resolving nil the way the engine does.
+    ///
+    /// The app needs this synchronously — the capture picker opens long before
+    /// anyone has asked `/v1/models/library` where the root is — and it is the
+    /// same value that reaches the engine as `LOCALMUSIC_AUX_CACHE`, so the
+    /// two cannot disagree.
+    var auxCacheURL: URL {
+        auxCachePath.map { URL(fileURLWithPath: $0) }
+            ?? StoragePaths.engineData.appendingPathComponent("aux-cache",
+                                                              isDirectory: true)
+    }
+
     var engineLogLevel: String {
         didSet { defaults.set(engineLogLevel, forKey: "settings.engine.logLevel") }
     }
@@ -420,6 +440,7 @@ final class AppSettings {
             smallModelBytes: smallModelBytes,
             maxActiveDownloads: maxActiveDownloads,
             hfHome: hfHomePath,
+            auxCache: auxCachePath,
             logLevel: engineLogLevel,
             outputsRetentionDays: engineFileRetentionDays)
     }
@@ -542,6 +563,7 @@ final class AppSettings {
         maxActiveDownloads = defaults
             .object(forKey: "settings.engine.maxDownloads") as? Int ?? 1
         hfHomePath = defaults.string(forKey: "settings.engine.hfHome")
+        auxCachePath = defaults.string(forKey: "settings.engine.auxCache")
         engineLogLevel = defaults.string(forKey: "settings.engine.logLevel")
             ?? "info"
         engineFileRetentionDays = defaults
@@ -650,6 +672,7 @@ final class AppSettings {
         memGuardPercent = 90
         maxActiveDownloads = 1
         hfHomePath = nil
+        auxCachePath = nil
         engineLogLevel = "info"
         engineFileRetentionDays = 14
         backupsCapGB = 0

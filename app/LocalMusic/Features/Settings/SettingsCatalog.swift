@@ -262,6 +262,9 @@ enum SettingsCatalog {
     @MainActor static let models: [SettingEntry] = [
         .of("hfHomePath", .models, "Model library folder", \.hfHomePath,
             default: nil, keywords: "cache hugging face weights folder path"),
+        .of("auxCachePath", .models, "Auxiliary model files folder",
+            \.auxCachePath, default: nil,
+            keywords: "aux auxiliary cache separators soundfonts folder path"),
     ]
 
     // MARK: Queue

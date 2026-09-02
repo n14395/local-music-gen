@@ -22,7 +22,7 @@ import urllib.request
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 REPO_COMMIT = "d87d73aaa640a6d31fe85726562496998879f042"
 REPO_TARBALL = (f"https://github.com/dthinkr/MOSS-Music/archive/"
@@ -36,21 +36,13 @@ class MossMusicAdapter(ModelAdapter):
         self.processor = None
         self._generate = None
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "mossmusic")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _snapshot(self) -> str:
         if not self.model_paths:
             raise RuntimeError("model has no downloaded snapshot")
         return next(iter(self.model_paths.values()))
 
     def load(self, progress_cb: ProgressCb) -> None:
-        cache = self._cache_dir()
+        cache = aux_dir("mossmusic")
         repo = os.path.join(cache, f"MOSS-Music-{REPO_COMMIT}")
         if not os.path.isdir(repo):
             progress_cb(None, "fetching the MLX backend (pinned fork "

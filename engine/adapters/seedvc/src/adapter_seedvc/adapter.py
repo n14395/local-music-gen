@@ -31,7 +31,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 REPO_COMMIT = "51383efd921027683c89e5348211d93ff12ac2a8"
 REPO_TARBALL = (f"https://github.com/Plachtaa/seed-vc/archive/"
@@ -43,16 +43,8 @@ class SeedVCAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "seedvc")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def load(self, progress_cb: ProgressCb) -> None:
-        cache = self._cache_dir()
+        cache = aux_dir("seedvc")
         repo = os.path.join(cache, f"seed-vc-{REPO_COMMIT}")
         if not os.path.isdir(repo):
             progress_cb(None, "fetching seed-vc (pinned GitHub snapshot, "

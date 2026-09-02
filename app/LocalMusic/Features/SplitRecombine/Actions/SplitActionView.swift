@@ -16,6 +16,7 @@ struct SplitActionView: View {
     let note: String
     let sourceId: String?
     let settings: AppSettings
+    let tones: ToneLibraryStore
     let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
@@ -39,7 +40,8 @@ struct SplitActionView: View {
     @State private var alsoAnalyse = false
     @State private var alsoTranscribe = false
     @State private var submitting = false
-    @State private var browsingT3K = false
+    /// The capture picker, for the one task that takes a `.nam`.
+    @State private var choosingCapture = false
     /// The kinds the chosen model has produced before — see
     /// `refreshPriorKinds`, which reads the whole parts table to answer it.
     ///
@@ -174,10 +176,12 @@ struct SplitActionView: View {
                 }
             }
         }
-        .sheet(isPresented: $browsingT3K) {
-            Tone3000BrowseSheet(
-                onPick: { url in formState.audioSelections["nam_file"] = url },
-                onOpenSettings: nil)
+        .sheet(isPresented: $choosingCapture) {
+            CapturePickerSheet(library: tones) { url, title in
+                formState.audioSelections["nam_file"] = url
+                // The slot shows the gear, not `t3k-8814-Fender Deluxe.nam`.
+                formState.audioSelectionNames["nam_file"] = title
+            }
         }
     }
 
@@ -193,19 +197,18 @@ struct SplitActionView: View {
                                       catalog: catalog, library: library,
                                       parts: parts, jobs: jobs,
                                       playback: playback,
-                                      onOpenModels: onOpenModels))
-            }
-            // The re-amp card's capture slot can be filled from TONE3000
-            // in place — the sheet downloads the .nam into the same
-            // `nam_file` selection the file picker sets.
-            if task == "reamp" {
-                Button("Browse TONE3000…") { browsingT3K = true }
-                    .buttonStyle(.benchSecondary)
-                    .help(Tone3000Store.hasKey
-                          ? "Search tone3000.com's captures and drop one "
-                            + "straight into the capture slot"
-                          : "Add your TONE3000 API key in Settings › "
-                            + "Models to browse captures here")
+                                      onOpenModels: onOpenModels),
+                                  // The capture slot opens the app's own
+                                  // library of .nam files rather than a file
+                                  // panel: captures are downloaded and kept,
+                                  // not files anyone kept in Finder.
+                                  customPicker: { spec in
+                                      guard spec.key == "nam_file" else {
+                                          return false
+                                      }
+                                      choosingCapture = true
+                                      return true
+                                  })
             }
             ActionFootnote(text: note)
             // Compose reads a MIDI file — the "also" jobs would hand an

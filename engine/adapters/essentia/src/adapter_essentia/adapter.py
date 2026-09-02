@@ -18,7 +18,7 @@ import urllib.request
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 BASE = "https://essentia.upf.edu/models"
 EMBED_PB = "discogs-effnet-bs64-1.pb"
@@ -77,14 +77,6 @@ class EssentiaAdapter(ModelAdapter):
         self.embed = None
         self.heads: dict[str, tuple] = {}
 
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "essentia-models")
-        os.makedirs(d, exist_ok=True)
-        return d
-
     def _wanted_heads(self) -> list[str]:
         wanted = self.settings.get("heads") or list(HEADS)
         unknown = [h for h in wanted if h not in HEADS]
@@ -107,7 +99,7 @@ class EssentiaAdapter(ModelAdapter):
         os.replace(part, dest)
 
     def load(self, progress_cb: ProgressCb) -> None:
-        cache = self._cache_dir()
+        cache = aux_dir("essentia-models")
         self._fetch(EMBED_URL, os.path.join(cache, EMBED_PB), progress_cb)
         for name in self._wanted_heads():
             pb_url, pb_name, meta_name = _head_files(name)
@@ -154,7 +146,7 @@ class EssentiaAdapter(ModelAdapter):
         # cache it keyed on (path, size, mtime) so re-tagging — and the
         # batch card sweeping a library twice — skips straight to the heads.
         st = os.stat(src)
-        emb_cache = os.path.join(self._cache_dir(), "embeddings")
+        emb_cache = os.path.join(aux_dir("essentia-models"), "embeddings")
         os.makedirs(emb_cache, exist_ok=True)
         import hashlib
         digest = hashlib.sha1(

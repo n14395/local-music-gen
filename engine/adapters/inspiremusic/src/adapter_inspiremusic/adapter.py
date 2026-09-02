@@ -38,7 +38,8 @@ import urllib.request
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter,
+                                     ProgressCb, aux_dir)
 
 MODEL_NAME = "InspireMusic-1.5B-Long"
 REPO_COMMIT = "0aefb55b58b8df91accdc4aed20c99e44741e0a7"
@@ -80,14 +81,6 @@ class InspireMusicAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.model = None
-
-    def _cache_dir(self) -> str:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
-        d = os.path.join(base, "inspiremusic")
-        os.makedirs(d, exist_ok=True)
-        return d
 
     def _snapshot(self) -> str:
         # By needle, not exact id: the weights moved from ModelScope
@@ -193,7 +186,7 @@ class InspireMusicAdapter(ModelAdapter):
         im_model.InspireMusicModel.llm_job = patched_llm_job
 
     def load(self, progress_cb: ProgressCb) -> None:
-        cache = self._cache_dir()
+        cache = aux_dir("inspiremusic")
         repo = os.path.join(cache, f"FunMusic-{REPO_COMMIT}")
         if not os.path.isdir(repo):
             _fetch_tar(REPO_TARBALL, cache, progress_cb,
@@ -217,7 +210,13 @@ class InspireMusicAdapter(ModelAdapter):
         models_dir = os.path.join(cache, "work", "pretrained_models")
         os.makedirs(models_dir, exist_ok=True)
         link = os.path.join(models_dir, MODEL_NAME)
+        # This link crosses from the aux cache into the HF snapshot, and the
+        # two roots move independently — a library relocate leaves it dangling.
+        # `os.path.exists` follows the link, so a dangling one reads as absent;
+        # the unlink is what stops the re-create from raising EEXIST.
         if not os.path.exists(link):
+            if os.path.islink(link):
+                os.unlink(link)
             os.symlink(self._snapshot(), link)
 
         for path in (repo, matcha):

@@ -1731,6 +1731,24 @@ async def shutdown():
 
 
 LIBRARY_ROOT = os.path.expanduser("~/.cache/huggingface")
+# The two roots the engine owns outright (contract 4.4). Simulated like the
+# rest: fixed directories with fixed sizes, so a client draws the "also ours"
+# row and the move/clear sheets list something.
+AUX_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusic/aux-cache")
+MS_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusic/ms-cache")
+AUX_DIRS_STUB = [("msst-weights", 3_800_000_000, False),
+                 ("torch-cache", 440_000_000, False),
+                 ("localmusic-soundfonts", 148_000_000, False),
+                 # AUX_KEPT_DIRS: the user's own amp captures. Counted and
+                 # moved, never cleared — a client that ignores `kept` will
+                 # promise to delete these and then not.
+                 ("tone3000-tones", 41_000_000, True)]
+
+
+def _library_dirs():
+    """The aux root's contents, as `/v1/models/library` reports them."""
+    return [{"name": name, "path": os.path.join(AUX_ROOT, name), "bytes": n,
+             "kept": kept} for name, n, kept in AUX_DIRS_STUB]
 
 
 def _library_repos():
@@ -1757,6 +1775,7 @@ def _library_repos():
 @app.get("/v1/models/library")
 async def library_info():
     repos = _library_repos()
+    aux = _library_dirs()
     ours = sum(r["bytes"] for r in repos)
     installed = sum(r["bytes"] for r in repos if r["state"] == "installed")
     usage = shutil.disk_usage(os.path.expanduser("~"))
@@ -1775,6 +1794,15 @@ async def library_info():
         "disk_total_bytes": usage.total,
         "disk_free_bytes": usage.free,
         "repos": repos,
+        "aux": {"path": AUX_ROOT, "bytes": sum(d["bytes"] for d in aux),
+                # The stub's library folder is the shared default, where the
+                # aux root deliberately sits outside it.
+                "in_library_folder": False, "dirs": aux},
+        # Empty, which is the honest simulation: no catalog entry ships
+        # `ms_repos` today.
+        "modelscope": {"path": MS_ROOT, "bytes": 0,
+                       "in_library_folder": False, "dirs": []},
+        "total_bytes": ours + sum(d["bytes"] for d in aux),
         "operation": STATE.library_operation,
     }
 
@@ -1843,14 +1871,18 @@ async def library_clear(body: dict | None = None):
         return err(422, "VALIDATION", 'scope must be "all" or "partial"')
     repos = [r for r in _library_repos()
              if scope == "all" or r["state"] == "partial"]
-    if not repos:
+    dirs = [d for d in _library_dirs()
+            if not d["kept"]] if scope == "all" else []
+    if not repos and not dirs:
         return err(409, "LIBRARY_EMPTY",
                    "there are no unfinished downloads in this folder"
                    if scope == "partial"
-                   else "there is nothing of ours in this folder")
+                   else "there is nothing of ours to remove")
+    total = sum(r["bytes"] for r in repos) + sum(d["bytes"] for d in dirs)
     started = _start_library_operation(
-        "clear", bytes_total=sum(r["bytes"] for r in repos), scope=scope,
-        message=f"removing {len(repos)} repositories", repo_count=len(repos))
+        "clear", bytes_total=total, scope=scope,
+        message=f"removing {len(repos) + len(dirs)} directories",
+        repo_count=len(repos), dir_count=len(dirs))
     if started is None:
         return err(409, "LIBRARY_BUSY", "a library operation is already running")
     return started
@@ -1870,10 +1902,19 @@ async def library_relocate(body: dict):
             == os.path.abspath(os.path.expanduser(LIBRARY_ROOT))):
         return err(422, "VALIDATION", "that is already the library folder")
     repos = [] if disposition == "leave" else _library_repos()
+    # Kept directories travel whatever the disposition says.
+    dirs = (_library_dirs() if disposition != "leave"
+            else [d for d in _library_dirs() if d["kept"]])
+    dest = os.path.abspath(os.path.expanduser(path))
+    # The engine's rule: inside the chosen folder, except when that folder is
+    # the shared Hugging Face cache, where our own directories would be litter.
+    aux_dest = (AUX_ROOT if dest == os.path.abspath(LIBRARY_ROOT)
+                else os.path.join(dest, "localmusic-aux"))
     started = _start_library_operation(
-        "relocate", bytes_total=sum(r["bytes"] for r in repos),
-        message="moving models", destination=os.path.abspath(path),
-        disposition=disposition, repo_count=len(repos),
+        "relocate",
+        bytes_total=sum(r["bytes"] for r in repos) + sum(d["bytes"] for d in dirs),
+        message="moving models", destination=dest, aux_destination=aux_dest,
+        disposition=disposition, repo_count=len(repos), dir_count=len(dirs),
         restart_required=True)
     if started is None:
         return err(409, "LIBRARY_BUSY", "a library operation is already running")

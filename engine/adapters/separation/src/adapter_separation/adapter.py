@@ -21,17 +21,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
-
-
-def _engine_cache_dir(name: str) -> str:
-    """A per-tool cache directory inside the engine-owned data dir (sibling of
-    hf-cache, which the worker env always sets)."""
-    hf_home = os.environ.get("HF_HOME")
-    base = os.path.dirname(hf_home) if hf_home else os.path.expanduser("~/.cache")
-    d = os.path.join(base, name)
-    os.makedirs(d, exist_ok=True)
-    return d
+                                     TaskResult, aux_dir, clear_stale_link)
 
 
 class SeparationAdapter(ModelAdapter):
@@ -45,7 +35,7 @@ class SeparationAdapter(ModelAdapter):
 
     def load(self, progress_cb: ProgressCb) -> None:
         # Demucs consults TORCH_HOME for its checkpoint cache.
-        os.environ.setdefault("TORCH_HOME", _engine_cache_dir("torch-cache"))
+        os.environ.setdefault("TORCH_HOME", aux_dir("torch-cache"))
         progress_cb(None, "separation runtime ready")
 
     def generate(self, prompt, lyrics, params, out_path, progress_cb,
@@ -134,7 +124,7 @@ class SeparationAdapter(ModelAdapter):
         from audio_separator.separator import Separator
 
         checkpoint = self.settings["checkpoint"]
-        model_dir = _engine_cache_dir("audio-separator-models")
+        model_dir = aux_dir("audio-separator-models")
         # If the catalog entry ships the checkpoint via HF snapshots, stage the
         # files into the model dir so audio-separator skips its own (fragile,
         # non-resuming) GitHub download. settings["stage_as"] maps snapshot
@@ -144,6 +134,7 @@ class SeparationAdapter(ModelAdapter):
             for root, _dirs, files in os.walk(snap):
                 for f in files:
                     dst = os.path.join(model_dir, stage_as.get(f, f))
+                    clear_stale_link(dst)   # a library move strands this link
                     if not os.path.exists(dst):
                         try:
                             os.symlink(os.path.join(root, f), dst)

@@ -23,7 +23,8 @@ import threading
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult, UnstoppableWorkError)
+                                     TaskResult, UnstoppableWorkError,
+                                     clear_stale_link)
 
 # How often the cancel token is checked while generate_music runs. Short enough
 # that the button feels connected, long enough to be free.
@@ -102,6 +103,7 @@ class ACEStepAdapter(ModelAdapter):
         for repo_id, snap in self.model_paths.items():
             if dit_repo and repo_id == dit_repo:
                 dst = os.path.join(ckpt, dit_config)
+                clear_stale_link(dst)   # a library move strands this link
                 if not os.path.exists(dst):
                     os.symlink(snap, dst)
         for repo_id, snap in self.model_paths.items():
@@ -109,6 +111,7 @@ class ACEStepAdapter(ModelAdapter):
                 continue
             for name in os.listdir(snap):
                 dst = os.path.join(ckpt, name)
+                clear_stale_link(dst)   # a library move strands this link
                 if not os.path.exists(dst):
                     os.symlink(os.path.join(snap, name), dst)
         _ = snapshot  # merged layout supersedes the single-snapshot path

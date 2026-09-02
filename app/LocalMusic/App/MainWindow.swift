@@ -483,7 +483,7 @@ struct MainWindow: View {
                                 onOpenModels: { openModels(for: $0) })
         case .actions:
             ActionsScreen(
-                settings: env.settings,
+                settings: env.settings, tones: env.toneLibrary,
                 catalog: env.catalog, library: env.library,
                 parts: env.partsStore, jobs: env.jobsStore,
                 playback: env.playback, workbench: env.workbench,

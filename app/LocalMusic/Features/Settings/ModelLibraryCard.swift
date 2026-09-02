@@ -61,7 +61,9 @@ struct ModelLibraryCard: View {
             if let error = store.lastError { banner(error, tone: .danger) }
             caption("Where model weights are kept. Sizes and every action here "
                     + "cover only the models in this app's catalog — anything "
-                    + "else in the folder is left alone.")
+                    + "else in the folder is left alone. Weights the app "
+                    + "downloads outside this folder are counted with it, and "
+                    + "travel with it when it moves.")
         }
         .padding(15)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,6 +141,21 @@ struct ModelLibraryCard: View {
                         .foregroundStyle(Bench.Palette.textFaint)
                 }
             }
+            if info.otherRootBytes > 0 {
+                BenchInfoRow(label: "Also ours", labelWidth: 86) {
+                    HStack(spacing: 8) {
+                        Text(ByteFormat.gb(info.otherRootBytes))
+                            .font(Bench.Typo.mono(12))
+                            .foregroundStyle(Bench.Palette.textPrimary)
+                        Text("separators, timbre models, soundfonts and other "
+                             + "weights the app fetches directly — kept "
+                             + "outside this folder, and moved with it")
+                            .font(Bench.Typo.caption)
+                            .foregroundStyle(Bench.Palette.textFaint)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
             if info.foreignBytes > 0 {
                 BenchInfoRow(label: "Other tools", labelWidth: 86) {
                     HStack(spacing: 8) {
@@ -177,11 +194,15 @@ struct ModelLibraryCard: View {
     /// Ours · everyone else's · free, on the disk the library sits on. The
     /// middle segment is why this bar exists: it is the visible answer to "why
     /// is this folder bigger than the number above it".
+    ///
+    /// "Ours" is `totalBytes`, not `bytes`: the auxiliary root is on this disk
+    /// too whenever it sits inside the library folder, and a bar that only
+    /// drew the Hugging Face share would under-report the app by gigabytes.
     @ViewBuilder
     private var usageBar: some View {
         if let info, let total = info.diskTotalBytes, total > 0 {
             BenchSplitBar(segments: [
-                (Double(info.bytes) / Double(total), Bench.Palette.accent),
+                (Double(info.totalBytes) / Double(total), Bench.Palette.accent),
                 (Double(info.foreignBytes) / Double(total),
                  Bench.Palette.accent.opacity(0.35)),
             ], height: 4)
@@ -230,8 +251,8 @@ struct ModelLibraryCard: View {
             }
             Button("Clear all models…") { clearing = true }
                 .buttonStyle(.bench(.destructive))
-                .disabled(info.map { $0.bytes == 0 } ?? true)
-                .opacity((info?.bytes ?? 0) == 0 ? 0.45 : 1)
+                .disabled(info.map { $0.totalBytes == 0 } ?? true)
+                .opacity((info?.totalBytes ?? 0) == 0 ? 0.45 : 1)
         }
     }
 
@@ -344,6 +365,40 @@ struct LibraryRepoList: View {
             }
             if repos.count > limit {
                 Text("and \(repos.count - limit) more")
+                    .font(Bench.Typo.caption)
+                    .foregroundStyle(Bench.Palette.textFaint)
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .benchCard(fill: Bench.Palette.well)
+    }
+}
+
+/// The same list for the roots we own outright — auxiliary caches and
+/// ModelScope repos. They have no installed/partial distinction to draw, so
+/// this is `LibraryRepoList` minus the badge rather than a variant of it.
+struct LibraryDirList: View {
+    let dirs: [LibraryRootDir]
+    var limit = 8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(dirs.prefix(limit)) { dir in
+                HStack(spacing: 8) {
+                    Text(dir.name)
+                        .font(Bench.Typo.mono(11))
+                        .foregroundStyle(Bench.Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Text(ByteFormat.gb(dir.bytes))
+                        .font(Bench.Typo.mono(11))
+                        .foregroundStyle(Bench.Palette.textMuted)
+                }
+            }
+            if dirs.count > limit {
+                Text("and \(dirs.count - limit) more")
                     .font(Bench.Typo.caption)
                     .foregroundStyle(Bench.Palette.textFaint)
             }

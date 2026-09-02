@@ -10,6 +10,8 @@ import SwiftUI
 /// page, and so leaving Actions and coming back does not lose your place.
 struct ActionsScreen: View {
     let settings: AppSettings
+    /// Amp captures kept on this Mac — the re-amp card's picker reads it.
+    let tones: ToneLibraryStore
     let catalog: ModelCatalogStore
     let library: LibraryStore
     let parts: PartsStore
@@ -499,7 +501,7 @@ struct ActionsScreen: View {
         case .split(let task, let note):
             SplitActionView(recipe: recipe, task: task, note: note,
                             sourceId: sourceId, settings: settings,
-                            catalog: catalog,
+                            tones: tones, catalog: catalog,
                             library: library, parts: parts, jobs: jobs,
                             playback: playback, onOpenModels: { onOpenModels(requirement(for: recipe)) },
                             onBack: back)

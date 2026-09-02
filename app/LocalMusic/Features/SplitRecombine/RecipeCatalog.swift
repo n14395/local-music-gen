@@ -1164,9 +1164,11 @@ enum RecipeCatalog {
                                 note: "Split a song to re-amp one "
                                     + "instrument alone"))],
                engine: .split(task: "reamp",
-                              note: "Pick a .nam capture file — thousands of "
-                                  + "real amps and pedals are captured at "
-                                  + "tone3000.com, free."),
+                              note: "Play the track through a captured rig. "
+                                  + "Choose one you have downloaded before, "
+                                  + "or search TONE3000 — hundreds of "
+                                  + "thousands of real amps and pedals, free. "
+                                  + "What you download is kept."),
                phase: 2),
         Recipe(id: "convert-voice",
                name: "Sing it in another voice",

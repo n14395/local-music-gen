@@ -21,6 +21,10 @@ struct EngineLaunchConfig: Equatable, Sendable {
     /// Model-weights cache root; nil = the engine's own resolution
     /// (inherited `HF_HOME`, else `~/.cache/huggingface`).
     var hfHome: String?
+    /// Root for weights the adapters fetch themselves; nil = the engine's own
+    /// resolution (`<data dir>/aux-cache`). Moves with `hfHome`, but not to
+    /// the same place — see the engine's `aux_destination`.
+    var auxCache: String?
     /// uvicorn log level: "info" | "debug" | "warning".
     var logLevel: String
     /// Days the engine keeps finished jobs' Outputs dirs; 0 = forever.
@@ -36,6 +40,7 @@ struct EngineLaunchConfig: Equatable, Sendable {
             "LOCALMUSIC_OUTPUTS_RETENTION_DAYS": String(outputsRetentionDays),
         ]
         if let hfHome { env["HF_HOME"] = hfHome }
+        if let auxCache { env["LOCALMUSIC_AUX_CACHE"] = auxCache }
         return env
     }
 

@@ -17,7 +17,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, aux_dir)
 
 from .render_midi import ensure_soundfont, render_midi
 
@@ -79,12 +79,8 @@ class TranscriptionAdapter(ModelAdapter):
         self._piano = None
 
     def load(self, progress_cb: ProgressCb) -> None:
-        hf_home = os.environ.get("HF_HOME")
-        base = (os.path.dirname(hf_home) if hf_home
-                else os.path.expanduser("~/.cache"))
         # mt3-infer reads/writes checkpoints here when no explicit path is given
-        os.environ.setdefault("MT3_CHECKPOINT_DIR",
-                              os.path.join(base, "mt3-checkpoints"))
+        os.environ.setdefault("MT3_CHECKPOINT_DIR", aux_dir("mt3-checkpoints"))
         progress_cb(None, "transcription toolkit ready")
 
     def generate(self, prompt, lyrics, params, out_path, progress_cb,
@@ -270,12 +266,8 @@ class TranscriptionAdapter(ModelAdapter):
              for snap in self.model_paths.values()
              if os.path.exists(os.path.join(snap, "note_pedal.pth"))), None)
         if checkpoint is None:
-            hf_home = os.environ.get("HF_HOME")
-            base = (os.path.dirname(hf_home) if hf_home
-                    else os.path.expanduser("~/.cache"))
-            cache = os.path.join(base, "bytedance-piano")
-            os.makedirs(cache, exist_ok=True)
-            checkpoint = os.path.join(cache, "note_pedal.pth")
+            checkpoint = os.path.join(aux_dir("bytedance-piano"),
+                                      "note_pedal.pth")
         if not os.path.exists(checkpoint):
             progress_cb(0.05, "fetching the piano model (172 MB, Zenodo — "
                               "first use only)")
