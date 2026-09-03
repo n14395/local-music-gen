@@ -30,15 +30,15 @@ import json
 import os
 import subprocess
 import sys
-import tarfile
 import tempfile
-import urllib.request
 
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
                                      ProgressCb, aux_dir)
+from engine_protocol.progress import iter_progress_lines, parse_tqdm
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 REPO_ID = "ASLP-lab/DiffRhythm2"
 REPO_COMMIT = "7804f821b797b4f276090e1a9dcd37e97d9915d5"
@@ -77,20 +77,12 @@ class DiffRhythm2Adapter(ModelAdapter):
                 "`brew install espeak-ng` and try again")
         cache = aux_dir("diffrhythm2")
         repo = os.path.join(cache, f"DiffRhythm2-{REPO_COMMIT}")
-        if not os.path.isdir(repo):
+        if not staged(repo, "inference.py", "diffrhythm2/__init__.py",
+                      "g2p/g2p/vocab.json"):
             progress_cb(None, "fetching DiffRhythm2 code (pinned snapshot, "
                               "first use only)")
-            tar_path = os.path.join(cache, "repo.tar.gz")
-            with urllib.request.urlopen(REPO_TARBALL, timeout=300) as resp, \
-                    open(tar_path, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            with tarfile.open(tar_path) as tar:
-                tar.extractall(cache, filter="data")
-            os.unlink(tar_path)
+            fetch_tarball_tree(REPO_TARBALL, cache,
+                               f"DiffRhythm2-{REPO_COMMIT}")
         self._retarget_device(repo)
         self.repo = repo
         progress_cb(None, "DiffRhythm2 ready (the MuQ style encoder fetches "
@@ -128,7 +120,10 @@ class DiffRhythm2Adapter(ModelAdapter):
         work = tempfile.mkdtemp(prefix="dr2-")
         lrc_path = os.path.join(work, "lyrics.lrc")
         with open(lrc_path, "w") as f:
-            f.write(lyrics or "[00:00.00]la la la")
+            # [inst] is the model's own instrumental tag; the old
+            # "[00:00.00]la la la" fallback got the timestamp *sung*
+            # (nothing parses LRC times here — audit §3).
+            f.write(lyrics or "[inst]")
         style_path = params.get("style_audio")
         style = (style_path if style_path and os.path.isfile(style_path)
                  else (prompt or "Pop, catchy, clean production"))
@@ -163,15 +158,26 @@ class DiffRhythm2Adapter(ModelAdapter):
                                 env=env, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
         tail: list[str] = []
-        while proc.poll() is None:
+        assert proc.stderr is not None
+        # The upstream tqdm bar was already on this stderr — split on \r so
+        # its in-place redraws surface as real per-step progress instead of
+        # one message for the whole render (audit §5).
+        for line in iter_progress_lines(proc.stderr):
             if cancel.cancelled:
                 proc.kill()
                 proc.wait()
                 raise CancelledError()
-            line = proc.stderr.readline() if proc.stderr else ""
-            if line:
-                tail.append(line.strip())
-                tail = tail[-30:]
+            tail.append(line)
+            tail = tail[-30:]
+            got = parse_tqdm(line)
+            if got:
+                step, total = got
+                progress_cb(min(0.98, step / total),
+                            f"flow matching — step {step}/{total}",
+                            step=step, steps=total)
+        proc.wait()
+        if cancel.cancelled:
+            raise CancelledError()
         if proc.returncode != 0:
             raise RuntimeError("DiffRhythm2 failed: " + " / ".join(tail[-4:]))
 

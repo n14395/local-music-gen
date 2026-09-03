@@ -107,6 +107,15 @@ class StableAudioAdapter(ModelAdapter):
                       conditioning=conditioning, sample_size=sample_size,
                       seed=seed, device=self.device)
 
+        # generate_diffusion_cond pops sampler_type with a hard "euler"
+        # default, overriding the library's own per-objective choice — the
+        # distilled Small's model card says pingpong (audit §3). The catalog
+        # picks per model (param first, settings default second).
+        sampler = params.get("sampler_type") or self.settings.get(
+            "sampler_type")
+        if sampler:
+            kwargs["sampler_type"] = str(sampler)
+
         # Adaptive Projected Guidance does its projection in float64 (`dit.py`
         # `apg_project`: `v0, v1 = v0.double(), v1.double()`), and MPS has no
         # float64 at all — so with the tool's default `apg_scale=1.0` every
@@ -125,7 +134,9 @@ class StableAudioAdapter(ModelAdapter):
 
         # audio-to-audio: diffuse from a noised version of a reference clip
         # instead of pure noise ("Reimagine a Loop"). init_noise_level is the
-        # tool's own knob: higher = further from the source.
+        # tool's own knob: higher = further from the source, and 1.0 is
+        # sigma_max = renoise completely — the source is ignored. 0.9
+        # matches the catalog default.
         init_path = params.get("init_audio")
         if init_path:
             init_wav, init_sr = sf.read(init_path, dtype="float32",
@@ -133,7 +144,7 @@ class StableAudioAdapter(ModelAdapter):
             kwargs["init_audio"] = (int(init_sr),
                                     torch.from_numpy(init_wav.T))
             kwargs["init_noise_level"] = float(
-                params.get("init_noise_level", 1.0))
+                params.get("init_noise_level", 0.9))
         # conditioning (T5 + duration embeddings) runs first inside the call
         progress_cb(None, "encoding prompt", phase="prompt_encode")
         try:

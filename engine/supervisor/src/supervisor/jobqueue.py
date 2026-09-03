@@ -180,6 +180,13 @@ class Job:
         # set when work starts; drives the elapsed-based ETA for task jobs
         # (their runtime scales with input length, unknown at submit)
         self.started_monotonic: float | None = None
+        # set when the job reaches a terminal status; history eviction keys
+        # on it — evicting by created_at could delete a long-queued job the
+        # moment it finished, before the app fetched its result (audit H5)
+        self.terminal_monotonic: float | None = None
+        # the uv provisioning process while envs.ensure() runs for this job,
+        # so a cancel can kill the install instead of waiting it out
+        self.env_proc = None
         # Backstop-throttle bookkeeping: when the last job.progress went out,
         # and what it was about. See JobQueue._progress.
         self.progress_emitted_at = 0.0
@@ -361,15 +368,17 @@ class JobQueue:
 
         Only terminal rows are candidates — a queued job is a promise, not
         history — so a queue deeper than the cap simply is not trimmed until
-        it drains. Eviction order is created_at (ISO-8601, so lexical order
-        is chronological), id breaking exact ties.
+        it drains. Eviction order is the time each job *finished*, not
+        created_at: by creation time a long-queued job could be evicted the
+        moment it succeeded, before the app fetched its result (audit H5).
         """
         if not JOB_HISTORY_CAP or len(self.jobs) <= JOB_HISTORY_CAP:
             return
         terminal = sorted(
             (job for job in self.jobs.values()
              if job.status in TERMINAL_STATUSES),
-            key=lambda job: (job.created_at, job.id))
+            key=lambda job: (job.terminal_monotonic or 0.0,
+                             job.created_at, job.id))
         overflow = len(self.jobs) - JOB_HISTORY_CAP
         for job in terminal[:overflow]:
             del self.jobs[job.id]
@@ -414,13 +423,21 @@ class JobQueue:
             if job.status in TERMINAL_STATUSES:
                 raise SubmitError(409, "JOB_NOT_CANCELABLE", "job already terminal")
             if job.status == "queued":
-                job.status = "canceled"
+                self._set_status(job, "canceled")
                 if job_id in self.order:
                     self.order.remove(job_id)
                 self.bus.emit_threadsafe("job.canceled", {"job_id": job_id})
                 return
             job.cancel_requested = True
             job.cancel_deadline = time.monotonic() + CANCEL_GRACE_S
+            # A job stuck in provisioning has no worker yet — kill the uv
+            # install instead of waiting out a minutes-long sync.
+            env_proc = getattr(job, "env_proc", None)
+            if env_proc is not None and env_proc.poll() is None:
+                try:
+                    env_proc.kill()
+                except OSError:
+                    pass
             # job.worker, not self.worker: a small job runs in the transient
             # slot while an unrelated model sits resident.
             if job.worker:
@@ -905,8 +922,25 @@ class JobQueue:
             self._canceled(job)
             return
 
-        python = envs.ensure(
-            family, progress=lambda m: self._progress(job, "loading", None, m))
+        # on_proc gives the cancel path a handle on the uv install: a first
+        # provisioning pulls a torch-sized tree for minutes, far too long to
+        # keep running after the user said stop (audit §4 minors).
+        try:
+            python = envs.ensure(
+                family,
+                progress=lambda m: self._progress(job, "loading", None, m),
+                on_proc=lambda p: setattr(job, "env_proc", p))
+        except envs.ProvisionError:
+            if job.cancel_requested:
+                self._canceled(job)
+                return
+            raise
+        finally:
+            job.env_proc = None
+
+        if job.cancel_requested:
+            self._canceled(job)
+            return
 
         small = _is_small(model)
         with self.lock:
@@ -938,6 +972,12 @@ class JobQueue:
                 self._worker_crashed(job, worker, str(e))
                 return
 
+        # Assigned before the try: the finally below sweeps previews from it,
+        # and binding it only after a successful load turned every load-time
+        # failure on a previewed job into an UnboundLocalError that masked
+        # the real error (audit H4).
+        out_dir = os.path.join(self.settings.output_dir, job.id)
+
         try:
             if worker.loaded_model_id != job.model_id:
                 self._progress(job, "loading", None,
@@ -963,7 +1003,6 @@ class JobQueue:
                         "family": family})
 
             self._set_status(job, "generating")
-            out_dir = os.path.join(self.settings.output_dir, job.id)
             os.makedirs(out_dir, exist_ok=True)
             started = time.monotonic()
             job.started_monotonic = started
@@ -996,12 +1035,17 @@ class JobQueue:
 
                 def on_progress(f: float | None, m: str, take: int = i,
                                 **staged) -> None:
-                    # A take whose fraction is unknown does not make the BATCH
-                    # unknown: takes 0..take-1 are finished and counted. Nulling
-                    # the whole thing here sent a 4-take render back to a
+                    # Single take, unknown fraction: stay null — the app has a
+                    # spinner for that, and flattening it to 0.0 kept a dozen
+                    # phase-only families' bars frozen at zero for whole
+                    # renders (audit H1). A BATCH with an unknown take is
+                    # different: takes 0..take-1 are finished and counted, and
+                    # nulling the whole readout sent a 4-take render back to a
                     # spinner at every boundary, right after showing 25/50/75%.
-                    overall = (take / job.count if f is None
-                               else (take + f) / job.count)
+                    if f is None:
+                        overall = None if job.count == 1 else take / job.count
+                    else:
+                        overall = (take + f) / job.count
                     # the phase and its step counts belong to the take the
                     # worker is on, so they pass through unscaled — and the
                     # take itself is named, so the app can say which of the
@@ -1265,17 +1309,19 @@ class JobQueue:
                        f"the engine worker exited unexpectedly ({detail})")
 
     def _canceled(self, job: Job) -> None:
-        job.status = "canceled"
+        self._set_status(job, "canceled")
         self.bus.emit_threadsafe("job.canceled", {"job_id": job.id})
 
     def _fail(self, job: Job, code: str, message: str) -> None:
-        job.status = "failed"
+        self._set_status(job, "failed")
         job.error = {"code": code, "message": message}
         self.bus.emit_threadsafe("job.failed",
                                  {"job_id": job.id, "error": job.error})
 
     def _set_status(self, job: Job, status: str) -> None:
         job.status = status
+        if status in TERMINAL_STATUSES and job.terminal_monotonic is None:
+            job.terminal_monotonic = time.monotonic()
 
     def _progress(self, job: Job, stage: str, fraction: float | None,
                   message: str, *, phase: str | None = None,

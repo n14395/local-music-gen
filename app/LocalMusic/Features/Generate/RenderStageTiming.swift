@@ -129,4 +129,31 @@ final class RenderTimingStore {
     func estimate(modelId: String, phase: String) -> TimeInterval? {
         seconds[Key(modelId: modelId, phase: phase)]
     }
+
+    // MARK: live stamps
+
+    /// The running take's stage stamps, held app-scope so the render pane
+    /// can be torn down and rebuilt (leaving the screen and coming back)
+    /// without the stage clocks starting over (audit §4 minors). Keyed by
+    /// job and take; pruned to the takes still on screen.
+    private var live: [String: RenderStageTiming] = [:]
+
+    private static func liveKey(_ jobId: String, _ take: Int?) -> String {
+        "\(jobId)#\(take ?? 0)"
+    }
+
+    func liveTiming(jobId: String, take: Int?) -> RenderStageTiming {
+        live[Self.liveKey(jobId, take)] ?? RenderStageTiming()
+    }
+
+    func setLiveTiming(_ timing: RenderStageTiming, jobId: String,
+                       take: Int?) {
+        let key = Self.liveKey(jobId, take)
+        live[key] = timing
+        if live.count > 16 {
+            for stale in live.keys where !stale.hasPrefix(jobId) {
+                live.removeValue(forKey: stale)
+            }
+        }
+    }
 }

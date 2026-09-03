@@ -101,9 +101,27 @@ class RaveAdapter(ModelAdapter):
                 mono_b = soxr.resample(mono_b, sr_b, self.model_sr)
             n = min(len(mono), len(mono_b))
             mono, mono_b = mono[:n], mono_b[:n]
-            blend = min(1.0, max(0.0, float(params.get("blend") or 0.5)))
+            # `or` swallowed the legal 0.0 (all source A) into the 0.5
+            # default (audit §2).
+            b = params.get("blend")
+            blend = min(1.0, max(0.0, 0.5 if b is None else float(b)))
+
+        # Streaming exports carry cached conv state between calls — that is
+        # what makes contiguous chunks seamless, and also what would leak
+        # one job's tail into the next (audit §3). Start clean when the
+        # export offers a reset.
+        reset = getattr(self.model, "reset", None)
+        if callable(reset):
+            try:
+                reset()
+            except Exception:  # noqa: BLE001 — a reset is best-effort
+                pass
 
         chunk = int(CHUNK_S * self.model_sr)
+        # Align chunks to the export's latent hop (a power of two ≤ 4096):
+        # an unaligned tail makes each chunk round/pad differently and the
+        # seams drift (audit §3).
+        chunk -= chunk % 4096
         pieces: list[np.ndarray] = []
         total = max(1, (len(mono) + chunk - 1) // chunk)
         with torch.no_grad():

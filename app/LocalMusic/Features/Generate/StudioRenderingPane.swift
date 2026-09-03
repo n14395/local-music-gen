@@ -125,11 +125,29 @@ struct StudioRenderingPane: View {
         .onChange(of: job.progress?.phase) {
             timing.observe(phase: job.progress?.phase, at: Date())
             timings.record(modelId: job.info.modelId, timing: timing)
+            timings.setLiveTiming(timing, jobId: job.id,
+                                  take: job.progress?.take)
+        }
+        // Re-entering the screen rebuilds this pane and its @State — the
+        // stamps survive in the store, so the stage clocks keep their
+        // history instead of starting over (audit §4 minors). A phase that
+        // moved while nobody watched is stamped now, late but present.
+        .onAppear {
+            timing = timings.liveTiming(jobId: job.id,
+                                        take: job.progress?.take)
+            timing.observe(phase: job.progress?.phase, at: Date())
         }
         // A new take reuses this card, and carrying take 1's stamps into take
-        // 2 would report a stage as having started a minute before it did.
-        .onChange(of: job.id) { timing = RenderStageTiming() }
-        .onChange(of: job.progress?.take) { timing = RenderStageTiming() }
+        // 2 would report a stage as having started a minute before it did —
+        // a fresh take has no stored stamps, so the lookup is the reset.
+        .onChange(of: job.id) {
+            timing = timings.liveTiming(jobId: job.id,
+                                        take: job.progress?.take)
+        }
+        .onChange(of: job.progress?.take) {
+            timing = timings.liveTiming(jobId: job.id,
+                                        take: job.progress?.take)
+        }
     }
 
     private func header(_ job: JobsStore.ActiveJob,

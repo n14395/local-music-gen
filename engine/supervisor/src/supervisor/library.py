@@ -48,6 +48,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from engine_protocol.adapter import AUX_DIRS, AUX_KEPT_DIRS
+from engine_protocol.staging import INCOMPLETE_MARKER
 
 from .events import EventBus
 from .registry import Registry
@@ -625,10 +626,21 @@ class LibraryManager:
                         return
                     except OSError:
                         pass
-                done = self._copy_tree(op, src, label, target, done)
+                done, complete = self._copy_tree(op, src, label, target, done)
+                if not complete:
+                    # Cancelled mid-copy: the destination is partial and the
+                    # source is still the only whole copy — it must survive.
+                    _mark_incomplete(target)
+                    return
+                if not _tree_copied(src, target):
+                    _mark_incomplete(target)
+                    skipped.append(label)
+                    return
+                _clear_incomplete(target)
                 shutil.rmtree(src, ignore_errors=True)
                 moved.append(label)
             except Exception:  # noqa: BLE001 — report it, keep the rest going
+                _mark_incomplete(target)
                 skipped.append(label)
                 done += size
 
@@ -655,8 +667,12 @@ class LibraryManager:
         return done
 
     def _copy_tree(self, op: dict, src: str, label: str, target: str,
-                   done: int) -> int:
+                   done: int) -> tuple[int, bool]:
         """Copy one directory across volumes, symlinks kept as symlinks.
+
+        Returns (done, complete). `complete` is False when the walk stopped
+        on cancel; the caller must treat the destination as partial and leave
+        the source in place.
 
         `copytree` would do this in a line, but it is opaque: a 57 GB repo
         would sit at the same percentage for twenty minutes. Walking it here
@@ -678,26 +694,83 @@ class LibraryManager:
                     _relink(src_d, os.path.join(out_root, d))
             for name in files:
                 if self._cancel.is_set():
-                    return done
-                src = os.path.join(root, name)
+                    return done, False
+                # `src` must keep naming the tree root for the whole walk —
+                # rebinding it here once sent every later directory's relpath
+                # through a file path and copied subtrees outside the target.
+                sp = os.path.join(root, name)
                 dst = os.path.join(out_root, name)
-                if os.path.islink(src):
+                if os.path.islink(sp):
                     # The snapshot tree is symlinks into blobs/. Copying them
                     # as files would duplicate every blob and double the size
                     # of the library on arrival.
-                    _relink(src, dst)
+                    _relink(sp, dst)
                     continue
                 try:
-                    size = os.path.getsize(src)
+                    size = os.path.getsize(sp)
                 except OSError:
                     size = 0
                 if os.path.exists(dst) and _same_size(dst, size):
                     done += size
                     continue
-                shutil.copy2(src, dst)
+                shutil.copy2(sp, dst)
                 done += size
                 self._progress(op, done, f"moving {label}")
-        return done
+        return done, True
+
+
+def _mark_incomplete(target: str) -> None:
+    """Tombstone a partial destination so the adapters' staging guards
+    (`engine_protocol.staging.staged`) treat it as absent, not finished."""
+    try:
+        with open(os.path.join(target, INCOMPLETE_MARKER), "w") as f:
+            f.write("partial copy from an interrupted relocate; "
+                    "restage before trusting this tree\n")
+    except OSError:
+        pass
+
+
+def _clear_incomplete(target: str) -> None:
+    try:
+        os.unlink(os.path.join(target, INCOMPLETE_MARKER))
+    except OSError:
+        pass
+
+
+def _tree_copied(src: str, target: str) -> bool:
+    """Every file under src has a same-size counterpart (or same-target link)
+    under target. This is the check that stands between a finished copy and
+    `rmtree` of the source: some trees here (tone3000 captures, working files)
+    exist nowhere else, so deletion has to be earned, not assumed."""
+    for root, dirs, files in os.walk(src, followlinks=False):
+        rel = os.path.relpath(root, src)
+        out_root = target if rel == "." else os.path.join(target, rel)
+        for d in dirs:
+            sp = os.path.join(root, d)
+            if os.path.islink(sp):
+                try:
+                    if os.readlink(os.path.join(out_root, d)) != \
+                            os.readlink(sp):
+                        return False
+                except OSError:
+                    return False
+        for name in files:
+            sp = os.path.join(root, name)
+            dp = os.path.join(out_root, name)
+            if os.path.islink(sp):
+                try:
+                    if os.readlink(dp) != os.readlink(sp):
+                        return False
+                except OSError:
+                    return False
+                continue
+            try:
+                size = os.path.getsize(sp)
+            except OSError:
+                continue  # source went unreadable; nothing to compare
+            if not _same_size(dp, size):
+                return False
+    return True
 
 
 def _relink(src: str, dst: str) -> None:

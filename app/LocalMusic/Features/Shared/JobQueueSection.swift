@@ -470,7 +470,11 @@ struct JobRow: View {
     /// The mono second line: model, size of the ask, and where it is.
     private var metaLine: String {
         var parts = [modelName.uppercased()]
-        if let duration = job.info.durationS {
+        // Generate rows only, and only a real ask: task jobs carry the
+        // contract's placeholder duration (their runtime scales with the
+        // input), which drew as a meaningless "0 S"/"1 S" (audit §4 minors).
+        if job.info.isGenerate, let duration = job.info.durationS,
+           duration > 1 {
             parts.append("\(Int(duration.rounded())) S")
         }
         // Which take this is, for a row standing on its own — a queue drawn

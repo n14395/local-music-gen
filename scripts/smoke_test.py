@@ -63,6 +63,43 @@ def wav_stats(path: str) -> tuple[float | None, int | None]:
         return None, None
 
 
+try:
+    import audio_stats  # sibling module; numpy-based, reads float32 WAVs too
+except Exception:  # noqa: BLE001 — stats degrade, the suite still runs
+    audio_stats = None
+
+
+def full_stats(path: str):
+    """(duration_s, rms_dbfs, channels, sample_rate, flatness).
+
+    The old RMS>100 gate passed white noise and silently skipped float32
+    stems (audit H8); with numpy present this reads every WAV the engine
+    writes and adds a spectral-flatness figure (music < ~0.1, noise > 0.35).
+    Fields are None where the available reader cannot tell.
+    """
+    if audio_stats is not None:
+        try:
+            x, sr = audio_stats.load(path)
+            mono = x.mean(axis=0)
+            rms = float((mono ** 2).mean() ** 0.5)
+            dbfs = 20 * math.log10(rms + 1e-20)
+            flat = audio_stats.flatness(mono, sr)
+            if flat != flat:  # NaN — clip too short to frame
+                flat = None
+            return (mono.size / sr, dbfs, int(x.shape[0]), int(sr), flat)
+        except Exception:  # noqa: BLE001 — fall through to the stdlib reader
+            pass
+    dur, rms = wav_stats(path)
+    dbfs = None if rms is None else 20 * math.log10(max(rms, 1) / 32768.0)
+    ch = sr = None
+    try:
+        with wave.open(path) as w:
+            ch, sr = w.getnchannels(), w.getframerate()
+    except (wave.Error, OSError, EOFError):
+        pass
+    return dur, dbfs, ch, sr, None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="musicgen-small")
@@ -232,6 +269,8 @@ def main() -> int:
         job_id = resp["jobs"][0]["job_id"]
 
         fractions: list[float] = []
+        phases_seen: set[str] = set()
+        gen_started = time.time()
         last_msg = ""
         last_print = 0.0
         cursor = sse.mark()
@@ -266,6 +305,8 @@ def main() -> int:
                 frac = prog["fraction"]
                 if frac is not None:
                     fractions.append(frac)
+                if prog.get("phase"):
+                    phases_seen.add(prog["phase"])
                 if prog["message"] != last_msg and time.time() - last_print > 2:
                     last_msg = prog["message"]
                     last_print = time.time()
@@ -284,6 +325,21 @@ def main() -> int:
         check("progress monotonic",
               all(a <= b + 1e-6 for a, b in zip(fractions, fractions[1:])),
               str(fractions[:40]))
+        # Every reported phase must be one the catalog declared: a typo'd or
+        # renamed phase parks the app's stage list forever (audit H8 — one
+        # assertion here would have caught most of the audit's §5 findings).
+        declared = [s["id"] for s in
+                    (model.get("capabilities") or {}).get("pipeline") or []]
+        if declared:
+            stray = sorted(p for p in phases_seen if p not in declared)
+            check("phases within declared pipeline", not stray,
+                  f"stray={stray} declared={declared}")
+        # A long job whose every fraction was exactly 0.0 is the frozen-zero
+        # signature (audit H1) — honest indeterminates send null and land in
+        # no list at all, so an empty list passes.
+        if len(fractions) >= 3 and time.time() - gen_started > 30:
+            check("progress not frozen at 0",
+                  max(fractions) > 0.0, f"{len(fractions)} events, all 0.0")
 
         _, job = c.req("GET", f"/v1/jobs/{job_id}")
 
@@ -294,21 +350,30 @@ def main() -> int:
             in_dur = wav_stats(args.input)[0] if args.input else None
             if args.task == "separate":
                 stems = [a for a in arts if a["kind"] == "stem"]
-                check("at least 2 stems", len(stems) >= 2,
+                # a single-target request (BSRNN `targets=vocals`) is one
+                # stem by design
+                one_target = str((body.get("params") or {})
+                                 .get("targets") or "all") != "all"
+                want = 1 if one_target else 2
+                check(f"at least {want} stem(s)", len(stems) >= want,
                       str([a["label"] for a in arts]))
+                levels = []
                 for a in stems:
                     ok = os.path.exists(a["path"]) and os.path.getsize(a["path"]) > 1000
                     check(f"stem exists: {a['label']}", ok)
-                    dur, rms = wav_stats(a["path"])
+                    dur, dbfs, _ch, _sr, _flat = full_stats(a["path"])
                     if in_dur and dur:
                         check(f"stem duration matches input ({a['label']})",
                               abs(dur - in_dur) <= 0.05 * in_dur + 0.5)
-                    if rms is not None:
-                        print(f"  {a['label']}: rms={rms}")
-                rmss = [wav_stats(a["path"])[1] for a in stems]
-                known = [r for r in rmss if r is not None]
-                if known:
-                    check("at least one non-silent stem", max(known) > 100)
+                    if dbfs is not None:
+                        levels.append(dbfs)
+                        print(f"  {a['label']}: {dbfs:.1f} dBFS")
+                # full_stats reads float32 stems too — the old PCM16-only
+                # reader skipped this check on them silently (audit H8)
+                check("stem levels readable", bool(levels),
+                      "no stem produced a readable level")
+                if levels:
+                    check("at least one non-silent stem", max(levels) > -50)
                 for a in stems:
                     print(f"  → {a['path']}")
                 if args.play and stems:
@@ -447,23 +512,42 @@ def main() -> int:
 
         outputs = job.get("result", {}).get("outputs", [])
         check(f"{args.count} output(s) reported", len(outputs) == args.count)
+        declared_sr = (model.get("capabilities") or {}).get("sample_rate")
+        declares_seed = any(pspec.get("key") == "seed" for pspec in
+                            (model.get("capabilities") or {}).get("params")
+                            or [])
         for out in outputs:
             p = out["path"]
             ok = os.path.exists(p) and os.path.getsize(p) > 1000
             check(f"output exists: {os.path.basename(p)}", ok)
             if not ok:
                 continue
-            with wave.open(p) as w:
-                frames = w.readframes(w.getnframes())
-                dur = w.getnframes() / w.getframerate()
-            samples = array.array("h", frames)
-            rms = int(math.sqrt(sum(s * s for s in samples) / max(1, len(samples))))
-            check(f"non-silent (rms={rms})", rms > 100)
+            dur, dbfs, ch, sr, flat = full_stats(p)
+            check(f"non-silent ({dbfs:.1f} dBFS)" if dbfs is not None
+                  else "non-silent", dbfs is not None and dbfs > -50)
+            if flat is not None:
+                # music sits well under 0.1; white noise reads > 0.35 — the
+                # audit's "generating noise" class (H8)
+                check(f"music-like, not noise (flatness={flat:.3f})",
+                      flat < 0.35)
+            if declared_sr and sr:
+                check(f"sample rate {sr} matches catalog {declared_sr}",
+                      sr == declared_sr)
+            if sr and out.get("sample_rate"):
+                check("reported sample_rate matches the file",
+                      int(out["sample_rate"]) == sr)
+            if ch is not None:
+                print(f"  channels={ch}")
+            if declares_seed:
+                # would have caught B7's fabricated/no-op seeds (audit H8)
+                check("seed_used reported", out.get("seed_used") is not None)
             # src-audio tasks (cover/repaint/extract/… and init_audio) lock
             # output length to the source, not the requested duration
             src_locked = any(k in (body.get("params") or {})
                              for k in ("src_audio", "init_audio"))
-            if src_locked:
+            if dur is None:
+                check("duration readable", False)
+            elif src_locked:
                 check(f"duration positive ({dur:.1f}s, source-locked)",
                       dur > 0.5)
             else:

@@ -86,7 +86,13 @@ struct RenderStageList: View {
                            fraction: progress?.fraction)
             } else {
                 ForEach(Array(stages.enumerated()), id: \.element.id) { index, stage in
-                    row(stage, state: state(at: index))
+                    // An optional stage the job skipped (passed without ever
+                    // reporting it) is quietly dropped — a checkmark on work
+                    // that never ran would be a small lie. Contract §5.5.
+                    if !(stage.optional == true && state(at: index) == .done
+                         && timing.elapsed(stage.id, now: .now) == nil) {
+                        row(stage, state: state(at: index))
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -127,6 +133,8 @@ struct RenderStageList: View {
             // The estimate is a memory of the last time this model ran this
             // stage, not a projection — see `RenderTimingStore`. A stage
             // nobody has watched yet simply has no figure beside it.
+            // An optional stage dims further: it may never run at all
+            // (declared `optional` in the catalog — audit §4 minors).
             quietRow(stage.label, tint: Bench.Palette.textSecondary,
                      trailing: timings.estimate(modelId: modelId,
                                                 phase: stage.id)
@@ -135,7 +143,7 @@ struct RenderStageList: View {
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 1.5)
                     .frame(width: 15, height: 15)
             }
-            .opacity(0.55)
+            .opacity(stage.optional == true ? 0.35 : 0.55)
         }
     }
 

@@ -55,6 +55,16 @@ class MiniMaxAdapter(ModelAdapter):
                  cancel: CancelToken) -> GenerateResult:
         assert self.pipe is not None
         duration_s = float(params.get("duration_s", 90.0))
+        # Both knobs were declared and never read (audit §2): every render
+        # ran the pipeline defaults — 30 steps, guidance 1.7 — whatever the
+        # sliders said. 30/1.7 stay the catalog defaults so a default render
+        # sounds exactly as it always has.
+        steps = max(4, min(150, int(params.get("steps") or 30)))
+        cfg = params.get("cfg_scale")
+        guider = getattr(self.pipe, "guider", None)
+        if cfg is not None and guider is not None \
+                and hasattr(guider, "guidance_scale"):
+            guider.guidance_scale = float(cfg)
         seed = params.get("seed")
         generator = torch.Generator("cpu")
         if seed is not None:
@@ -62,8 +72,8 @@ class MiniMaxAdapter(ModelAdapter):
 
         if cancel.cancelled:
             raise CancelledError()
-        audio = self._run_pipeline(prompt, lyrics, duration_s, generator,
-                                   progress_cb, cancel)
+        audio = self._run_pipeline(prompt, lyrics, duration_s, steps,
+                                   generator, progress_cb, cancel)
         if cancel.cancelled:
             raise CancelledError()
 
@@ -85,8 +95,8 @@ class MiniMaxAdapter(ModelAdapter):
                               seed_used=int(seed) if seed is not None else None)
 
     def _run_pipeline(self, prompt: str, lyrics: str | None, duration_s: float,
-                      generator: torch.Generator, progress_cb: ProgressCb,
-                      cancel: CancelToken):
+                      steps: int, generator: torch.Generator,
+                      progress_cb: ProgressCb, cancel: CancelToken):
         """Run the modular pipeline with a hook on the LM's inner forward.
 
         The pipeline's autoregressive stage calls `language_model.model(...)` once
@@ -108,7 +118,8 @@ class MiniMaxAdapter(ModelAdapter):
         if inner is None:
             progress_cb(None, "generating (no LM hook point; coarse progress only)")
             return self.pipe(prompt=prompt, lyrics=lyrics_text,
-                             audio_duration=duration_s, generator=generator,
+                             audio_duration=duration_s,
+                             num_inference_steps=steps, generator=generator,
                              output="audios")[0]
 
         transformer = getattr(self.pipe, "transformer", None)
@@ -121,7 +132,9 @@ class MiniMaxAdapter(ModelAdapter):
         # The window count depends on how many frames the LM actually emits — with
         # sparse lyrics (e.g. bare "[instrumental]") it may end the song well
         # before the requested duration, which is model behavior, not a stall.
-        chunk_frames, chunk_hop, dit_steps, dit_passes = 200, 100, 60, 2
+        # dit_steps is no longer a mirrored upstream constant: it is the
+        # num_inference_steps this render actually requests below.
+        chunk_frames, chunk_hop, dit_steps, dit_passes = 200, 100, steps, 2
         lm_calls = 0
         dit_calls = 0
         voc_calls = 0
@@ -163,17 +176,14 @@ class MiniMaxAdapter(ModelAdapter):
             if dit_calls % 10 == 0:
                 if self.device == "mps":
                     torch.mps.empty_cache()
-                # `dit_steps` mirrors an upstream constant we do not control
-                # and no longer matches it: the installed pipeline defaults
-                # `num_inference_steps` to 30, not 60, so a reported total of
-                # chunks x 60 describes twice the work that runs and the stage
-                # would finish pinned at 50%. `step` is real (two transformer
-                # passes per Euler step), so it is reported alone.
+                # dit_steps is the requested num_inference_steps now, so the
+                # total is real and can be reported (the old mirrored 60
+                # described twice the work and pinned the stage at 50%).
                 total = chunks * dit_steps
                 step = min(dit_calls // dit_passes, total)
                 progress_cb(0.65 + 0.3 * step / total,
                             f"denoising {lm_frames / frame_rate:.0f}s of audio",
-                            phase="diffusion")
+                            phase="diffusion", step=step, steps=total)
             return original_dit(*args, **kwargs)
 
         def voc_forward(*args, **kwargs):
@@ -197,8 +207,9 @@ class MiniMaxAdapter(ModelAdapter):
         try:
             progress_cb(0.0, "generating")
             return self.pipe(prompt=prompt, lyrics=lyrics_text,
-                             audio_duration=duration_s, generator=generator,
-                             output="audios")[0]
+                             audio_duration=duration_s,
+                             num_inference_steps=dit_steps,
+                             generator=generator, output="audios")[0]
         finally:
             inner.forward = original_lm
             if original_dit is not None:

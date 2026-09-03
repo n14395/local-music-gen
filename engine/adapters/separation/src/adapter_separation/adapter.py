@@ -174,12 +174,39 @@ class SeparationAdapter(ModelAdapter):
         if cancel.cancelled:
             raise CancelledError()
 
-        # audio-separator exposes no per-chunk callback: progress is
-        # indeterminate and cancel falls back to the supervisor's SIGKILL grace.
+        # audio-separator exposes no per-chunk callback, but its passes run
+        # real tqdm bars in this process — hook the class's update() for the
+        # duration of the call. That turns a ~20-minute indeterminate wait
+        # (DeEcho-DeReverb) into counted progress AND gives the render its
+        # only cooperative cancel checkpoint (audit §5).
         progress_cb(None, "separating (this can take several minutes)")
-        produced = self._separator.separate(
-            src, {"Vocals": "vocals", "Instrumental": "instrumental",
-                  "Other": "instrumental", "No Vocals": "instrumental"})
+        import tqdm as _tqdm
+
+        orig_update = _tqdm.tqdm.update
+
+        def patched_update(bar, n=1):
+            result = orig_update(bar, n)
+            if cancel.cancelled:
+                raise CancelledError()
+            total = getattr(bar, "total", None)
+            if total:
+                progress_cb(min(0.98, bar.n / total),
+                            f"separating — {int(bar.n)}/{int(total)}",
+                            step=int(bar.n), steps=int(total))
+            return result
+
+        _tqdm.tqdm.update = patched_update
+        try:
+            produced = self._separator.separate(
+                src, {"Vocals": "vocals", "Instrumental": "instrumental",
+                      "Other": "instrumental", "No Vocals": "instrumental"})
+        except CancelledError:
+            # A pass aborted mid-flight may leave the separator's buffers in
+            # an unknown state; drop it so the next job reloads clean.
+            self._separator = None
+            raise
+        finally:
+            _tqdm.tqdm.update = orig_update
         if cancel.cancelled:
             raise CancelledError()
 

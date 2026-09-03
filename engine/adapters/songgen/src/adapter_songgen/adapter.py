@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tarfile
 import urllib.request
 
 import soundfile as sf
@@ -31,6 +30,7 @@ import soundfile as sf
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
                                      clear_stale_link)
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
 # to CPU instead of aborting the render. Harmless on the CPU route.
@@ -66,20 +66,11 @@ def _stage_package_data(progress_cb: ProgressCb) -> None:
                       "package files, first use only)")
     cache = os.path.join(root, "..", "..", "..", "songgen-stage")
     cache = os.path.abspath(cache)
-    os.makedirs(cache, exist_ok=True)
-    tar_path = os.path.join(cache, "repo.tar.gz")
-    if not os.path.isdir(os.path.join(cache, f"SongGen-{REPO_COMMIT}")):
-        with urllib.request.urlopen(REPO_TARBALL, timeout=300) as resp, \
-                open(tar_path, "wb") as f:
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk)
-        with tarfile.open(tar_path) as tar:
-            tar.extractall(cache, filter="data")
-        os.unlink(tar_path)
-    src = os.path.join(cache, f"SongGen-{REPO_COMMIT}", "songgen")
+    staged_repo = os.path.join(cache, f"SongGen-{REPO_COMMIT}")
+    if not staged(staged_repo, "songgen/lyrics_utils/vocab.json",
+                  "songgen/xcodec_wrapper/xcodec_infer"):
+        fetch_tarball_tree(REPO_TARBALL, cache, f"SongGen-{REPO_COMMIT}")
+    src = os.path.join(staged_repo, "songgen")
     if not os.path.isdir(infer):
         shutil.copytree(os.path.join(src, "xcodec_wrapper", "xcodec_infer"),
                         infer)
@@ -199,15 +190,30 @@ class SongGenAdapter(ModelAdapter):
 
         ref = params.get("ref_voice")
         ref = ref if ref and os.path.isfile(ref) else None
-        progress_cb(None, "encoding text and lyrics", phase="prompt_encode")
+        progress_cb(None, "encoding text and lyrics"
+                          + (" (separating the voice reference)"
+                             if ref else ""), phase="prompt_encode")
+        # separate=True: upstream expects a vocals-only reference; without
+        # the separation pass a normal song clip silently degraded the
+        # voice cloning (audit §3).
         inputs = self.processor(text=prompt,
                                 lyrics=lyrics or "la la la",
-                                ref_voice_path=ref)
+                                ref_voice_path=ref,
+                                separate=bool(ref))
+
+        use_mps = torch.backends.mps.is_available()
 
         class _Progress(StoppingCriteria):
             def __call__(self, input_ids, scores, **kwargs) -> bool:
                 done = input_ids.shape[-1]
                 if done % 25 == 0:
+                    if use_mps:
+                        # Same MPS allocator pathology as every AR family:
+                        # the streaming KV concat grows the driver footprint
+                        # quadratically unless freed blocks go back to the
+                        # OS — worker-songgen.log recorded a 58 GiB Metal
+                        # footprint before this flush (audit §3).
+                        torch.mps.empty_cache()
                     progress_cb(min(0.95, done / max_tokens), "singing",
                                 phase="lm_decode", step=done,
                                 steps=max_tokens)

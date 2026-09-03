@@ -65,7 +65,35 @@ class Settings:
     def uploads_dir(self) -> str:
         return os.path.join(self.data_dir, "uploads")
 
+    def acquire_instance_lock(self) -> None:
+        """One engine per data dir, enforced before anything is touched.
+
+        A second engine's startup purge used to rmtree the first's live
+        uploads — hit live during the 2026-09 audit when the app launched
+        beside a smoke run and destroyed its in-flight job (audit H6).
+        Refusing to start, loudly, is the honest behavior. The fd is held
+        for the process lifetime; the OS releases it on any exit.
+        """
+        import fcntl
+        os.makedirs(self.data_dir, exist_ok=True)
+        path = os.path.join(self.data_dir, "engine.lock")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise SystemExit(
+                f"another engine already serves this data dir "
+                f"({self.data_dir}) — quit the app or the other engine "
+                f"first, or point this one at its own --data-dir")
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        self._lock_fd = fd  # noqa: SLF001 — keeps the flock alive
+
     def ensure_dirs(self) -> None:
+        # The lock must precede the purge below: without it a second engine
+        # on the same data dir deletes the first one's live uploads.
+        self.acquire_instance_lock()
         # Uploads are transient job inputs (jobs are in-memory, so references
         # cannot outlive the engine); purge them on every startup.
         import glob

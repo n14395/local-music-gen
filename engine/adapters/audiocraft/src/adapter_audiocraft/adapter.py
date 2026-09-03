@@ -182,14 +182,81 @@ class AudiocraftAdapter(ModelAdapter):
                 return path
         raise RuntimeError("no audiocraft checkpoint (state_dict.bin) in snapshot")
 
+    def _mert_snapshot(self) -> str | None:
+        for repo_id, path in self.model_paths.items():
+            if "mert" in repo_id.lower():
+                return path
+        return None
+
+    def _redirect_mert(self) -> None:
+        """Serve audiocraft's hardcoded `m-a-p/MERT-v1-95M` from the local
+        snapshot. Without this the style conditioner re-fetches MERT's remote
+        code from the Hub at every load and fails offline (audit §3)."""
+        snap = self._mert_snapshot()
+        if not snap:
+            return
+        import transformers
+
+        orig = transformers.AutoModel.from_pretrained
+
+        def patched(name, *args, **kwargs):
+            if isinstance(name, str) and "MERT-v1-95M" in name:
+                name = snap
+                kwargs.setdefault("local_files_only", True)
+            return orig(name, *args, **kwargs)
+
+        transformers.AutoModel.from_pretrained = patched
+
+    def _repair_mert_pos_conv(self) -> None:
+        """Copy MERT's positional-conv weight-norm tensors in by hand.
+
+        Under the pinned transformers the checkpoint's legacy
+        `weight_g`/`weight_v` keys no longer match the parametrized module,
+        so the positional conv came up randomly initialized — degraded style
+        conditioning that differed per worker process (audit §3). The rename
+        shim only covers transformers' own classes, not MERT's remote code.
+        """
+        snap = self._mert_snapshot()
+        conditioners = getattr(
+            getattr(getattr(self.model, "lm", None), "condition_provider",
+                    None), "conditioners", {}) or {}
+        feat = next((getattr(c, "feat_extractor", None)
+                     for c in conditioners.values()
+                     if getattr(c, "model_name", "") == "mert"), None)
+        if feat is None or not snap:
+            return
+        try:
+            sd = torch.load(os.path.join(snap, "pytorch_model.bin"),
+                            map_location="cpu", weights_only=True)
+            g = sd.get("encoder.pos_conv_embed.conv.weight_g")
+            v = sd.get("encoder.pos_conv_embed.conv.weight_v")
+            conv = feat.encoder.pos_conv_embed.conv
+            if g is None or v is None:
+                return
+            with torch.no_grad():
+                if hasattr(conv, "parametrizations"):
+                    p = conv.parametrizations.weight
+                    p.original0.copy_(g.to(p.original0.dtype))
+                    p.original1.copy_(v.to(p.original1.dtype))
+                else:
+                    conv.weight_g.copy_(g.to(conv.weight_g.dtype))
+                    conv.weight_v.copy_(v.to(conv.weight_v.dtype))
+        except Exception as e:  # noqa: BLE001 — degraded style beats no load
+            print(f"MERT pos-conv repair failed ({e}); style conditioning "
+                  "runs with the degraded random init", file=sys.stderr)
+
     def load(self, progress_cb: ProgressCb) -> None:
         _disarm_mps_autocast()
         _fix_mps_elu()
+        if self.settings.get("style"):
+            self._redirect_mert()
         from audiocraft.models import MAGNeT, MusicGen
 
         progress_cb(None, f"loading {self.kind} weights")
         cls = MAGNeT if self.kind == "magnet" else MusicGen
         self.model = cls.get_pretrained(self._snapshot(), device=self.device)
+        if self.settings.get("style"):
+            self._repair_mert_pos_conv()
         # The builder does condition_provider.to(device) after construction,
         # dragging the (deliberately CPU-built) chroma module's buffers to MPS
         # — demucs alone is hidden from the module tree. Move it back.
@@ -233,9 +300,18 @@ class AudiocraftAdapter(ModelAdapter):
                 # quadratically (observed ~62 GB mid-clip) unless freed blocks
                 # are returned to the OS.
                 torch.mps.empty_cache()
-            progress_cb(min(1.0, done / max(1, total)),
-                        f"{done}/{total} tokens",
-                        phase="lm_decode", step=done, steps=total)
+            # A windowed (>30 s) MusicGen render reports `done` accumulated
+            # across windows against a per-window `total`, which pinned the
+            # bar at 100 % from window 2 (audit §5) — rescale against the
+            # whole request. MAGNeT counts decoding steps, not frames, so
+            # its totals pass through untouched.
+            expected = (int(duration_s
+                            * float(getattr(self.model, "frame_rate", 50.0)))
+                        if self.kind == "musicgen" else 0)
+            total_all = max(1, total, expected)
+            progress_cb(min(1.0, done / total_all),
+                        f"{done}/{total_all} tokens",
+                        phase="lm_decode", step=done, steps=total_all)
 
         # MusicGen-Style's excerpt conditioner has its own knobs, and they are
         # set per generation rather than at load.

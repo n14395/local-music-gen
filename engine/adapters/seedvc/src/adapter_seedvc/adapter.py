@@ -24,14 +24,14 @@ import glob
 import os
 import subprocess
 import sys
-import tarfile
-import urllib.request
 
 import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
                                      TaskResult, aux_dir)
+from engine_protocol.progress import iter_progress_lines, parse_tqdm
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 REPO_COMMIT = "51383efd921027683c89e5348211d93ff12ac2a8"
 REPO_TARBALL = (f"https://github.com/Plachtaa/seed-vc/archive/"
@@ -46,20 +46,10 @@ class SeedVCAdapter(ModelAdapter):
     def load(self, progress_cb: ProgressCb) -> None:
         cache = aux_dir("seedvc")
         repo = os.path.join(cache, f"seed-vc-{REPO_COMMIT}")
-        if not os.path.isdir(repo):
+        if not staged(repo, "inference.py", "configs/v2/vc_wrapper.yaml"):
             progress_cb(None, "fetching seed-vc (pinned GitHub snapshot, "
                               "first use only)")
-            tar_path = os.path.join(cache, "repo.tar.gz")
-            with urllib.request.urlopen(REPO_TARBALL, timeout=300) as resp, \
-                    open(tar_path, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            with tarfile.open(tar_path) as tar:
-                tar.extractall(cache, filter="data")
-            os.unlink(tar_path)
+            fetch_tarball_tree(REPO_TARBALL, cache, f"seed-vc-{REPO_COMMIT}")
         self.repo = repo
         progress_cb(None, "seed-vc ready (model weights fetch on the first "
                           "conversion)")
@@ -89,12 +79,14 @@ class SeedVCAdapter(ModelAdapter):
         if v2:
             steps = max(4, min(100, int(params.get("diffusion_steps") or 30)))
             sing = False
-            sim = min(1.0, max(0.0,
-                               float(params.get("similarity_cfg_rate")
-                                     or 0.7)))
+            # `is None` rather than `or`: 0.0 is the legal "guidance off"
+            # end of both sliders and `or` silently rewrote it to 0.7
+            # (audit §2).
+            sim = params.get("similarity_cfg_rate")
+            sim = min(1.0, max(0.0, 0.7 if sim is None else float(sim)))
+            intel = params.get("intelligibility_cfg_rate")
             intel = min(1.0, max(0.0,
-                                 float(params.get("intelligibility_cfg_rate")
-                                       or 0.7)))
+                                 0.7 if intel is None else float(intel)))
             style = bool(params.get("convert_style"))
             anon = bool(params.get("anonymize"))
             # Not inference_v2.py: that CLI hardcodes fp16, which CPU
@@ -140,7 +132,9 @@ class SeedVCAdapter(ModelAdapter):
             steps = max(4, min(50, int(params.get("diffusion_steps") or 10)))
             sing = bool(params.get("sing_mode"))
             shift = int(params.get("pitch_shift_st") or 0)
-            cfg = min(1.0, max(0.0, float(params.get("cfg_rate") or 0.7)))
+            # 0.0 = "guidance off" is legal; `or` rewrote it to 0.7 (audit §2)
+            cfg = params.get("cfg_rate")
+            cfg = min(1.0, max(0.0, 0.7 if cfg is None else float(cfg)))
 
             argv = ["inference.py",
                     "--source", src, "--target", ref, "--output", out_dir,
@@ -167,15 +161,26 @@ class SeedVCAdapter(ModelAdapter):
             [sys.executable, "-c", bootstrap], cwd=self.repo,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         stderr_tail: list[str] = []
-        while proc.poll() is None:
+        assert proc.stderr is not None
+        # The wrapper's per-chunk tqdm counts were on this stderr all along
+        # and got discarded — one message for a 6×-realtime conversion read
+        # as a hang (audit §5).
+        for line in iter_progress_lines(proc.stderr):
             if cancel.cancelled:
                 proc.kill()
                 proc.wait()
                 raise CancelledError()
-            line = proc.stderr.readline() if proc.stderr else ""
-            if line:
-                stderr_tail.append(line.strip())
-                stderr_tail = stderr_tail[-30:]
+            stderr_tail.append(line)
+            stderr_tail = stderr_tail[-30:]
+            got = parse_tqdm(line)
+            if got:
+                step, total = got
+                progress_cb(min(0.98, step / total),
+                            f"converting — chunk {step}/{total}",
+                            step=step, steps=total)
+        proc.wait()
+        if cancel.cancelled:
+            raise CancelledError()
         if proc.returncode != 0:
             raise RuntimeError("seed-vc failed: "
                                + " / ".join(stderr_tail[-4:]))

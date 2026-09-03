@@ -157,7 +157,10 @@ class VampNetAdapter(ModelAdapter):
                                "OF something; give it a loop")
 
         periodic = max(1, min(30, int(params.get("periodic_prompt") or 7)))
-        upper_mask = max(0, min(14, int(params.get("upper_codebook_mask") or 3)))
+        # `or` swallowed the legal 0 ("mask nothing") and turned the slider's
+        # bottom stop into the default (audit §2).
+        um = params.get("upper_codebook_mask")
+        upper_mask = max(0, min(14, 3 if um is None else int(um)))
         temperature = float(params.get("temperature") or 1.0)
         steps = max(2, min(36, int(params.get("steps") or 8)))
         seed = params.get("seed")

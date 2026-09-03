@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import random
 import shutil
 import threading
 
@@ -157,7 +158,13 @@ class ACEStepAdapter(ModelAdapter):
 
         assert self.dit is not None and self.llm is not None
         duration_s = float(params.get("duration_s", 60.0))
+        # Drawn here when absent, never left to the pipeline: upstream reads
+        # only GenerationConfig.seeds — GenerationParams.seed is decorative —
+        # and with seeds unset it drew one seed to render with and reported a
+        # different one (audit B7). One value, drawn once, both used and
+        # reported.
         seed = params.get("seed")
+        seed = int(seed) if seed is not None else random.randrange(2**32)
 
         def progress_shim(*args, **kwargs) -> None:
             if cancel.cancelled:
@@ -214,6 +221,11 @@ class ACEStepAdapter(ModelAdapter):
                     TRACK_CLASSES=str(track).upper())
             else:
                 instruction = TASK_INSTRUCTIONS["complete_default"]
+        elif task_type in ("repaint", "cover"):
+            # Left unset these ran under the pipeline's text2music fill-mask
+            # instruction instead of their own (audit B7); upstream's table
+            # has dedicated lines for both.
+            instruction = TASK_INSTRUCTIONS[task_type]
 
         # A morph rewrites the source rather than writing something new, so it
         # takes the src-audio rules — output length locks to the source, and
@@ -231,7 +243,7 @@ class ACEStepAdapter(ModelAdapter):
             "duration": -1 if src_task else int(duration_s),
             "inference_steps": int(params.get("steps", 8)),
             "guidance_scale": float(params.get("guidance_scale", 7.0)),
-            "seed": int(seed) if seed is not None else -1,
+            "seed": seed,
             # 3.0 suits turbo DiTs; base/sft variants want 1.0 (set via catalog settings)
             "shift": float(self.settings.get("shift", 3.0)),
             # all five src-audio tasks are direct-conditioning: the LM is
@@ -278,8 +290,27 @@ class ACEStepAdapter(ModelAdapter):
         gen_config = self._build_flexible(GenerationConfig, {
             "batch_size": 1,
             "audio_format": "wav",
-            "use_random_seed": seed is None,
+            # seeds is the field generation actually reads (prepare_seeds
+            # gets config.seeds joined to a string; params.seed never enters).
+            "seeds": [seed],
+            "use_random_seed": False,
         })
+
+        # config.seeds pins every draw that takes a key, but the MLX SDE
+        # sampler also pulls per-step noise from the GLOBAL RNG
+        # (dit_generate.py: unkeyed mx.random.normal) — pin that too, or a
+        # pinned seed still renders a different song each run (2026-09
+        # revalidation finding).
+        try:
+            import mlx.core as mx
+            mx.random.seed(seed)
+        except Exception:  # noqa: BLE001 — a missing runtime seeds nothing
+            pass
+        try:
+            import torch
+            torch.manual_seed(seed)
+        except Exception:  # noqa: BLE001
+            pass
 
         save_dir = os.path.join(self.work_dir, "acestep-out")
         os.makedirs(save_dir, exist_ok=True)
@@ -302,7 +333,9 @@ class ACEStepAdapter(ModelAdapter):
 
         import soundfile as sf
         info = sf.info(out_path)
-        seed_used = None
+        # The pipeline's readback when it has one, else the seed we pinned —
+        # which config.seeds guarantees is the one that rendered.
+        seed_used = seed
         try:
             seed_used = int(audio.get("params", {}).get("seed"))
         except (TypeError, ValueError):
@@ -337,6 +370,16 @@ class ACEStepAdapter(ModelAdapter):
             if isinstance(got, list) and got and isinstance(got[0], str):
                 codes = got[0]
                 break
+        else:
+            # Where the pipeline actually files a take's rendered codes
+            # (audit B7): per-audio params. Without this fallback, "render
+            # this plan again" quietly re-rolled from nothing.
+            try:
+                got = (result.audios[0].get("params") or {}).get("audio_codes")
+                if isinstance(got, str) and got:
+                    codes = got
+            except (AttributeError, IndexError, TypeError):
+                pass
         plan: dict = {}
         if isinstance(metadata, dict) and metadata:
             plan["lm_metadata"] = metadata

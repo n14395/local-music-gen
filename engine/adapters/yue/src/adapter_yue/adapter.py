@@ -10,11 +10,13 @@ from the downloaded snapshot.
 from __future__ import annotations
 
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
 
+from engine_protocol.progress import iter_progress_lines
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
                                      ModelAdapter, ProgressCb)
 
@@ -73,6 +75,11 @@ class YuEAdapter(ModelAdapter):
         # rendered about 120 s and nothing said why. 6 segments covers the
         # advertised range.
         segments = max(1, min(6, int(duration_s // 30)))
+        # infer.py defaults --seed to 42, so an unset seed made every
+        # "random" take of the same inputs byte-identical (audit §2). Draw
+        # one and report it.
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else random.randrange(2**31)
         cmd = [sys.executable, "infer.py",
                "--stage1_model", self.model_paths.get(STAGE1_REPO, STAGE1_REPO),
                "--stage2_model", self.model_paths.get(STAGE2_REPO, STAGE2_REPO),
@@ -81,6 +88,7 @@ class YuEAdapter(ModelAdapter):
                "--run_n_segments", str(segments),
                "--stage2_batch_size", "2",
                "--output_dir", run_dir,
+               "--seed", str(seed),
                "--max_new_tokens", "3000"]
         # mps_flush/sitecustomize.py is auto-imported by the subprocess at startup;
         # it wraps transformers generate() to flush the MPS allocator every 25
@@ -98,21 +106,34 @@ class YuEAdapter(ModelAdapter):
                                 text=True, env=env)
         self.proc = proc
         assert proc.stdout is not None
+        # Three coarse acts: stage-1 LM, stage-2 refine, vocoder/mix. Each
+        # runs its own 0→100 % bars, which used to be reported raw — a
+        # sawtooth that read as a restart every act (audit §5). A bar that
+        # falls back sharply means the next act began.
+        acts, act = 3, 0
+        last_pct = 0.0
         try:
-            for line in proc.stdout:
+            # \r-aware: the inner tqdm bars redraw in place and a plain
+            # line iterator sat silent for tens of minutes inside stage-1
+            # segments (audit §5).
+            for line in iter_progress_lines(proc.stdout):
                 if cancel.cancelled:
                     proc.kill()
                     raise CancelledError()
-                line = line.strip()
-                if line:
-                    # infer.py's stdout is captured because this worker's own
-                    # stdout is the JSONL protocol channel — so without this
-                    # the only family that reports hours of work says nothing
-                    # at all. stderr is the mirror the render card reads.
-                    print(line, file=sys.stderr, flush=True)
-                    match = re.search(r"(\d+)%", line)
-                    fraction = int(match.group(1)) / 100 if match else None
-                    progress_cb(fraction, line[:200])
+                # infer.py's stdout is captured because this worker's own
+                # stdout is the JSONL protocol channel — so without this
+                # the only family that reports hours of work says nothing
+                # at all. stderr is the mirror the render card reads.
+                print(line, file=sys.stderr, flush=True)
+                match = re.search(r"(\d+)%", line)
+                if match:
+                    pct = min(100, int(match.group(1))) / 100
+                    if pct + 0.3 < last_pct and act < acts - 1:
+                        act += 1
+                    last_pct = pct
+                    progress_cb(min(0.98, (act + pct) / acts), line[:200])
+                else:
+                    progress_cb(None, line[:200])
             proc.wait()
         finally:
             self.proc = None
@@ -129,7 +150,7 @@ class YuEAdapter(ModelAdapter):
         import soundfile as sf
         info = sf.info(out_path)
         return GenerateResult(wav_path=out_path, duration_s=info.duration,
-                              sample_rate=info.samplerate)
+                              sample_rate=info.samplerate, seed_used=seed)
 
     @staticmethod
     def _find_output(run_dir: str) -> str | None:

@@ -129,7 +129,11 @@ class AceStepCppAdapter(ModelAdapter):
                 progress_cb(0.55 + 0.4 * min(1.0, step / total),
                             f"denoising: step {step}/{total}",
                             phase="diffusion", step=step, steps=total)
-            elif "[Ace-Synth]" in line and "Write" in line:
+            elif "[VAE]" in line:
+                # The binary announces the decode as "[VAE] Tiled decode:" /
+                # "[VAE] Decoded:" — the old "[Ace-Synth] … Write" match
+                # never fired, so the UI parked on Diffusion through the
+                # whole decode (audit §5).
                 progress_cb(0.97, "decoding audio", phase="vocoder")
 
         self._run_tool([str(bin_dir / "ace-synth"),
@@ -139,6 +143,15 @@ class AceStepCppAdapter(ModelAdapter):
         wav_src = os.path.join(self.work_dir, "request00.wav")
         if not os.path.exists(wav_src):
             raise RuntimeError("ace-synth produced no audio")
+        # The fp16 weight-norm vocoder failure mode is an all-NaN latent
+        # written as a silent WAV that passes every existence check
+        # (audit §3) — fail loudly instead of shipping silence.
+        check, _sr = sf.read(wav_src, dtype="float32", always_2d=True)
+        if check.size and float(abs(check).max()) < 1e-5:
+            raise RuntimeError(
+                "the vocoder produced silence (a known fp16 overflow "
+                "symptom) — try the render again; if it repeats, report "
+                "the model variant")
         progress_cb(1.0, "writing audio", phase="master")
         os.replace(wav_src, out_path)
         info = sf.info(out_path)

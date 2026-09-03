@@ -105,7 +105,9 @@ class StableAudio3Adapter(ModelAdapter):
 
         assert self.sa is not None
         duration_s = min(self.max_duration_s, float(params.get("duration_s", 30.0)))
-        steps = max(1, min(50, int(params.get("steps", 8))))
+        # 150 matches the top of the catalog's declared ranges; the old 50
+        # silently ate medium-base's 51-150 (audit B5).
+        steps = max(1, min(150, int(params.get("steps", 8))))
         seed = params.get("seed")
         seed = int(seed) if seed is not None else -1
 
@@ -115,6 +117,11 @@ class StableAudio3Adapter(ModelAdapter):
             "steps": steps,
             "cfg_scale": float(params.get("cfg_scale", 1.0)),
             "seed": seed,
+            # The library's default sample_size is the Small window (120 s)
+            # and _adapt_sample_size only ever clamps DOWN to it — without
+            # the model's own window Medium tops out at 120 s of its 380
+            # (audit B5).
+            "sample_size": int(self.sa.model_config["sample_size"]),
         }
         negative = (params.get("negative_prompt") or "").strip()
         if negative:
@@ -154,11 +161,18 @@ class StableAudio3Adapter(ModelAdapter):
             kwargs["duration"] = max(duration_s,
                                      min(self.max_duration_s,
                                          src_dur + MIN_EXTEND_TAIL_S))
+            # The library builds the keep-mask only when BOTH ends are set;
+            # start alone left it all-zeros — keep nothing — and "Continue
+            # This Song" shipped unrelated text-to-audio (audit B4,
+            # corr 0.024 with the source, live-confirmed).
+            kwargs["inpaint_mask_end_seconds"] = kwargs["duration"]
             mode = "continuing"
         elif init is not None:
             kwargs["init_audio"] = init
+            # 1.0 is sigma_max = "renoise completely" in this library; 0.9
+            # matches the catalog default and actually keeps some source.
             kwargs["init_noise_level"] = float(
-                params.get("init_noise_level", 1.0))
+                params.get("init_noise_level", 0.9))
             mode = "reimagining"
         else:
             mode = "generating"

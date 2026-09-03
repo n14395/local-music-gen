@@ -1516,12 +1516,56 @@ final class JobsStore {
             // One shell update for the whole adoption, not one per row: on a
             // reconnect with a full queue this ran the sort and every
             // projection once per job. The `await` is outside the batch.
+            var toIngest: [String] = []
             batched {
-                for job in jobs where active[job.jobId] == nil {
-                    adopt(ActiveJob(info: job, progress: job.progress,
-                                    status: job.status))
+                var seen = Set<String>()
+                for job in jobs {
+                    seen.insert(job.jobId)
+                    guard let row = active[job.jobId] else {
+                        adopt(ActiveJob(info: job, progress: job.progress,
+                                        status: job.status))
+                        continue
+                    }
+                    // A terminal event the 500-event ring no longer holds:
+                    // without settling here a row missed at reconnect spun
+                    // "generating" until retention deleted it (audit H2).
+                    guard !row.status.isTerminal,
+                          job.status != row.status else { continue }
+                    active[job.jobId]?.progress = job.progress
+                    switch job.status {
+                    case .succeeded:
+                        previewFrames.removeValue(forKey: job.jobId)
+                        canceling.remove(job.jobId)
+                        toIngest.append(job.jobId)
+                    case .failed:
+                        active[job.jobId]?.status = .failed
+                        active[job.jobId]?.error = job.error
+                        canceling.remove(job.jobId)
+                        dropBatchIngestIfFinished(job.jobId)
+                    case .canceled:
+                        active[job.jobId]?.status = .canceled
+                        notifyOnLanding.remove(job.jobId)
+                        canceling.remove(job.jobId)
+                        dropBatchIngestIfFinished(job.jobId)
+                    default:
+                        active[job.jobId]?.status = job.status
+                    }
                 }
+                // Rows the engine no longer knows at all — it restarted, or
+                // history evicted them. Left alone they spin forever.
+                for (id, row) in active
+                where !seen.contains(id) && !row.status.isTerminal {
+                    active[id]?.status = .failed
+                    active[id]?.error = APIErrorBody(
+                        code: "ENGINE_FORGOT",
+                        message: "the engine restarted before this job "
+                            + "finished")
+                    canceling.remove(id)
+                    dropBatchIngestIfFinished(id)
+                }
+                ensureAutoClearRunning()
             }
+            for id in toIngest { await ingest(jobId: id) }
         }
     }
 
@@ -1614,8 +1658,22 @@ final class JobsStore {
     // MARK: ingest
 
     private func ingest(jobId: String) async {
-        guard let client, let job = try? await client.job(jobId),
-              let result = job.result else {
+        // Retried: painting a succeeded render as failed over one dropped
+        // HTTP fetch was audit H5's app-side half. Three tries, short
+        // backoff — the engine is local, so a real failure stays fast.
+        var fetched: JobInfo?
+        if let client {
+            for attempt in 0..<3 {
+                if let job = try? await client.job(jobId) {
+                    fetched = job
+                    break
+                }
+                if attempt < 2 {
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+            }
+        }
+        guard let job = fetched, let result = job.result else {
             active[jobId]?.status = .failed
             active[jobId]?.error = APIErrorBody(
                 code: "INTERNAL", message: "finished job had no result")

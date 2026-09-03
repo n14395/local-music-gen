@@ -300,13 +300,40 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
             "group": "task"
+          },
+          {
+            "key": "sampler_type",
+            "type": "enum",
+            "label": "Sampler",
+            "default": "pingpong",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "pingpong",
+                "label": "Pingpong (model card recipe)"
+              },
+              {
+                "value": "euler",
+                "label": "Euler"
+              },
+              {
+                "value": "rk4",
+                "label": "RK4"
+              },
+              {
+                "value": "dpmpp",
+                "label": "DPM++"
+              }
+            ],
+            "help": "Which numerical sampler draws the audio. Pingpong is the distilled model's published recipe.",
+            "group": "sampling"
           }
         ]
       },
@@ -322,6 +349,9 @@
         "url": "https://huggingface.co/stabilityai/stable-audio-open-small"
       },
       "notes": "Best for short loops and SFX, not full songs.",
+      "settings": {
+        "sampler_type": "pingpong"
+      },
       "featured": true,
       "variant_of": null,
       "format": "stable-audio-tools",
@@ -512,6 +542,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -876,23 +907,23 @@
             "key": "steps",
             "type": "int",
             "label": "Steps",
-            "default": 50,
+            "default": 30,
             "nullable": false,
-            "min": 10,
+            "min": 4,
             "max": 150,
-            "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
+            "help": "How many flow-matching passes per chunk. 30 is the pipeline's own default; more buys detail at a proportionally longer render, with sharply diminishing returns.",
             "group": "sampling"
           },
           {
             "key": "cfg_scale",
             "type": "float",
             "label": "CFG scale",
-            "default": 4.0,
+            "default": 1.7,
             "nullable": false,
             "min": 1.0,
             "max": 10.0,
-            "step": 0.5,
-            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
+            "step": 0.1,
+            "help": "Classifier-free guidance — how hard the model is pushed towards your prompt. 1.7 is the pipeline's own default; low is loose and natural, high obeys the words and can sound brittle.",
             "group": "sampling"
           },
           {
@@ -1120,10 +1151,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/magnet-small-10secs",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/magnet-small-10secs"
+      ]
     },
     {
       "id": "magnet-small-30s",
@@ -1233,10 +1264,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/magnet-small-30secs",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/magnet-small-30secs"
+      ]
     },
     {
       "id": "hybrid-magnet-small",
@@ -1346,10 +1377,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/hybrid-magnet-small",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/hybrid-magnet-small"
+      ]
     },
     {
       "id": "magnet-medium-30s",
@@ -1459,10 +1490,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/magnet-medium-30secs",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/magnet-medium-30secs"
+      ]
     },
     {
       "id": "magnet-medium-10s",
@@ -1572,10 +1603,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/magnet-medium-10secs",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/magnet-medium-10secs"
+      ]
     },
     {
       "id": "hybrid-magnet-medium",
@@ -1685,10 +1716,10 @@
       "settings": {
         "kind": "magnet"
       },
+      "homepage": "https://huggingface.co/facebook/hybrid-magnet-medium",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/hybrid-magnet-medium"
+      ]
     },
     {
       "id": "musicgen-style",
@@ -1836,11 +1867,11 @@
         "kind": "musicgen",
         "style": true
       },
+      "homepage": "https://huggingface.co/facebook/musicgen-style",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-style"
+      ]
     },
     {
       "id": "musicgen-songstarter",
@@ -1972,12 +2003,12 @@
         "kind": "musicgen",
         "melody": true
       },
+      "homepage": "https://huggingface.co/nateraw/musicgen-songstarter-v0.2",
       "tags": [
         "Instrumental & loops",
         "Melody-guided",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/nateraw/musicgen-songstarter-v0.2"
+      ]
     },
     {
       "id": "acestep-cpp-turbo",
@@ -2019,7 +2050,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 1.0,
         "pipeline": [
           {
@@ -2113,10 +2144,10 @@
         "synth_model": "acestep-v15-turbo-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-sftturbo50",
@@ -2158,7 +2189,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 1.0,
         "pipeline": [
           {
@@ -2252,10 +2283,10 @@
         "synth_model": "acestep-v15-sftturbo50-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-base",
@@ -2297,7 +2328,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 3.0,
         "pipeline": [
           {
@@ -2391,10 +2422,10 @@
         "synth_model": "acestep-v15-base-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-sft",
@@ -2436,7 +2467,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 3.0,
         "pipeline": [
           {
@@ -2530,10 +2561,10 @@
         "synth_model": "acestep-v15-sft-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-xl-turbo",
@@ -2575,7 +2606,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 1.5,
         "pipeline": [
           {
@@ -2669,10 +2700,10 @@
         "synth_model": "acestep-v15-xl-turbo-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-xl-sftturbo50",
@@ -2714,7 +2745,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 1.5,
         "pipeline": [
           {
@@ -2808,10 +2839,10 @@
         "synth_model": "acestep-v15-xl-sftturbo50-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-xl-sft",
@@ -2853,7 +2884,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 5.0,
         "pipeline": [
           {
@@ -2947,10 +2978,10 @@
         "synth_model": "acestep-v15-xl-sft-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "acestep-cpp-xl-base",
@@ -2992,7 +3023,7 @@
           "[instrumental]",
           "[outro]"
         ],
-        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections.",
+        "lyrics_hint": "Section tags on their own lines structure the song; leave a blank line between sections. The composer LM treats the requested length as a suggestion — the song ends where the music does.",
         "est_seconds_per_audio_second": 5.0,
         "pipeline": [
           {
@@ -3086,10 +3117,10 @@
         "synth_model": "acestep-v15-xl-base-Q8_0.gguf",
         "vae": "vae-BF16.gguf"
       },
+      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF"
+      ]
     },
     {
       "id": "minimax-music3-mlx",
@@ -3180,10 +3211,10 @@
         "url": "https://huggingface.co/MiniMaxAI/MiniMax-Music3"
       },
       "notes": "mlx-community conversion running on the mlx-audio runtime. Same community license as the full model.",
+      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-mxfp8",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-mxfp8"
+      ]
     },
     {
       "id": "minimax-music3-mlx-small",
@@ -3274,10 +3305,10 @@
         "url": "https://huggingface.co/MiniMaxAI/MiniMax-Music3"
       },
       "notes": "Experimental mxfp4 quantization: may alter or omit sung words more often than the mxfp8 build. Same community license as the full model.",
+      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-mxfp4",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-mxfp4"
+      ]
     },
     {
       "id": "minimax-music3-mlx-bf16",
@@ -3368,10 +3399,10 @@
         "url": "https://huggingface.co/MiniMaxAI/MiniMax-Music3"
       },
       "notes": "Dense bf16 conversion on the mlx-audio runtime. Same community license as the full model.",
+      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-bf16",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/MiniMax-Music3-bf16"
+      ]
     },
     {
       "id": "musicgen-small-mlx",
@@ -3479,10 +3510,10 @@
       "settings": {
         "backend": "mlx"
       },
+      "homepage": "https://huggingface.co/facebook/musicgen-small",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-small"
+      ]
     },
     {
       "id": "musicgen-medium-mlx",
@@ -3590,10 +3621,10 @@
       "settings": {
         "backend": "mlx"
       },
+      "homepage": "https://huggingface.co/facebook/musicgen-medium",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-medium"
+      ]
     },
     {
       "id": "musicgen-large-mlx",
@@ -3701,10 +3732,10 @@
       "settings": {
         "backend": "mlx"
       },
+      "homepage": "https://huggingface.co/facebook/musicgen-large",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-large"
+      ]
     },
     {
       "id": "musicgen-large",
@@ -3808,10 +3839,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-large",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-large"
+      ]
     },
     {
       "id": "musicgen-melody",
@@ -3924,12 +3955,12 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-melody",
       "tags": [
         "Instrumental & loops",
         "Melody-guided",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-melody"
+      ]
     },
     {
       "id": "musicgen-melody-large",
@@ -4042,12 +4073,12 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-melody-large",
       "tags": [
         "Instrumental & loops",
         "Melody-guided",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-melody-large"
+      ]
     },
     {
       "id": "musicgen-stereo-small",
@@ -4151,10 +4182,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-stereo-small",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-stereo-small"
+      ]
     },
     {
       "id": "musicgen-stereo-medium",
@@ -4258,10 +4289,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-stereo-medium",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-stereo-medium"
+      ]
     },
     {
       "id": "musicgen-stereo-large",
@@ -4365,10 +4396,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-stereo-large",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-stereo-large"
+      ]
     },
     {
       "id": "musicgen-stereo-melody",
@@ -4481,12 +4512,12 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-stereo-melody",
       "tags": [
         "Instrumental & loops",
         "Melody-guided",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-stereo-melody"
+      ]
     },
     {
       "id": "musicgen-stereo-melody-large",
@@ -4599,12 +4630,12 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/facebook/musicgen-stereo-melody-large",
       "tags": [
         "Instrumental & loops",
         "Melody-guided",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/musicgen-stereo-melody-large"
+      ]
     },
     {
       "id": "micro-musicgen-jungle",
@@ -4708,10 +4739,10 @@
         "url": null
       },
       "notes": "Community model by Aaron Abebe; niche by design.",
+      "homepage": "https://huggingface.co/pharoAIsanders420/micro-musicgen-jungle",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/pharoAIsanders420/micro-musicgen-jungle"
+      ]
     },
     {
       "id": "stableaudio-open-10",
@@ -4779,6 +4810,37 @@
             "group": "sampling"
           },
           {
+            "key": "sampler_type",
+            "type": "enum",
+            "label": "Sampler",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "dpmpp-3m-sde",
+                "label": "DPM++ 3M SDE"
+              },
+              {
+                "value": "dpmpp-2m-sde",
+                "label": "DPM++ 2M SDE"
+              },
+              {
+                "value": "v-ddim",
+                "label": "DDIM"
+              },
+              {
+                "value": "k-heun",
+                "label": "Heun"
+              },
+              {
+                "value": "k-lms",
+                "label": "LMS"
+              }
+            ],
+            "help": "Which numerical sampler draws the audio — leave unset for the tool's default.",
+            "group": "sampling"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -4802,12 +4864,12 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
             "group": "task"
           }
         ]
@@ -4824,11 +4886,11 @@
         "url": null
       },
       "notes": "Accept the license on huggingface.co and add your token in Settings.",
+      "homepage": "https://huggingface.co/stabilityai/stable-audio-open-1.0",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/stabilityai/stable-audio-open-1.0"
+      ]
     },
     {
       "id": "stableaudio3-small-music",
@@ -4929,12 +4991,12 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
             "group": "task"
           },
           {
@@ -4993,11 +5055,11 @@
         "url": "https://stability.ai/community-license-agreement"
       },
       "notes": "Accept the Stable Audio 3 license on huggingface.co and add your token in Settings. One audio input per job: repaint > continue > reimagine.",
+      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-music",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-music"
+      ]
     },
     {
       "id": "stableaudio3-medium",
@@ -5098,12 +5160,12 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
             "group": "task"
           },
           {
@@ -5166,11 +5228,11 @@
         "device": "mps",
         "max_duration_s": 380.0
       },
+      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium"
+      ]
     },
     {
       "id": "stableaudio3-medium-base",
@@ -5271,12 +5333,12 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
             "group": "task"
           },
           {
@@ -5339,11 +5401,11 @@
         "device": "mps",
         "max_duration_s": 380.0
       },
+      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium-base",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium-base"
+      ]
     },
     {
       "id": "stableaudio3-small-sfx",
@@ -5444,12 +5506,54 @@
             "key": "init_noise_level",
             "type": "float",
             "label": "Reimagine amount",
-            "default": 1.0,
+            "default": 0.9,
             "nullable": false,
-            "min": 0.1,
-            "max": 10.0,
-            "step": 0.1,
-            "help": "How far to depart from the source (higher = freer).",
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How far to depart from the source (1.0 = ignore it entirely).",
+            "group": "task"
+          },
+          {
+            "key": "extend_audio",
+            "type": "audio",
+            "label": "Continue source",
+            "default": null,
+            "nullable": true,
+            "help": "Audio to continue — the output starts with it and keeps going (120 s total cap).",
+            "group": "task"
+          },
+          {
+            "key": "inpaint_audio",
+            "type": "audio",
+            "label": "Repaint source",
+            "default": null,
+            "nullable": true,
+            "help": "Audio to partially regenerate (with the region below); output keeps its length.",
+            "group": "task"
+          },
+          {
+            "key": "inpaint_start_s",
+            "type": "float",
+            "label": "Repaint from (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 120.0,
+            "step": 0.5,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task"
+          },
+          {
+            "key": "inpaint_end_s",
+            "type": "float",
+            "label": "Repaint to (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 120.0,
+            "step": 0.5,
+            "help": "Where the regenerated span ends, in seconds.",
             "group": "task"
           }
         ]
@@ -5469,11 +5573,11 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx"
+      ]
     },
     {
       "id": "acestep-15-dit-base",
@@ -5871,6 +5975,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint",
                 "extract",
@@ -6061,11 +6166,11 @@
         "dit_repo": "ACE-Step/acestep-v15-base",
         "shift": 1.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-15-dit-sft",
@@ -6463,6 +6568,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint",
                 "extract",
@@ -6653,11 +6759,11 @@
         "dit_repo": "ACE-Step/acestep-v15-sft",
         "shift": 1.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-15-dit-xl-turbo",
@@ -7043,6 +7149,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -7161,11 +7268,11 @@
         "dit_repo": "ACE-Step/acestep-v15-xl-turbo",
         "shift": 3.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-15-dit-xl-sft",
@@ -7563,6 +7670,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint",
                 "extract",
@@ -7753,11 +7861,11 @@
         "dit_repo": "ACE-Step/acestep-v15-xl-sft",
         "shift": 1.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-15-dit-xl-base",
@@ -8155,6 +8263,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint",
                 "extract",
@@ -8345,11 +8454,11 @@
         "dit_repo": "ACE-Step/acestep-v15-xl-base",
         "shift": 1.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-xl-vocals2music",
@@ -8562,11 +8671,11 @@
         "lora_repo": "rtikw/acestep15xlsft-lora-music",
         "shift": 6.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-xl-lora-music",
@@ -8724,6 +8833,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -8787,6 +8897,36 @@
             }
           },
           {
+            "key": "denoising_strength",
+            "type": "float",
+            "label": "Denoise depth",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the diffusion schedule runs — below 1.0 keeps more of the source's fabric (mainly useful with Cover).",
+            "group": "task"
+          },
+          {
+            "key": "repainting_strength",
+            "type": "float",
+            "label": "Repaint strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How completely the repainted span is re-imagined — 1.0 rewrites it outright.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
             "key": "audio_codes",
             "type": "string",
             "label": "Captured plan",
@@ -8819,11 +8959,11 @@
         "lora_repo": "rtikw/acestep15xlsft-lora-music",
         "shift": 6.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-xl-lora-piano",
@@ -8981,6 +9121,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -9044,6 +9185,36 @@
             }
           },
           {
+            "key": "denoising_strength",
+            "type": "float",
+            "label": "Denoise depth",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the diffusion schedule runs — below 1.0 keeps more of the source's fabric (mainly useful with Cover).",
+            "group": "task"
+          },
+          {
+            "key": "repainting_strength",
+            "type": "float",
+            "label": "Repaint strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How completely the repainted span is re-imagined — 1.0 rewrites it outright.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
             "key": "audio_codes",
             "type": "string",
             "label": "Captured plan",
@@ -9076,11 +9247,11 @@
         "lora_repo": "rtikw/acestep15xlsft-lora-piano",
         "shift": 6.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-xl-lora-drums",
@@ -9238,6 +9409,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -9301,6 +9473,36 @@
             }
           },
           {
+            "key": "denoising_strength",
+            "type": "float",
+            "label": "Denoise depth",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the diffusion schedule runs — below 1.0 keeps more of the source's fabric (mainly useful with Cover).",
+            "group": "task"
+          },
+          {
+            "key": "repainting_strength",
+            "type": "float",
+            "label": "Repaint strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How completely the repainted span is re-imagined — 1.0 rewrites it outright.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
             "key": "audio_codes",
             "type": "string",
             "label": "Captured plan",
@@ -9333,11 +9535,11 @@
         "lora_repo": "rtikw/acestep15xlsft-lora-drums",
         "shift": 6.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "acestep-xl-lora-guitar",
@@ -9495,6 +9697,7 @@
             "applies_when": {
               "param": "task_type",
               "values": [
+                "text2music",
                 "cover",
                 "repaint"
               ]
@@ -9558,6 +9761,36 @@
             }
           },
           {
+            "key": "denoising_strength",
+            "type": "float",
+            "label": "Denoise depth",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the diffusion schedule runs — below 1.0 keeps more of the source's fabric (mainly useful with Cover).",
+            "group": "task"
+          },
+          {
+            "key": "repainting_strength",
+            "type": "float",
+            "label": "Repaint strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.05,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How completely the repainted span is re-imagined — 1.0 rewrites it outright.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
             "key": "audio_codes",
             "type": "string",
             "label": "Captured plan",
@@ -9590,11 +9823,11 @@
         "lora_repo": "rtikw/acestep15xlsft-lora-guitar",
         "shift": 6.0
       },
+      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5"
+      ]
     },
     {
       "id": "magenta-rt2-small",
@@ -9709,11 +9942,11 @@
       "settings": {
         "size": "mrt2_small"
       },
+      "homepage": "https://huggingface.co/google/magenta-realtime-2",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/google/magenta-realtime-2"
+      ]
     },
     {
       "id": "magenta-rt2-base",
@@ -9828,11 +10061,11 @@
       "settings": {
         "size": "mrt2_base"
       },
+      "homepage": "https://huggingface.co/google/magenta-realtime-2",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/google/magenta-realtime-2"
+      ]
     },
     {
       "id": "songgen-mixed-pro",
@@ -9956,10 +10189,10 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/LiuZH-19/SongGen_mixed_pro",
       "tags": [
         "Songs with vocals"
-      ],
-      "homepage": "https://huggingface.co/LiuZH-19/SongGen_mixed_pro"
+      ]
     },
     {
       "id": "diffrhythm2",
@@ -9968,7 +10201,7 @@
       "format": null,
       "variant_of": null,
       "display_name": "DiffRhythm2 (full songs)",
-      "description": "Full-song lyrics-to-song via block-cache flow matching — structured songs up to 3½ minutes, style set by a text prompt or a reference clip, lyrics as timestamped LRC lines. Runs on the GPU (MPS) as of 2026-08-26; the estimate still shows the measured CPU worst case.",
+      "description": "Full-song lyrics-to-song via block-cache flow matching — structured songs up to 3½ minutes, style set by a text prompt or a reference clip, lyrics shaped by structure tags. Runs on the GPU (MPS) as of 2026-08-26; the estimate still shows the measured CPU worst case.",
       "hf_repos": [
         {
           "repo_id": "ASLP-lab/DiffRhythm2",
@@ -9987,7 +10220,15 @@
         "sample_rate": 44100,
         "outputs_per_job_max": 1,
         "est_seconds_per_audio_second": 11.0,
-        "lyrics_hint": "LRC format: one line per lyric, each starting with a [mm:ss.xx] timestamp. Untimed plain lines work, less precisely.",
+        "lyrics_tags": [
+          "[verse]",
+          "[chorus]",
+          "[bridge]",
+          "[inst]",
+          "[intro]",
+          "[outro]"
+        ],
+        "lyrics_hint": "Plain lyric lines, with structure tags like [verse], [chorus] or [inst] on their own lines to shape the song. No timestamps — they would be sung as words.",
         "params": [
           {
             "key": "style_audio",
@@ -10047,11 +10288,11 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/ASLP-lab/DiffRhythm2",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/ASLP-lab/DiffRhythm2"
+      ]
     },
     {
       "id": "inspiremusic-15b-long",
@@ -10076,7 +10317,7 @@
           "max_s": 180,
           "default_s": 30
         },
-        "sample_rate": 48000,
+        "sample_rate": 24000,
         "outputs_per_job_max": 1,
         "est_seconds_per_audio_second": 3.5,
         "params": [
@@ -10161,11 +10402,11 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/rtikw/InspireMusic-1.5B-Long",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/rtikw/InspireMusic-1.5B-Long"
+      ]
     },
     {
       "id": "songbloom-150s-dpo",
@@ -10240,11 +10481,11 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/rtikw/SongBloom",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/rtikw/SongBloom"
+      ]
     },
     {
       "id": "songbloom-150s",
@@ -10321,11 +10562,11 @@
         "variant": "songbloom_full_150s",
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/rtikw/SongBloom",
       "tags": [
         "Songs with vocals",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/rtikw/SongBloom"
+      ]
     },
     {
       "id": "vampnet-vamp",
@@ -10489,11 +10730,11 @@
       "settings": {
         "device": "cpu"
       },
+      "homepage": "https://huggingface.co/hugggof/vampnet",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/hugggof/vampnet"
+      ]
     },
     {
       "id": "vampnet-choir",
@@ -10583,6 +10824,30 @@
             "group": "task"
           },
           {
+            "key": "prefix_s",
+            "type": "float",
+            "label": "Keep the start (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many opening seconds untouched and vamp only what follows — set both ends to in-fill the middle.",
+            "group": "task"
+          },
+          {
+            "key": "suffix_s",
+            "type": "float",
+            "label": "Keep the end (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many closing seconds untouched — with a kept start too, the model writes only the gap between them.",
+            "group": "task"
+          },
+          {
             "key": "temperature",
             "type": "float",
             "label": "Temperature",
@@ -10634,11 +10899,11 @@
         "lora": "choir",
         "device": "cpu"
       },
+      "homepage": "https://huggingface.co/hugggof/vampnet",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/hugggof/vampnet"
+      ]
     },
     {
       "id": "vampnet-n64",
@@ -10728,6 +10993,30 @@
             "group": "task"
           },
           {
+            "key": "prefix_s",
+            "type": "float",
+            "label": "Keep the start (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many opening seconds untouched and vamp only what follows — set both ends to in-fill the middle.",
+            "group": "task"
+          },
+          {
+            "key": "suffix_s",
+            "type": "float",
+            "label": "Keep the end (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many closing seconds untouched — with a kept start too, the model writes only the gap between them.",
+            "group": "task"
+          },
+          {
             "key": "temperature",
             "type": "float",
             "label": "Temperature",
@@ -10779,11 +11068,11 @@
         "lora": "n64",
         "device": "cpu"
       },
+      "homepage": "https://huggingface.co/hugggof/vampnet",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/hugggof/vampnet"
+      ]
     },
     {
       "id": "vampnet-machines",
@@ -10873,6 +11162,30 @@
             "group": "task"
           },
           {
+            "key": "prefix_s",
+            "type": "float",
+            "label": "Keep the start (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many opening seconds untouched and vamp only what follows — set both ends to in-fill the middle.",
+            "group": "task"
+          },
+          {
+            "key": "suffix_s",
+            "type": "float",
+            "label": "Keep the end (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many closing seconds untouched — with a kept start too, the model writes only the gap between them.",
+            "group": "task"
+          },
+          {
             "key": "temperature",
             "type": "float",
             "label": "Temperature",
@@ -10924,11 +11237,11 @@
         "lora": "machines",
         "device": "cpu"
       },
+      "homepage": "https://huggingface.co/hugggof/vampnet",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/hugggof/vampnet"
+      ]
     },
     {
       "id": "vampnet-orchestral",
@@ -11018,6 +11331,30 @@
             "group": "task"
           },
           {
+            "key": "prefix_s",
+            "type": "float",
+            "label": "Keep the start (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many opening seconds untouched and vamp only what follows — set both ends to in-fill the middle.",
+            "group": "task"
+          },
+          {
+            "key": "suffix_s",
+            "type": "float",
+            "label": "Keep the end (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "Leave this many closing seconds untouched — with a kept start too, the model writes only the gap between them.",
+            "group": "task"
+          },
+          {
             "key": "temperature",
             "type": "float",
             "label": "Temperature",
@@ -11069,11 +11406,11 @@
         "lora": "orchestral",
         "device": "cpu"
       },
+      "homepage": "https://huggingface.co/hugggof/vampnet",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/hugggof/vampnet"
+      ]
     },
     {
       "id": "melodyflow-t24",
@@ -11194,11 +11531,11 @@
       "settings": {
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/facebook/melodyflow-t24-30secs",
       "tags": [
         "Instrumental & loops",
         "Remix & restyle"
-      ],
-      "homepage": "https://huggingface.co/facebook/melodyflow-t24-30secs"
+      ]
     },
     {
       "id": "audioldm2-music",
@@ -11301,10 +11638,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/cvssp/audioldm2-music",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/cvssp/audioldm2-music"
+      ]
     },
     {
       "id": "audioldm2",
@@ -11407,10 +11744,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/cvssp/audioldm2",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/cvssp/audioldm2"
+      ]
     },
     {
       "id": "audioldm2-large",
@@ -11513,10 +11850,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/cvssp/audioldm2-large",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/cvssp/audioldm2-large"
+      ]
     },
     {
       "id": "audioldm-s",
@@ -11619,10 +11956,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/cvssp/audioldm-s-full-v2",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/cvssp/audioldm-s-full-v2"
+      ]
     },
     {
       "id": "audioldm-m",
@@ -11725,10 +12062,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/cvssp/audioldm-m-full",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/cvssp/audioldm-m-full"
+      ]
     },
     {
       "id": "musicldm",
@@ -11831,10 +12168,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/ucsd-reach/musicldm",
       "tags": [
         "Instrumental & loops"
-      ],
-      "homepage": "https://huggingface.co/ucsd-reach/musicldm"
+      ]
     },
     {
       "id": "separation-htdemucs",
@@ -11898,10 +12235,10 @@
         "engine": "demucs",
         "model": "htdemucs"
       },
+      "homepage": "https://github.com/adefossez/demucs",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/adefossez/demucs"
+      ]
     },
     {
       "id": "separation-htdemucs-ft",
@@ -11965,10 +12302,10 @@
         "engine": "demucs",
         "model": "htdemucs_ft"
       },
+      "homepage": "https://github.com/adefossez/demucs",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/adefossez/demucs"
+      ]
     },
     {
       "id": "separation-htdemucs-6s",
@@ -12032,10 +12369,10 @@
         "engine": "demucs",
         "model": "htdemucs_6s"
       },
+      "homepage": "https://github.com/adefossez/demucs",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/adefossez/demucs"
+      ]
     },
     {
       "id": "separation-melband-vocals",
@@ -12100,10 +12437,10 @@
           "MelBandRoformer.ckpt": "vocals_mel_band_roformer.ckpt"
         }
       },
+      "homepage": "https://huggingface.co/KimberleyJSN/melbandroformer",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/KimberleyJSN/melbandroformer"
+      ]
     },
     {
       "id": "separation-bsroformer-viperx",
@@ -12165,10 +12502,10 @@
         "engine": "roformer",
         "checkpoint": "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
       },
+      "homepage": "https://huggingface.co/rtikw/localmusic-assets",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/rtikw/localmusic-assets"
+      ]
     },
     {
       "id": "separation-hdemucs-mmi",
@@ -12232,10 +12569,10 @@
         "engine": "demucs",
         "model": "hdemucs_mmi"
       },
+      "homepage": "https://github.com/adefossez/demucs",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/adefossez/demucs"
+      ]
     },
     {
       "id": "separation-mdx-extra",
@@ -12299,10 +12636,10 @@
         "engine": "demucs",
         "model": "mdx_extra"
       },
+      "homepage": "https://github.com/adefossez/demucs",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/adefossez/demucs"
+      ]
     },
     {
       "id": "cleanup-uvr-denoise",
@@ -12356,10 +12693,10 @@
         "engine": "roformer",
         "checkpoint": "UVR-DeNoise.pth"
       },
+      "homepage": "https://huggingface.co/Politrees/UVR_resources",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/Politrees/UVR_resources"
+      ]
     },
     {
       "id": "cleanup-uvr-deecho-dereverb",
@@ -12413,10 +12750,10 @@
         "engine": "roformer",
         "checkpoint": "UVR-DeEcho-DeReverb.pth"
       },
+      "homepage": "https://huggingface.co/Politrees/UVR_resources",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/Politrees/UVR_resources"
+      ]
     },
     {
       "id": "separation-uvr-kimvocal2",
@@ -12470,10 +12807,10 @@
         "engine": "roformer",
         "checkpoint": "Kim_Vocal_2.onnx"
       },
+      "homepage": "https://huggingface.co/Politrees/UVR_resources",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/Politrees/UVR_resources"
+      ]
     },
     {
       "id": "separation-uvr-vocft",
@@ -12527,10 +12864,10 @@
         "engine": "roformer",
         "checkpoint": "UVR-MDX-NET-Voc_FT.onnx"
       },
+      "homepage": "https://huggingface.co/Politrees/UVR_resources",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/Politrees/UVR_resources"
+      ]
     },
     {
       "id": "separation-uvr-karaoke",
@@ -12584,10 +12921,10 @@
         "engine": "roformer",
         "checkpoint": "UVR_MDXNET_KARA_2.onnx"
       },
+      "homepage": "https://huggingface.co/Politrees/UVR_resources",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/Politrees/UVR_resources"
+      ]
     },
     {
       "id": "separation-bsrnn",
@@ -12676,10 +13013,10 @@
         "engine": "bsrnn",
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/rtikw/bsrnn-large",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://huggingface.co/rtikw/bsrnn-large"
+      ]
     },
     {
       "id": "separation-scnet",
@@ -12736,10 +13073,10 @@
         "ckpt_url": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v.1.0.6/scnet_checkpoint_musdb18.ckpt",
         "device": "mps"
       },
+      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases"
+      ]
     },
     {
       "id": "separation-mdx23c-vocals",
@@ -12796,10 +13133,10 @@
         "ckpt_url": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.0/model_vocals_mdx23c_sdr_10.17.ckpt",
         "device": "mps"
       },
+      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases"
+      ]
     },
     {
       "id": "separation-scnet-xl",
@@ -12856,10 +13193,10 @@
         "ckpt_url": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.15/model_scnet_ep_36_sdr_10.0891.ckpt",
         "device": "mps"
       },
+      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases"
+      ]
     },
     {
       "id": "separation-drumsep",
@@ -12868,9 +13205,9 @@
       "format": "MDX23C · drum kit",
       "variant_of": "separation-bsrnn",
       "display_name": "Drum-kit split (DrumSep)",
-      "description": "Splits a DRUM track into its pieces — kick, snare, toms, hi-hat and cymbals as separate parts. Feed it the drum stem from a 4-stem split; nothing else in the catalog does this.",
+      "description": "Splits a DRUM track into its pieces — kick, snare, toms, hi-hat, ride and crash as separate parts. Feed it the drum stem from a 4-stem split; nothing else in the catalog does this.",
       "hf_repos": [],
-      "size_bytes": 180000000,
+      "size_bytes": 438000000,
       "capabilities": {
         "supports_lyrics": false,
         "instrumental_only": true,
@@ -12899,27 +13236,27 @@
       },
       "requirements": {
         "min_ram_bytes": 8589934592,
-        "disk_bytes": 180000000,
+        "disk_bytes": 438000000,
         "speed_tier": "slow"
       },
       "license": {
-        "name": "MIT (code); community checkpoint (jarredou)",
+        "name": "MIT (code); community checkpoint (aufr33 + jarredou)",
         "commercial_use": false,
         "requires_hf_token": false,
         "url": "https://github.com/ZFTurbo/Music-Source-Separation-Training"
       },
-      "notes": "Community-trained checkpoint (kick SDR 16.7 on the DrumSep test set). Expects drums in, not a full mix.",
+      "notes": "Community-trained checkpoint (ep 141, SDR 10.81). Expects drums in, not a full mix. The original jarredou GitHub release vanished (2026-09 audit); these URLs are the MSST-WebUI mirror of the same files.",
       "settings": {
         "engine": "msst",
         "model_type": "mdx23c",
-        "config_url": "https://github.com/jarredou/models/releases/download/DrumSep/config_mdx23c.yaml",
-        "ckpt_url": "https://github.com/jarredou/models/releases/download/DrumSep/drumsep_5stems_mdx23c_jarredou.ckpt",
+        "config_url": "https://raw.githubusercontent.com/SUC-DriverOld/MSST-WebUI/main/configs_backup/multi_stem_models/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt.yaml",
+        "ckpt_url": "https://huggingface.co/Sucial/MSST-WebUI/resolve/main/All_Models/multi_stem_models/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt",
         "device": "mps"
       },
+      "homepage": "https://huggingface.co/Sucial/MSST-WebUI",
       "tags": [
         "Stem separation"
-      ],
-      "homepage": "https://github.com/jarredou/models/releases/tag/DrumSep"
+      ]
     },
     {
       "id": "analysis-basic",
@@ -12985,10 +13322,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/rtikw/localmusic-assets",
       "tags": [
         "Musical analysis"
-      ],
-      "homepage": "https://huggingface.co/rtikw/localmusic-assets"
+      ]
     },
     {
       "id": "analysis-clap",
@@ -13070,10 +13407,10 @@
       "settings": {
         "embed": "clap"
       },
+      "homepage": "https://huggingface.co/laion/larger_clap_music",
       "tags": [
         "Musical analysis"
-      ],
-      "homepage": "https://huggingface.co/laion/larger_clap_music"
+      ]
     },
     {
       "id": "analysis-chords-btc",
@@ -13137,11 +13474,11 @@
         "mode": "chords",
         "voca": "large"
       },
+      "homepage": "https://huggingface.co/rtikw/localmusic-assets",
       "tags": [
         "Notes & MIDI",
         "Musical analysis"
-      ],
-      "homepage": "https://huggingface.co/rtikw/localmusic-assets"
+      ]
     },
     {
       "id": "analysis-squim",
@@ -13194,10 +13531,10 @@
       "settings": {
         "mode": "squim"
       },
+      "homepage": "https://pytorch.org/audio/stable/pipelines.html",
       "tags": [
         "Musical analysis"
-      ],
-      "homepage": "https://pytorch.org/audio/stable/pipelines.html"
+      ]
     },
     {
       "id": "timbre-rave-percussion",
@@ -13269,10 +13606,10 @@
       "settings": {
         "rave_model": "percussion"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-vintage",
@@ -13344,10 +13681,10 @@
       "settings": {
         "rave_model": "vintage"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-sol_ordinario",
@@ -13419,10 +13756,10 @@
       "settings": {
         "rave_model": "sol_ordinario"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-VCTK",
@@ -13494,10 +13831,10 @@
       "settings": {
         "rave_model": "VCTK"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-nasa",
@@ -13569,10 +13906,10 @@
       "settings": {
         "rave_model": "nasa"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-musicnet",
@@ -13644,10 +13981,10 @@
       "settings": {
         "rave_model": "musicnet"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-sol_full",
@@ -13719,10 +14056,10 @@
       "settings": {
         "rave_model": "sol_full"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "timbre-rave-isis",
@@ -13794,10 +14131,10 @@
       "settings": {
         "rave_model": "isis"
       },
+      "homepage": "https://acids-ircam.github.io/rave_models_download",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://acids-ircam.github.io/rave_models_download"
+      ]
     },
     {
       "id": "reamp-nam",
@@ -13855,10 +14192,10 @@
         "url": null
       },
       "notes": "The NAM runtime is MIT; each capture carries its own terms on the site it came from, and the app keeps the author and licence beside every capture it stores. Captures are tiny (KB–MB) and are kept in the model library's auxiliary folder — counted with your models and moved with them, but never removed by a clear.",
+      "homepage": "https://www.tone3000.com/",
       "tags": [
         "Remix & restyle"
-      ],
-      "homepage": "https://www.tone3000.com/"
+      ]
     },
     {
       "id": "convert-voice-seedvc",
@@ -13966,10 +14303,10 @@
         "url": "https://github.com/Plachtaa/seed-vc"
       },
       "notes": "Runs on CPU (about 4–5× the clip length). The reference voice is supplied per job and never stored — this app ships no voice library, deliberately. Weights (~2 GB) auto-fetch on the first conversion.",
+      "homepage": "https://huggingface.co/Plachtaa/seed-vc",
       "tags": [
         "Voice & singing"
-      ],
-      "homepage": "https://huggingface.co/Plachtaa/seed-vc"
+      ]
     },
     {
       "id": "convert-voice-seedvc-v2",
@@ -14089,10 +14426,10 @@
       "settings": {
         "version": 2
       },
+      "homepage": "https://huggingface.co/Plachtaa/seed-vc",
       "tags": [
         "Voice & singing"
-      ],
-      "homepage": "https://huggingface.co/Plachtaa/seed-vc"
+      ]
     },
     {
       "id": "sing-yingmusic",
@@ -14124,7 +14461,7 @@
           "max_s": 1,
           "default_s": 1
         },
-        "sample_rate": 44100,
+        "sample_rate": 48000,
         "outputs_per_job_max": 1,
         "est_seconds_per_audio_second": 0,
         "tasks": [
@@ -14136,8 +14473,8 @@
             "type": "audio",
             "label": "Source audio",
             "default": null,
-            "nullable": false,
-            "help": "The melody to sing — a vocal or single-line instrumental recording the singer follows."
+            "nullable": true,
+            "help": "The melody to sing — a vocal or single-line instrumental recording the singer follows. Optional when a MIDI melody is set."
           },
           {
             "key": "melody_midi",
@@ -14160,7 +14497,7 @@
             "type": "string",
             "label": "Reference words",
             "default": null,
-            "nullable": true,
+            "nullable": false,
             "placeholder": "the words spoken/sung in the reference clip",
             "help": "What the reference recording actually says or sings — the model needs the text to read the voice."
           },
@@ -14169,9 +14506,19 @@
             "type": "string",
             "label": "Lyrics",
             "default": null,
-            "nullable": true,
+            "nullable": false,
             "placeholder": "the words to sing",
             "help": "The words to perform to the melody."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
           },
           {
             "key": "nfe_steps",
@@ -14219,10 +14566,10 @@
         "url": null
       },
       "notes": "The voice is supplied per job and never stored — no voice library ships with this app, deliberately. Chinese-centric training; English works, judge it by ear. The SDPA attention substitute ignores their sliding window — restoring it is the known quality follow-up.",
+      "homepage": "https://huggingface.co/GiantAILab/YingMusic-Singer",
       "tags": [
         "Voice & singing"
-      ],
-      "homepage": "https://huggingface.co/GiantAILab/YingMusic-Singer"
+      ]
     },
     {
       "id": "tag-clap",
@@ -14291,10 +14638,10 @@
         "embed": "clap",
         "tagger": "zeroshot"
       },
+      "homepage": "https://huggingface.co/laion/larger_clap_music",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/laion/larger_clap_music"
+      ]
     },
     {
       "id": "tag-essentia-discogs",
@@ -14354,10 +14701,10 @@
         "url": "https://essentia.upf.edu/models.html"
       },
       "notes": "Non-commercial: MTG licenses the models CC BY-NC-SA and offers commercial terms on request. The 400-style genre vocabulary is Discogs's own taxonomy — expect precise electronic-music subgenres in particular.",
+      "homepage": "https://essentia.upf.edu/models.html",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://essentia.upf.edu/models.html"
+      ]
     },
     {
       "id": "lyrics-whisper-turbo",
@@ -14439,10 +14786,10 @@
       "settings": {
         "engine": "whisper"
       },
+      "homepage": "https://huggingface.co/mlx-community/whisper-large-v3-turbo-q4",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/whisper-large-v3-turbo-q4"
+      ]
     },
     {
       "id": "lyrics-whisper-turbo-fp16",
@@ -14524,10 +14871,10 @@
       "settings": {
         "engine": "whisper"
       },
+      "homepage": "https://huggingface.co/mlx-community/whisper-large-v3-turbo",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/whisper-large-v3-turbo"
+      ]
     },
     {
       "id": "caption-qwen2audio",
@@ -14616,10 +14963,10 @@
       "settings": {
         "engine": "qwen2audio"
       },
+      "homepage": "https://huggingface.co/mlx-community/Qwen2-Audio-7B-Instruct-4bit",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/Qwen2-Audio-7B-Instruct-4bit"
+      ]
     },
     {
       "id": "caption-lpmusiccaps",
@@ -14702,10 +15049,10 @@
         "engine": "lpmusiccaps",
         "checkpoint": "transfer"
       },
+      "homepage": "https://huggingface.co/seungheondoh/lp-music-caps",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/seungheondoh/lp-music-caps"
+      ]
     },
     {
       "id": "lyrics-acestep-transcriber",
@@ -14770,13 +15117,10 @@
         "url": "https://github.com/ace-step/ACE-Step-1.5"
       },
       "notes": "16 GB of weights; loading it unloads the resident music model. No per-line timings — structure tags ride inline in the text.",
-      "settings": {
-        "role": "transcriber"
-      },
+      "homepage": "https://huggingface.co/ACE-Step/acestep-transcriber",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/acestep-transcriber"
+      ]
     },
     {
       "id": "caption-acestep-captioner",
@@ -14850,13 +15194,10 @@
         "url": "https://github.com/ace-step/ACE-Step-1.5"
       },
       "notes": "16 GB of weights; loading it unloads the resident music model. The most precise describer tested here — feeds prompt-from-reference and library annotation.",
-      "settings": {
-        "role": "captioner"
-      },
+      "homepage": "https://huggingface.co/ACE-Step/acestep-captioner",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/ACE-Step/acestep-captioner"
+      ]
     },
     {
       "id": "caption-moss-music",
@@ -14904,7 +15245,17 @@
             "default": null,
             "nullable": true,
             "placeholder": "What is the chord progression in the chorus?",
-            "help": "Ask something specific. Left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+            "help": "Caption task only — the lyrics task always transcribes. Ask something specific; left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+          },
+          {
+            "key": "max_new_tokens",
+            "type": "int",
+            "label": "Max tokens",
+            "default": 3072,
+            "nullable": false,
+            "min": 256,
+            "max": 8192,
+            "help": "Token budget for reasoning plus answer. A Thinking model spends most of it reasoning — raise this if the answer arrives cut off."
           }
         ],
         "est_realtime_factor": 1.5
@@ -14921,10 +15272,10 @@
         "url": null
       },
       "notes": "A Thinking model — most of its tokens are reasoning, stripped from the answer. Lyric transcription quality vs the Whisper/ACE transcribers is unmeasured — the picker offers all of them. The MLX backend rides a pinned community fork; the stock PyTorch path is unusable on Macs (<0.3 tok/s) and is not shipped.",
+      "homepage": "https://huggingface.co/mlx-community/MOSS-Music-8B-Thinking-8bit",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/MOSS-Music-8B-Thinking-8bit"
+      ]
     },
     {
       "id": "caption-moss-music-4bit",
@@ -14972,7 +15323,17 @@
             "default": null,
             "nullable": true,
             "placeholder": "What is the chord progression in the chorus?",
-            "help": "Ask something specific. Left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+            "help": "Caption task only — the lyrics task always transcribes. Ask something specific; left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+          },
+          {
+            "key": "max_new_tokens",
+            "type": "int",
+            "label": "Max tokens",
+            "default": 3072,
+            "nullable": false,
+            "min": 256,
+            "max": 8192,
+            "help": "Token budget for reasoning plus answer. A Thinking model spends most of it reasoning — raise this if the answer arrives cut off."
           }
         ],
         "est_realtime_factor": 1.2
@@ -14989,10 +15350,10 @@
         "url": null
       },
       "notes": "Same adapter and prompts as the 8-bit entry; quantisation quality difference is unmeasured here.",
+      "homepage": "https://huggingface.co/mlx-community/MOSS-Music-8B-Thinking-4bit",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/MOSS-Music-8B-Thinking-4bit"
+      ]
     },
     {
       "id": "caption-moss-music-instruct",
@@ -15040,7 +15401,17 @@
             "default": null,
             "nullable": true,
             "placeholder": "What is the chord progression in the chorus?",
-            "help": "Ask something specific. Left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+            "help": "Caption task only — the lyrics task always transcribes. Ask something specific; left blank it writes a full analysis: genre, instrumentation, tempo, key, structure."
+          },
+          {
+            "key": "max_new_tokens",
+            "type": "int",
+            "label": "Max tokens",
+            "default": 3072,
+            "nullable": false,
+            "min": 256,
+            "max": 8192,
+            "help": "Token budget for the answer (this edition answers directly, without a visible reasoning pass)."
           }
         ],
         "est_realtime_factor": 1.0
@@ -15057,10 +15428,10 @@
         "url": null
       },
       "notes": "No public MLX quant of the Instruct weights exists, so this is a first-party 4-bit conversion (moss_music_mlx converter, group 64, audio encoder kept bf16) of OpenMOSS-Team/MOSS-Music-8B-Instruct, hosted unmodified on the user-owned mirror (Apache-2.0). Verified against the Thinking entries' adapter — same prompts, same output shape.",
+      "homepage": "https://huggingface.co/rtikw/MOSS-Music-8B-Instruct-4bit",
       "tags": [
         "Hears & describes"
-      ],
-      "homepage": "https://huggingface.co/rtikw/MOSS-Music-8B-Instruct-4bit"
+      ]
     },
     {
       "id": "compose-text2music",
@@ -15150,10 +15521,10 @@
       "settings": {
         "engine": "text2music"
       },
+      "homepage": "https://huggingface.co/sander-wood/text-to-music",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/sander-wood/text-to-music"
+      ]
     },
     {
       "id": "compose-chatmusician",
@@ -15248,10 +15619,10 @@
       "settings": {
         "engine": "chatmusician"
       },
+      "homepage": "https://huggingface.co/m-a-p/ChatMusician",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/m-a-p/ChatMusician"
+      ]
     },
     {
       "id": "compose-anticipation",
@@ -15372,10 +15743,10 @@
         "url": null
       },
       "notes": "Ignores the prompt — generation is unconditional over MIDI events. Token-by-token and slow on CPU (~23 min for 10 s in triage); the adapter tries MPS first, which should recover ~10×.",
+      "homepage": "https://huggingface.co/stanford-crfm/music-small-800k",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/stanford-crfm/music-small-800k"
+      ]
     },
     {
       "id": "compose-anticipation-medium",
@@ -15496,10 +15867,10 @@
         "url": null
       },
       "notes": "Roughly 3× the small model's cost per note — unmeasured here; the est is scaled from the small model's triage numbers. Same adapter, same modes.",
+      "homepage": "https://huggingface.co/stanford-crfm/music-medium-800k",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/stanford-crfm/music-medium-800k"
+      ]
     },
     {
       "id": "codec-tokensplice",
@@ -15558,10 +15929,10 @@
       "settings": {
         "engine": "tokensplice"
       },
+      "homepage": "https://huggingface.co/mlx-community/encodec-24khz-float32",
       "tags": [
         "Mixing & recombining"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/encodec-24khz-float32"
+      ]
     },
     {
       "id": "assistant-qwen",
@@ -15707,10 +16078,10 @@
         "url": null
       },
       "notes": "Runs on MLX. Small enough to stay loaded alongside a music model rather than displacing it.",
+      "homepage": "https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit",
       "tags": [
         "Writing help"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+      ]
     },
     {
       "id": "assistant-llama-1b",
@@ -15856,10 +16227,10 @@
         "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE"
       },
       "notes": null,
+      "homepage": "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
       "tags": [
         "Writing help"
-      ],
-      "homepage": "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit"
+      ]
     },
     {
       "id": "dsp-mixdown",
@@ -15993,10 +16364,10 @@
         "url": "https://github.com/spotify/pedalboard"
       },
       "notes": "Uses Spotify pedalboard (bundled Rubber Band Library) under GPL-3.0; the engine's Python source ships in the app.",
+      "homepage": "https://github.com/spotify/pedalboard",
       "tags": [
         "Mixing & recombining"
-      ],
-      "homepage": "https://github.com/spotify/pedalboard"
+      ]
     },
     {
       "id": "transcribe-basicpitch",
@@ -16066,10 +16437,10 @@
       "settings": {
         "engine": "basicpitch"
       },
+      "homepage": "https://github.com/spotify/basic-pitch",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://github.com/spotify/basic-pitch"
+      ]
     },
     {
       "id": "transcribe-mt3",
@@ -16139,10 +16510,10 @@
         "engine": "mt3",
         "backend": "mr_mt3"
       },
+      "homepage": "https://huggingface.co/gudgud1014/MR-MT3",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/gudgud1014/MR-MT3"
+      ]
     },
     {
       "id": "transcribe-transkun",
@@ -16203,10 +16574,10 @@
       "settings": {
         "engine": "transkun"
       },
+      "homepage": "https://github.com/Yujia-Yan/Skipping-The-Frame-Level",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://github.com/Yujia-Yan/Skipping-The-Frame-Level"
+      ]
     },
     {
       "id": "transcribe-bytedance-piano",
@@ -16272,10 +16643,10 @@
       "settings": {
         "engine": "bytedance_piano"
       },
+      "homepage": "https://huggingface.co/rtikw/piano-transcription-crnn",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/rtikw/piano-transcription-crnn"
+      ]
     },
     {
       "id": "transcribe-swiftf0",
@@ -16336,10 +16707,10 @@
       "settings": {
         "engine": "swiftf0"
       },
+      "homepage": "https://github.com/lars76/swift-f0",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://github.com/lars76/swift-f0"
+      ]
     },
     {
       "id": "render-soundfont",
@@ -16418,10 +16789,10 @@
         "url": null
       },
       "notes": null,
+      "homepage": "https://huggingface.co/rtikw/localmusic-assets",
       "tags": [
         "Notes & MIDI"
-      ],
-      "homepage": "https://huggingface.co/rtikw/localmusic-assets"
+      ]
     }
   ]
 }

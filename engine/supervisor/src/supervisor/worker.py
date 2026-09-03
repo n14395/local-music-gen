@@ -77,6 +77,7 @@ class Worker:
         self.working_set_bytes: int | None = None
         self.mem_limit = settings.mem_guard_bytes
         self._mem_warned = False
+        self._send_lock = threading.Lock()
         self.messages: queue.Queue[dict | None] = queue.Queue()
 
         env = {**os.environ,
@@ -213,10 +214,14 @@ class Worker:
     # MARK: protocol
 
     def send(self, msg: dict) -> None:
-        if self.proc.poll() is not None or self.proc.stdin is None:
-            raise WorkerDied(f"{self.family} worker is not running")
-        self.proc.stdin.write(json.dumps(msg) + "\n")
-        self.proc.stdin.flush()
+        # Serialized: a cancel is sent from the API thread while the job
+        # thread may be mid-send, and two writers on one pipe interleave
+        # into a torn JSON line the worker cannot parse (audit §4 minors).
+        with self._send_lock:
+            if self.proc.poll() is not None or self.proc.stdin is None:
+                raise WorkerDied(f"{self.family} worker is not running")
+            self.proc.stdin.write(json.dumps(msg) + "\n")
+            self.proc.stdin.flush()
 
     def wait_until(self, terminal: set[str],
                    on_progress: ProgressSink | None = None,

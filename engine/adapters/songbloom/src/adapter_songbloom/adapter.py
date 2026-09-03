@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tarfile
-import urllib.request
 
 import numpy as np
 import soundfile as sf
@@ -38,6 +36,7 @@ import soundfile as sf
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
                                      ProgressCb, aux_dir)
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
 # to CPU instead of aborting the render. Harmless on the CPU route.
@@ -84,25 +83,12 @@ class SongBloomAdapter(ModelAdapter):
                     return
 
         adopt_extracted()
-        if not os.path.isdir(repo):
+        if not staged(repo, "infer.py",
+                      "SongBloom/models/songbloom/songbloom_pl.py"):
             progress_cb(None, "fetching the SongBloom code (pinned fork "
                               "snapshot, first use only)")
-            tar_path = os.path.join(cache, "repo.tar.gz")
-            with urllib.request.urlopen(REPO_TARBALL, timeout=300) as resp, \
-                    open(tar_path, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            with tarfile.open(tar_path) as tar:
-                tar.extractall(cache, filter="data")
-            os.unlink(tar_path)
-            adopt_extracted()
-        if not os.path.isdir(repo):
-            raise RuntimeError("the SongBloom code snapshot failed to "
-                               "extract — nothing in the cache carries "
-                               f"commit {REPO_COMMIT[:8]}")
+            fetch_tarball_tree(REPO_TARBALL, cache,
+                               f"SongBloom-{REPO_COMMIT}")
         if repo not in sys.path:
             sys.path.insert(0, repo)
         os.environ["DISABLE_FLASH_ATTN"] = "1"
@@ -157,6 +143,12 @@ class SongBloomAdapter(ModelAdapter):
                                "sound from a ~10 s reference clip")
         duration_s = min(150.0, float(params.get("duration_s") or 60.0))
         self._cfg.max_dur = int(duration_s)
+        # The sampler froze max_frames at load from the yaml's 150 s;
+        # without this per-render update the duration slider was dead and
+        # every take decoded to EOS (audit §2). 25 frames/s is the model's
+        # own rate (max_duration * 25 upstream); set_generation_params
+        # update()s, so the yaml's other sampling params survive.
+        self.model.set_generation_params(max_frames=int(duration_s * 25))
         seed = params.get("seed")
         if seed is not None:
             torch.manual_seed(int(seed))
@@ -176,7 +168,39 @@ class SongBloomAdapter(ModelAdapter):
                              else "; many minutes on CPU)"))
         if cancel.cancelled:
             raise CancelledError()
-        wav = self.model.generate(lyrics, prompt_wav)
+
+        # Wrap the per-block sampler: real progress (one call per
+        # block_size latent frames), the render's only cancel checkpoint,
+        # and the MPS allocator flush every AR family needs (audit §3/§5 —
+        # three messages across a possible 55-minute render, no cancel, no
+        # flush).
+        dit = getattr(self.model, "diffusion", None)
+        wav = None
+        if dit is not None and hasattr(dit, "_sample_next_block"):
+            block = int(getattr(dit, "block_size", 32) or 32)
+            total = max(1, int(duration_s * 25) // block)
+            done = 0
+            orig_sample = dit._sample_next_block
+
+            def wrapped(*a, **kw):
+                nonlocal done
+                if cancel.cancelled:
+                    raise CancelledError()
+                if self.device == "mps":
+                    torch.mps.empty_cache()
+                done += 1
+                progress_cb(min(0.98, done / total),
+                            f"writing the song — block {done}"
+                            f"/~{total}", step=done, steps=total)
+                return orig_sample(*a, **kw)
+
+            dit._sample_next_block = wrapped
+            try:
+                wav = self.model.generate(lyrics, prompt_wav)
+            finally:
+                dit._sample_next_block = orig_sample
+        else:
+            wav = self.model.generate(lyrics, prompt_wav)
         if cancel.cancelled:
             raise CancelledError()
 

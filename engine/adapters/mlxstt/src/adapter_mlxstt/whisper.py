@@ -54,7 +54,8 @@ def transcribe(model, model_id: str, params: dict, out_dir: str,
         for chunk in stream:
             if cancel.cancelled:
                 raise CancelledError()
-            for segment in _segments_of(chunk):
+            for segment in (_segments_of(chunk)
+                            or _segments_of_streaming(chunk)):
                 segments.append(segment)
                 text_parts.append(segment["text"])
                 if duration_s > 0:
@@ -164,6 +165,22 @@ def _segments_of(result) -> list[dict]:
                 "temperature": float(segment.get("temperature") or 0.0)}
         out.append(line)
     return out
+
+
+def _segments_of_streaming(result) -> list[dict]:
+    """The AlignAtt streaming shape at this revision: one committed span per
+    yield (`text`/`is_final`/`start_time`/`end_time`), no `.segments`. The
+    old code did not recognise it, discarded the whole streamed pass, and
+    decoded every track a second time (audit §3)."""
+    if not getattr(result, "is_final", False):
+        return []
+    text = str(getattr(result, "text", "") or "").strip()
+    if not text:
+        return []
+    start = float(getattr(result, "start_time", 0.0) or 0.0)
+    end = float(getattr(result, "end_time", 0.0) or start)
+    return [{"start_s": round(start, 3), "end_s": round(end, 3),
+             "text": text}]
 
 
 def _language_of(result) -> str | None:

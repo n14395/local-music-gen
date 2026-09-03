@@ -87,6 +87,17 @@ class AnticipationAdapter(ModelAdapter):
             from anticipation import ops
 
             start = float(ops.max_time(inputs, seconds=True))
+            # The time vocabulary ends at 100 s (config.MAX_TIME_IN_SECONDS):
+            # a longer history — exactly what the SwiftF0 → continue flow
+            # produces — feeds out-of-vocab time tokens (audit §3). Keep the
+            # trailing window and shift it to start at zero.
+            keep_s = max(20.0, 95.0 - span_s)
+            if start > keep_s:
+                cut = start - keep_s
+                inputs = ops.sort(ops.translate(
+                    ops.clip(inputs, cut, start + 1.0, clip_duration=False),
+                    -cut, seconds=True))
+                start = float(ops.max_time(inputs, seconds=True))
             end = start + span_s
         elif mode == "infill":
             start = float(params.get("gap_start_s") or 0.0)
@@ -94,6 +105,12 @@ class AnticipationAdapter(ModelAdapter):
             if end <= start:
                 raise RuntimeError("infill needs a window: set the gap's "
                                    "end after its start")
+            if end > 95.0:
+                # Same 100 s time-vocabulary wall as continuation, surfaced
+                # instead of corrupting the render (audit §3).
+                raise RuntimeError(
+                    "the model's timeline ends at ~95 s — trim the piece "
+                    "or move the gap earlier")
             # generate() keeps every input event — the window's own notes
             # would ride through as anticipated controls and leave the model
             # nothing to write (verified in the smoke). Clip them out: what
@@ -114,8 +131,31 @@ class AnticipationAdapter(ModelAdapter):
                           f"({'MPS' if self.device == 'mps' else 'CPU — slow'})")
         if cancel.cancelled:
             raise CancelledError()
-        events = amt_generate(self.model, start_time=start, end_time=end,
-                              inputs=inputs or None, top_p=top_p)
+        # sample.generate advances a tqdm bar by time-units toward
+        # (end-start): hooking update() gives the engine's slowest
+        # generation real progress and a cooperative cancel that keeps the
+        # warm weights, instead of a 10 s kill (audit §5).
+        import tqdm as _tqdm
+
+        orig_update = _tqdm.tqdm.update
+
+        def patched_update(bar, n=1):
+            result = orig_update(bar, n)
+            if cancel.cancelled:
+                raise CancelledError()
+            total = getattr(bar, "total", None)
+            if total:
+                progress_cb(min(0.98, bar.n / total),
+                            f"composing — {bar.n}/{total}",
+                            step=int(bar.n), steps=int(total))
+            return result
+
+        _tqdm.tqdm.update = patched_update
+        try:
+            events = amt_generate(self.model, start_time=start, end_time=end,
+                                  inputs=inputs or None, top_p=top_p)
+        finally:
+            _tqdm.tqdm.update = orig_update
         if cancel.cancelled:
             raise CancelledError()
         if not events:

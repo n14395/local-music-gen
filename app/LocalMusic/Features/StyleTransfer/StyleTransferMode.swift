@@ -403,8 +403,11 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
             Dial(key: "audio_cover_strength", sense: .invertedUnit,
                  nominalMin: 0, nominalMax: 1, nominalDefault: 0.7)
         case .shape:
+            // Matches the catalog's re-ranged spec (audit §2): 1.0 is
+            // sigma_max = ignore the source, so it is the top of the dial,
+            // not its resting point.
             Dial(key: "init_noise_level", sense: .logarithmic,
-                 nominalMin: 0.1, nominalMax: 10, nominalDefault: 1)
+                 nominalMin: 0.05, nominalMax: 1, nominalDefault: 0.9)
         case .repaint, .complete, .layer, .extract, .morph, .continueTrack,
              .melody:
             nil

@@ -30,10 +30,19 @@ from .adapter import (CancelledError, CancelToken, UnstoppableWorkError,
 def _watch_parent(ppid: int) -> None:
     while True:
         time.sleep(2)
+        # Direct-child check: the supervisor spawns workers itself, so when
+        # it dies this process is reparented and getppid() moves — immune
+        # to the pid-reuse hole a bare kill(pid, 0) probe has (audit H7).
+        if os.getppid() == ppid:
+            continue
+        # Take the whole process group down first: native children
+        # (acestep.cpp, YuE's subprocesses) otherwise outlive the exit.
         try:
-            os.kill(ppid, 0)
+            import signal
+            os.killpg(os.getpgid(0), signal.SIGTERM)
         except OSError:
-            os._exit(0)
+            pass
+        os._exit(0)
 
 
 def _accelerator_bytes() -> int | None:

@@ -88,6 +88,10 @@ class MelodyFlowAdapter(ModelAdapter):
         solver = str(params.get("solver") or "euler")
         if solver not in ("euler", "midpoint"):
             solver = "euler"
+        if solver == "midpoint" and steps % 2:
+            # Upstream asserts midpoint runs an even step count; rounding
+            # down keeps the request inside the declared 1-125 range.
+            steps = max(2, steps - 1)
 
         def on_step(elapsed: int, total: int) -> None:
             if cancel.cancelled:
@@ -102,11 +106,14 @@ class MelodyFlowAdapter(ModelAdapter):
         src = params.get("src_audio")
         with torch.no_grad():
             if src and os.path.isfile(src):
-                wav = self._edit(src, prompt, params, steps, solver,
-                                 progress_cb)
+                wav = self._edit(src, prompt, params, steps, progress_cb)
             else:
                 progress_cb(None, "encoding the prompt", phase="prompt_encode")
-                wav = self.model.generate([prompt])
+                # progress=True is what makes the per-step callback fire —
+                # and that callback is also the only cancel checkpoint, so
+                # without it a generate was both silent and unstoppable
+                # (audit B8, live-confirmed).
+                wav = self.model.generate([prompt], progress=True)
         if cancel.cancelled:
             raise CancelledError()
 
@@ -123,7 +130,7 @@ class MelodyFlowAdapter(ModelAdapter):
             seed_used=None)
 
     def _edit(self, src: str, prompt: str, params: dict, steps: int,
-              solver: str, progress_cb: ProgressCb):
+              progress_cb: ProgressCb):
         """Rewrite existing audio toward the prompt (latent inversion)."""
         import numpy as np
         import soxr
@@ -133,7 +140,10 @@ class MelodyFlowAdapter(ModelAdapter):
         # target_flowstep is the inversion pivot: 0 = re-noise fully (the
         # strongest rewrite), nearer 1 = keep more of the source.
         target_flowstep = min(0.9, max(0.0, 1.0 - strength))
-        self.model.set_editing_params(solver=solver, steps=max(steps, 25),
+        # Edits always regularize (their quality lever), and upstream asserts
+        # regularization is euler-only — midpoint here killed every edit
+        # (audit B8), so the solver choice applies to generates only.
+        self.model.set_editing_params(solver="euler", steps=max(steps, 25),
                                       target_flowstep=target_flowstep,
                                       regularize=True)
 

@@ -517,14 +517,11 @@ struct SettingsView: View {
                     + "re-roll the words, not the dice. A seed you typed is "
                     + "always yours.",
                 isOn: settings.holdSeed)
-            SettingsDivider()
-            SettingsToggleRow(
-                title: "Live preview while rendering",
-                detail: "Asks the engine for partial audio mid-render, so the "
-                    + "render card can draw the take as it forms. Only some "
-                    + "models can produce one — the card stays quiet for the "
-                    + "rest.",
-                isOn: settings.livePreview)
+            // "Live preview while rendering" is hidden, not removed: the
+            // engine side works, but nothing in the app draws the frames yet
+            // (audit H3) — so the toggle sold decode cost with no visible
+            // return. Restore this row when the preview card lands, or
+            // delete the plumbing if the feature is dropped.
         }
     }
 

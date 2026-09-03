@@ -77,6 +77,12 @@ class DiffSynthAceAdapter(ModelAdapter):
             ],
             text_tokenizer_config=ModelConfig(
                 path=os.path.join(core, "Qwen3-Embedding-0.6B")),
+            # Without this the default ModelConfig silently downloads the
+            # file from modelscope.cn into $CWD/models on first load (audit
+            # B9) — the identical tensor already ships in the xl-sft
+            # snapshot.
+            silence_latent_config=ModelConfig(
+                path=os.path.join(dit, "silence_latent.pt")),
         )
 
         lora_repo = self.settings.get("lora_repo")
@@ -108,6 +114,10 @@ class DiffSynthAceAdapter(ModelAdapter):
         audio, sr = sf.read(path, dtype="float32", always_2d=True)
         if sr != target_sr:
             audio = soxr.resample(audio, sr, target_sr)
+        if audio.shape[1] == 1:
+            # The VAE's front conv is Conv1d(2, …): a mono voice memo — the
+            # most likely vocals2music input — crashed it (audit B9).
+            audio = np.repeat(audio, 2, axis=1)
         return torch.from_numpy(np.ascontiguousarray(audio.T)), target_sr
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
@@ -143,15 +153,16 @@ class DiffSynthAceAdapter(ModelAdapter):
         # that on a 30 s take.
         if duration > TILED_DECODE_ABOVE_S:
             kwargs["tiled"] = True
+        # Blank is not "model chooses" here: omitting these lands on the
+        # pipeline's literal defaults — 100 BPM, B minor, 4/4 — baked into
+        # every conditioning string (audit B9). "N/A" is upstream's own
+        # free-choice sentinel (it only ever reaches an f-string, so a
+        # string bpm is safe).
         bpm = params.get("bpm")
-        if bpm is not None:
-            kwargs["bpm"] = int(bpm)
-        keyscale = str(params.get("keyscale") or "").strip()
-        if keyscale:
-            kwargs["keyscale"] = keyscale
-        timesignature = str(params.get("timesignature") or "").strip()
-        if timesignature:
-            kwargs["timesignature"] = timesignature
+        kwargs["bpm"] = int(bpm) if bpm is not None else "N/A"
+        kwargs["keyscale"] = str(params.get("keyscale") or "").strip() or "N/A"
+        kwargs["timesignature"] = (str(params.get("timesignature") or "")
+                                   .strip() or "N/A")
         if params.get("vocal_language"):
             kwargs["vocal_language"] = str(params["vocal_language"])
 
@@ -185,11 +196,21 @@ class DiffSynthAceAdapter(ModelAdapter):
             kwargs["audio_code_string"] = codes
         start = params.get("repainting_start")
         end = params.get("repainting_end")
-        if start is not None and end is not None and float(end) > float(start):
-            kwargs["repainting_ranges"] = [(float(start), float(end))]
-            if params.get("repainting_strength") is not None:
-                kwargs["repainting_strength"] = float(
-                    params["repainting_strength"])
+        if start is not None:
+            start = float(start)
+            end = float(end) if end is not None else -1.0
+            if end < 0:
+                # The advertised "-1 = to the end" (audit B9): resolve it to
+                # the source's real duration instead of silently dropping
+                # the range into an upstream assert.
+                src_t = kwargs.get("src_audio")
+                if src_t is not None:
+                    end = src_t.shape[1] / float(self.pipe.vae.sampling_rate)
+            if end > start:
+                kwargs["repainting_ranges"] = [(start, end)]
+                if params.get("repainting_strength") is not None:
+                    kwargs["repainting_strength"] = float(
+                        params["repainting_strength"])
 
         def stepper(timesteps):
             total = len(timesteps)

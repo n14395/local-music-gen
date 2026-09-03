@@ -33,7 +33,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -43,6 +42,8 @@ import soundfile as sf
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
                                      TaskResult, aux_dir)
+from engine_protocol.progress import iter_progress_lines, parse_tqdm
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 MSST_COMMIT = "b15aa41299f852c4d8b0e482abcae9d9ad8479a4"
 MSST_TARBALL = ("https://github.com/ZFTurbo/Music-Source-Separation-Training/"
@@ -82,25 +83,28 @@ class MSSTAdapter(ModelAdapter):
         return engine
 
     def _ensure_repo(self, url: str, commit: str, repo_name: str,
-                     progress_cb: ProgressCb) -> str:
+                     progress_cb: ProgressCb, *landmarks: str) -> str:
         cache = aux_dir("msst")
         repo = os.path.join(cache, f"{repo_name}-{commit}")
-        if not os.path.isdir(repo):
-            tar_path = os.path.join(cache, f"{repo_name}.tar.gz")
-            _fetch(url, tar_path, progress_cb, f"the {repo_name} code")
-            with tarfile.open(tar_path) as tar:
-                tar.extractall(cache, filter="data")
-            os.unlink(tar_path)
+        if not staged(repo, *landmarks):
+            progress_cb(None, f"fetching the {repo_name} code "
+                              "(first use only)")
+            fetch_tarball_tree(url, cache, f"{repo_name}-{commit}")
         return repo
 
     def load(self, progress_cb: ProgressCb) -> None:
         if self._engine() == "msst":
             self.repo = self._ensure_repo(
                 MSST_TARBALL, MSST_COMMIT,
-                "Music-Source-Separation-Training", progress_cb)
+                "Music-Source-Separation-Training", progress_cb,
+                "inference.py", "utils/settings.py")
         else:
+            # The BSRNN tarball ships an absolute symlink that used to abort
+            # the whole extraction and leave a husk here; `staged` refuses
+            # the husk and the staging fetch replaces it.
             self.repo = self._ensure_repo(
-                BSRNN_TARBALL, BSRNN_COMMIT, "bsrnn", progress_cb)
+                BSRNN_TARBALL, BSRNN_COMMIT, "bsrnn", progress_cb,
+                "separate.py")
             self._teach_bsrnn_mps(self.repo)
         progress_cb(None, "separation runtime ready")
 
@@ -153,15 +157,26 @@ class MSSTAdapter(ModelAdapter):
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, text=True)
             tail: list[str] = []
-            while proc.poll() is None:
+            assert proc.stderr is not None
+            # Both CLIs run real per-chunk tqdm bars; splitting on \r turns
+            # what used to be discarded error-tail into live progress
+            # (audit §5).
+            for line in iter_progress_lines(proc.stderr):
                 if cancel.cancelled:
                     proc.kill()
                     proc.wait()
                     raise CancelledError()
-                line = proc.stderr.readline() if proc.stderr else ""
-                if line:
-                    tail.append(line.strip())
-                    tail = tail[-30:]
+                tail.append(line)
+                tail = tail[-30:]
+                got = parse_tqdm(line)
+                if got:
+                    step, total = got
+                    progress_cb(min(0.98, step / total),
+                                f"separating — chunk {step}/{total}",
+                                step=step, steps=total)
+            proc.wait()
+            if cancel.cancelled:
+                raise CancelledError()
             if proc.returncode != 0:
                 raise RuntimeError("separation failed: "
                                    + " / ".join(tail[-4:]))
@@ -225,12 +240,25 @@ class MSSTAdapter(ModelAdapter):
         if model_dir is None:
             weights_root = aux_dir("bsrnn-weights")
             model_dir = os.path.join(weights_root, "bsrnn-large")
-            if not os.path.isdir(model_dir):
+            if not staged(model_dir, "vocals.ckpt"):
                 zip_path = os.path.join(weights_root, "bsrnn-large.zip")
                 _fetch(BSRNN_WEIGHTS_ZIP, zip_path, progress_cb,
                        "the BSRNN checkpoints (1.6 GB, Zenodo)")
+                # Extract beside, land by rename: a died-partway extraction
+                # must not leave a husk the next run trusts.
+                tmp = tempfile.mkdtemp(prefix=".staging-", dir=weights_root)
                 with zipfile.ZipFile(zip_path) as z:
-                    z.extractall(weights_root)
+                    z.extractall(tmp)
+                tops = [e for e in os.listdir(tmp)
+                        if os.path.isdir(os.path.join(tmp, e))]
+                if len(tops) != 1:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    raise RuntimeError("unexpected BSRNN checkpoint zip "
+                                       f"layout: {tops!r}")
+                if os.path.isdir(model_dir):
+                    shutil.rmtree(model_dir)
+                os.rename(os.path.join(tmp, tops[0]), model_dir)
+                shutil.rmtree(tmp, ignore_errors=True)
                 os.unlink(zip_path)
         # One stem on request: each BSRNN target is its own checkpoint and
         # its own pass, so asking for just the vocals costs a quarter of a
@@ -241,11 +269,32 @@ class MSSTAdapter(ModelAdapter):
         else:
             targets = self.settings.get("targets") or ["vocals", "bass",
                                                        "drums", "other"]
-        cmd = [sys.executable, "separate.py",
-               f"file={src}", f"model_dir={model_dir}",
-               "targets=[" + ",".join(targets) + "]",
-               f"eval.device={self.device}", f"rec_dir={out_dir}"]
-        return cmd, lambda: None
+        # The path lands in a Hydra override, where spaces and parens in an
+        # ordinary filename ("My Song (final).wav") break parsing — feed it
+        # a copy with a boring name, like the MSST route does.
+        indir = tempfile.mkdtemp(prefix="bsrnn-in-")
+        safe_src = os.path.join(indir, "input.wav")
+        shutil.copy(src, safe_src)
+        # Quoted for Hydra's override grammar: the default output root lives
+        # under "Application Support", and an unquoted space ends the value.
+        argv = ["separate.py",
+                f"file='{safe_src}'", f"model_dir='{model_dir}'",
+                "targets=[" + ",".join(targets) + "]",
+                f"eval.device={self.device}", f"rec_dir='{out_dir}'"]
+        # torch ≥2.6 defaults weights_only=True and the BSRNN checkpoints
+        # carry an omegaconf DictConfig, which the safe unpickler refuses —
+        # these are pinned weights from the user-owned mirror, so load them
+        # the way every other family loads its trusted checkpoints
+        # (2026-09 revalidation finding).
+        bootstrap = (
+            "import runpy, sys, torch\n"
+            "_orig = torch.load\n"
+            "torch.load = lambda *a, **k: _orig("
+            "*a, **{**k, 'weights_only': False})\n"
+            f"sys.argv = {argv!r}\n"
+            "runpy.run_path('separate.py', run_name='__main__')\n")
+        cmd = [sys.executable, "-c", bootstrap]
+        return cmd, lambda: shutil.rmtree(indir, ignore_errors=True)
 
     def unload(self) -> None:
         pass

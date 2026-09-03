@@ -158,7 +158,12 @@ class MusicGenAdapter(ModelAdapter):
 
         progress_cb(1.0, "writing audio", phase="master")
         sample_rate = int(self.model.config.audio_encoder.sampling_rate)
-        wav = audio[0, 0].to(torch.float32).cpu().numpy()
+        # All channels, (T, C): [0, 0] threw away channel 1 and shipped the
+        # five stereo entries as mono (audit B6). Mono models still write a
+        # 1-D array through the squeeze.
+        wav = audio[0].to(torch.float32).cpu().numpy().T
+        if wav.ndim == 2 and wav.shape[1] == 1:
+            wav = wav[:, 0]
         wav = np.clip(wav, -1.0, 1.0)
         tmp = out_path + ".part"
         sf.write(tmp, wav, sample_rate, format="WAV", subtype="PCM_16")

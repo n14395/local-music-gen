@@ -18,16 +18,17 @@ Port shims, all proven in triage:
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import sys
-import tarfile
-import urllib.request
 
 import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
                                      TaskResult, aux_dir)
+from engine_protocol.progress import iter_progress_lines, parse_tqdm
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 REPO_COMMIT = "6d7c453781cdaf286227ba7a51e79d57b19fad71"
 REPO_TARBALL = (f"https://github.com/GiantAILab/YingMusic-Singer/archive/"
@@ -118,20 +119,12 @@ class YingMusicAdapter(ModelAdapter):
         _patch_langsegment()
         cache = aux_dir("yingmusic")
         repo = os.path.join(cache, f"YingMusic-Singer-{REPO_COMMIT}")
-        if not os.path.isdir(repo):
+        if not staged(repo, "src/singer/model.py",
+                      "src/singer/decoder/modules.py"):
             progress_cb(None, "fetching the YingMusic code (pinned "
                               "snapshot, first use only)")
-            tar_path = os.path.join(cache, "repo.tar.gz")
-            with urllib.request.urlopen(REPO_TARBALL, timeout=300) as resp, \
-                    open(tar_path, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            with tarfile.open(tar_path) as tar:
-                tar.extractall(cache, filter="data")
-            os.unlink(tar_path)
+            fetch_tarball_tree(REPO_TARBALL, cache,
+                               f"YingMusic-Singer-{REPO_COMMIT}")
         self.repo = repo
         progress_cb(None, "YingMusic-Singer ready")
 
@@ -170,6 +163,10 @@ class YingMusicAdapter(ModelAdapter):
         steps = max(4, min(64, int(params.get("nfe_steps") or 8)))
         cfg = float(params.get("cfg_strength") or 4.0)
         shift = int(params.get("pitch_shift_st") or 0)
+        # Upstream pins DEFAULT_SEED=2025, so without an explicit draw every
+        # "random" retake of the same inputs was bit-identical (audit B10).
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else random.randrange(2**31)
         out_path = os.path.join(out_dir, "sung.wav")
 
         argv = ["model.py",
@@ -180,6 +177,7 @@ class YingMusicAdapter(ModelAdapter):
                 "--ckpt_path", self._snapshot(),
                 "--cfg_strength", str(cfg),
                 "--nfe_steps", str(steps),
+                "--seed", str(seed),
                 "--pitch_shift", str(shift)] + melody_args
         src_dir = os.path.join(self.repo, "src")
         model_py = os.path.join(src_dir, "singer", "model.py")
@@ -193,15 +191,25 @@ class YingMusicAdapter(ModelAdapter):
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
         tail: list[str] = []
-        while proc.poll() is None:
+        assert proc.stderr is not None
+        # The CLI's tqdm (NFE steps per line) was on this stderr and
+        # discarded (audit §5); \r-splitting turns it into live progress.
+        for line in iter_progress_lines(proc.stderr):
             if cancel.cancelled:
                 proc.kill()
                 proc.wait()
                 raise CancelledError()
-            line = proc.stderr.readline() if proc.stderr else ""
-            if line:
-                tail.append(line.strip())
-                tail = tail[-30:]
+            tail.append(line)
+            tail = tail[-30:]
+            got = parse_tqdm(line)
+            if got:
+                step, total = got
+                progress_cb(min(0.98, step / total),
+                            f"singing — {step}/{total}",
+                            step=step, steps=total)
+        proc.wait()
+        if cancel.cancelled:
+            raise CancelledError()
         if proc.returncode != 0:
             raise RuntimeError("YingMusic failed: " + " / ".join(tail[-4:]))
         if not os.path.exists(out_path):
@@ -213,7 +221,8 @@ class YingMusicAdapter(ModelAdapter):
                                 format="wav",
                                 sample_rate=int(info.samplerate),
                                 duration_s=round(info.duration, 3))],
-            meta={"engine": "yingmusic", "nfe_steps": steps})
+            meta={"engine": "yingmusic", "nfe_steps": steps,
+                  "seed_used": seed})
 
     def unload(self) -> None:
         pass

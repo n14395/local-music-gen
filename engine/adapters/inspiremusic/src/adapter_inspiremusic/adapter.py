@@ -29,17 +29,16 @@ rtikw/InspireMusic-1.5B-Long (unmodified copy of the delisted original).
 from __future__ import annotations
 
 import glob
-import shutil
 import os
 import sys
-import tarfile
-import urllib.request
+import tempfile
 
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
                                      ProgressCb, aux_dir)
+from engine_protocol.staging import fetch_tarball_tree, staged
 
 MODEL_NAME = "InspireMusic-1.5B-Long"
 REPO_COMMIT = "0aefb55b58b8df91accdc4aed20c99e44741e0a7"
@@ -48,33 +47,6 @@ REPO_TARBALL = (f"https://github.com/QwenAudio/FunMusic/archive/"
 MATCHA_COMMIT = "77804265f877b0c42f13cfdece6541dde7838090"
 MATCHA_TARBALL = (f"https://github.com/shivammehta25/Matcha-TTS/archive/"
                   f"{MATCHA_COMMIT}.tar.gz")
-
-
-def _safe_data_filter(member, path):
-    """`data_filter`, but SKIP a member it refuses outright rather than
-    failing the whole extraction: the Matcha-TTS tarball ships a symlink to
-    an absolute path (`data` → somewhere on the author's machine), which is
-    training-data junk the runtime never touches."""
-    try:
-        return tarfile.data_filter(member, path)
-    except tarfile.FilterError:
-        return None
-
-
-def _fetch_tar(url: str, cache: str, progress_cb: ProgressCb,
-               what: str) -> None:
-    tar_path = os.path.join(cache, "dl.tar.gz")
-    progress_cb(None, f"fetching {what} (first use only)")
-    with urllib.request.urlopen(url, timeout=300) as resp, \
-            open(tar_path, "wb") as f:
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-    with tarfile.open(tar_path) as tar:
-        tar.extractall(cache, filter=_safe_data_filter)
-    os.unlink(tar_path)
 
 
 class InspireMusicAdapter(ModelAdapter):
@@ -188,21 +160,20 @@ class InspireMusicAdapter(ModelAdapter):
     def load(self, progress_cb: ProgressCb) -> None:
         cache = aux_dir("inspiremusic")
         repo = os.path.join(cache, f"FunMusic-{REPO_COMMIT}")
-        if not os.path.isdir(repo):
-            _fetch_tar(REPO_TARBALL, cache, progress_cb,
-                       "the InspireMusic code")
+        if not staged(repo, "inspiremusic/__init__.py"):
+            progress_cb(None, "fetching the InspireMusic code "
+                              "(first use only)")
+            fetch_tarball_tree(REPO_TARBALL, cache, f"FunMusic-{REPO_COMMIT}")
         matcha = os.path.join(repo, "third_party", "Matcha-TTS")
-        if not os.path.isdir(os.path.join(matcha, "matcha")):
-            _fetch_tar(MATCHA_TARBALL, cache, progress_cb,
-                       "the Matcha-TTS submodule")
-            extracted = os.path.join(cache, f"Matcha-TTS-{MATCHA_COMMIT}")
+        # A submodule placeholder from the repo tarball, or the husk of an
+        # extraction that died partway: either way a Matcha dir with no
+        # `matcha` package inside fails this guard and gets restaged.
+        if not staged(matcha, "matcha"):
+            progress_cb(None, "fetching the Matcha-TTS submodule "
+                              "(first use only)")
             os.makedirs(os.path.dirname(matcha), exist_ok=True)
-            # A submodule placeholder from the repo tarball, or the husk of
-            # an extraction that died partway: either way a Matcha dir with
-            # no `matcha` package inside is dead weight in the rename's path.
-            if os.path.isdir(matcha):
-                shutil.rmtree(matcha)
-            os.rename(extracted, matcha)
+            fetch_tarball_tree(MATCHA_TARBALL, os.path.dirname(matcha),
+                               "Matcha-TTS")
 
         # The yaml resolves ../../pretrained_models/<name>/ from CWD.
         work = os.path.join(cache, "work", "run", "here")
@@ -226,6 +197,7 @@ class InspireMusicAdapter(ModelAdapter):
         if str(self.settings.get("device") or "cpu") == "mps":
             import torch
             use_mps = bool(torch.backends.mps.is_available())
+        self._use_mps = use_mps
         self._apply_shims(use_mps)
         os.chdir(work)
 
@@ -253,6 +225,23 @@ class InspireMusicAdapter(ModelAdapter):
                        else "CPU — renders are slow and the estimate is "
                             "honest"))
 
+    @staticmethod
+    def _tail_clip(path: str, seconds: float = 5.0) -> str:
+        """Hand continuation the clip's END. Upstream head-truncates its
+        audio prompt to ~5 s, so a raw file conditioned "continue this
+        song" on the opening bars — the wrong end (audit §3)."""
+        try:
+            audio, sr = sf.read(path, dtype="float32", always_2d=True)
+        except Exception:  # noqa: BLE001 — let upstream report the file
+            return path
+        n = int(seconds * sr)
+        if audio.shape[0] <= n:
+            return path
+        fd, out = tempfile.mkstemp(suffix=".wav", prefix="im-tail-")
+        os.close(fd)
+        sf.write(out, audio[-n:], sr)
+        return out
+
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
                  cancel: CancelToken) -> GenerateResult:
@@ -263,8 +252,10 @@ class InspireMusicAdapter(ModelAdapter):
         task = ("continuation" if extend and os.path.isfile(extend)
                 else "text-to-music")
 
-        progress_cb(None, f"rendering ({task}; ~29× slower than realtime "
-                          f"on CPU — cancel any time)")
+        progress_cb(None, f"rendering ({task}"
+                    + ("; on the GPU)" if getattr(self, "_use_mps", False)
+                       else "; ~29× slower than realtime on CPU — cancel "
+                            "any time)"))
         for old in glob.glob(os.path.join(self._out_root, "**", "*.wav"),
                              recursive=True):
             os.unlink(old)
@@ -272,7 +263,7 @@ class InspireMusicAdapter(ModelAdapter):
             raise CancelledError()
         kwargs = {"task": task, "text": prompt}
         if task == "continuation":
-            kwargs["audio_prompt"] = extend
+            kwargs["audio_prompt"] = self._tail_clip(extend)
         # Structure conditioning: the text prompt is wrapped in
         # <|time_start|><|chorus|><|text|><|time_end|> tokens upstream, so
         # these steer which part of a song the model believes it is writing.
@@ -283,7 +274,38 @@ class InspireMusicAdapter(ModelAdapter):
             kwargs["time_start"] = float(params["time_start"])
         if params.get("time_end") is not None:
             kwargs["time_end"] = float(params["time_end"])
-        self.model.inference(**kwargs)
+
+        # llm.inference is a generator, one yield per audio token — wrap it
+        # for counted progress and a real cancel checkpoint through the
+        # longest phase, which used to run on a single message (audit §5).
+        core = getattr(getattr(getattr(self.model, "model", None),
+                               "model", None), "llm", None)
+        orig_inf = getattr(core, "inference", None)
+        if core is not None and callable(orig_inf):
+            total_tokens = max(1, int(duration_s * 75))
+
+            def counted(*a, **kw):
+                for n, tok in enumerate(orig_inf(*a, **kw), 1):
+                    if cancel.cancelled:
+                        # llm_job runs on ITS OWN thread and the consumer
+                        # loop spins until llm_end_dict flips — raising here
+                        # would kill the thread before it flips and hang the
+                        # render forever. Ending the generator lets the
+                        # pipeline wind down; the adapter re-raises after.
+                        return
+                    if n % 25 == 0:
+                        progress_cb(min(0.95, n / total_tokens),
+                                    f"writing music — token {n}"
+                                    f"/~{total_tokens}",
+                                    step=n, steps=total_tokens)
+                    yield tok
+
+            core.inference = counted
+        try:
+            self.model.inference(**kwargs)
+        finally:
+            if core is not None and callable(orig_inf):
+                core.inference = orig_inf
         if cancel.cancelled:
             raise CancelledError()
 

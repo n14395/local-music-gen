@@ -129,9 +129,13 @@ def render_midi(midi_path: str, soundfont_path: str, sample_rate: int = 44100,
     if len(loud):
         stereo = stereo[:min(len(stereo), loud[-1] + int(0.25 * sample_rate))]
 
+    # One combined scale — normalization and gain together, capped so the
+    # result never exceeds full scale. The old order normalized to 0.9
+    # FIRST and hard-clipped the gain on top, so any gain past ~1 dB was
+    # guaranteed distortion while the help text promised a clean level
+    # change (audit §3).
     peak = float(np.abs(stereo).max())
     if peak > 1e-6:
-        stereo = stereo * (PEAK_TARGET / peak)
-    if gain_db:
-        stereo = np.clip(stereo * (10.0 ** (gain_db / 20.0)), -1.0, 1.0)
+        scale = (PEAK_TARGET / peak) * (10.0 ** (gain_db / 20.0))
+        stereo = stereo * min(scale, 0.999 / peak)
     return stereo.astype(np.float32)

@@ -148,10 +148,16 @@ def init_audio_params():
          "default": None, "nullable": True,
          "help": "Audio to reimagine — diffusion starts from this clip "
                  "instead of noise"},
+        # sigma_max semantics in both pinned libraries: 1.0 renoises the
+        # source completely ("full noise (no variation)" per the sampler's
+        # own docs) and anything above 1.0 leaves the schedule. The old
+        # 0.1-10 range put the no-op at the dial's center and made its whole
+        # upper half do nothing (audit §2).
         {"key": "init_noise_level", "type": "float", "label": "Reimagine amount",
-         "default": 1.0, "nullable": False, "min": 0.1, "max": 10.0,
-         "step": 0.1,
-         "help": "How far to depart from the source (higher = freer)"},
+         "default": 0.9, "nullable": False, "min": 0.05, "max": 1.0,
+         "step": 0.05,
+         "help": "How far to depart from the source (1.0 = ignore it "
+                 "entirely)"},
     ]
 
 
@@ -297,7 +303,7 @@ SOURCE_HOMEPAGES = {
     "separation-scnet": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
     "separation-mdx23c-vocals": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
     "separation-scnet-xl": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
-    "separation-drumsep": "https://github.com/jarredou/models/releases/tag/DrumSep",
+    "separation-drumsep": "https://huggingface.co/Sucial/MSST-WebUI",
     "analysis-squim": "https://pytorch.org/audio/stable/pipelines.html",
     "timbre-rave-percussion": "https://acids-ircam.github.io/rave_models_download",
     "timbre-rave-vintage": "https://acids-ircam.github.io/rave_models_download",
@@ -444,6 +450,7 @@ PARAM_GROUPS = {
     "edit_strength": TASK,
     "edit_source_caption": TASK,
     "solver": SAMPLING,
+    "sampler_type": SAMPLING,
     "periodic_prompt": TASK,
     "upper_codebook_mask": TASK,
     "beat_mask": TASK,
@@ -460,6 +467,11 @@ PARAM_GROUPS = {
     "inpaint_start_s": TASK,
     "inpaint_end_s": TASK,
     "audio_cover_strength": TASK,
+    # DiffSynth-only strengths (the acestep family's pipeline has no such
+    # kwargs); read by adapter_diffsynthace since the pack landed but
+    # undeclared until the 2026-09 audit made them reachable.
+    "denoising_strength": TASK,
+    "repainting_strength": TASK,
     "style_audio": TASK,
     "style_audio_b": TASK,
     "prompt_b": TASK,
@@ -687,9 +699,14 @@ ACE_TASK_SCOPE = {
     "keyscale": ("text2music",),
     "timesignature": ("text2music",),
     "audio_codes": ("text2music",),
-    "src_audio": ("cover", "repaint", "extract", "lego", "complete"),
+    # text2music included for the FlowEdit morph, which rides text2music
+    # with a source; without it the morph toggle could only fail validation
+    # (audit §2).
+    "src_audio": ("text2music", "cover", "repaint", "extract", "lego",
+                  "complete"),
     "repainting_start": ("repaint", "lego"),
     "repainting_end": ("repaint", "lego"),
+    "repainting_strength": ("repaint",),
     "track": ("extract", "lego", "complete"),
     "flow_edit_morph": ("text2music", "cover"),
     "flow_edit_source_caption": ("text2music", "cover"),
@@ -1236,7 +1253,9 @@ def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
                         "[bridge]", "[instrumental]", "[outro]"],
         "lyrics_hint": ("Section tags on their own lines structure the song; "
-                        "leave a blank line between sections."),
+                        "leave a blank line between sections. The composer "
+                        "LM treats the requested length as a suggestion — "
+                        "the song ends where the music does."),
         "est_seconds_per_audio_second": est,
         "params": [
             {"key": "steps", "type": "int", "label": "Steps", "default": steps,
@@ -1539,6 +1558,19 @@ NEW_ENTRIES = [
                   {"key": "cfg_scale", "type": "float", "label": "CFG scale",
                    "default": 7.0, "nullable": False, "min": 0.5, "max": 15.0,
                    "step": 0.5},
+                  # Null keeps the tool's default (v-DDIM here — acceptable
+                  # per the 2026-09 audit); the choices are the v-objective
+                  # samplers the pinned tool implements.
+                  {"key": "sampler_type", "type": "enum", "label": "Sampler",
+                   "default": None, "nullable": True,
+                   "choices": [
+                       {"value": "dpmpp-3m-sde", "label": "DPM++ 3M SDE"},
+                       {"value": "dpmpp-2m-sde", "label": "DPM++ 2M SDE"},
+                       {"value": "v-ddim", "label": "DDIM"},
+                       {"value": "k-heun", "label": "Heun"},
+                       {"value": "k-lms", "label": "LMS"}],
+                   "help": "Which numerical sampler draws the audio — leave "
+                           "unset for the tool's default"},
                   seed_param(),
                   *init_audio_params(),
               ],
@@ -1723,6 +1755,24 @@ NEW_ENTRIES = [
                    "placeholder": "low quality"},
                   seed_param(),
                   *init_audio_params(),
+                  # The adapter serves extend/inpaint for every SA3 entry;
+                  # omitting them here made both unreachable on sfx only —
+                  # the engine drops undeclared params (audit §2).
+                  {"key": "extend_audio", "type": "audio",
+                   "label": "Continue source",
+                   "default": None, "nullable": True,
+                   "help": "Audio to continue — the output starts with it "
+                           "and keeps going (120 s total cap)"},
+                  {"key": "inpaint_audio", "type": "audio",
+                   "label": "Repaint source", "default": None, "nullable": True,
+                   "help": "Audio to partially regenerate (with the region "
+                           "below); output keeps its length"},
+                  {"key": "inpaint_start_s", "type": "float",
+                   "label": "Repaint from (s)", "default": None,
+                   "nullable": True, "min": 0.0, "max": 120.0, "step": 0.5},
+                  {"key": "inpaint_end_s", "type": "float",
+                   "label": "Repaint to (s)", "default": None, "nullable": True,
+                   "min": 0.0, "max": 120.0, "step": 0.5},
               ],
           },
           12, "fast",
@@ -1890,6 +1940,20 @@ NEW_ENTRIES = [
               # style-transfer cards with the shared param set.
               ] + [p for p in ace_task_params(False)
                    if not p["key"].startswith("flow_edit")] + [
+                  # DiffSynth's own strengths, read by the adapter since the
+                  # pack landed but undeclared (and therefore dropped by the
+                  # engine) until the 2026-09 audit.
+                  {"key": "denoising_strength", "type": "float",
+                   "label": "Denoise depth", "default": None,
+                   "nullable": True, "min": 0.05, "max": 1.0, "step": 0.05,
+                   "help": "How much of the diffusion schedule runs — "
+                           "below 1.0 keeps more of the source's fabric "
+                           "(mainly useful with Cover)"},
+                  {"key": "repainting_strength", "type": "float",
+                   "label": "Repaint strength", "default": None,
+                   "nullable": True, "min": 0.05, "max": 1.0, "step": 0.05,
+                   "help": "How completely the repainted span is "
+                           "re-imagined — 1.0 rewrites it outright"},
                   {"key": "audio_codes", "type": "string",
                    "label": "Captured plan", "default": None,
                    "nullable": True, "internal": True},
@@ -2090,7 +2154,7 @@ NEW_ENTRIES = [
           "DiffRhythm2 (full songs)",
           "Full-song lyrics-to-song via block-cache flow matching — "
           "structured songs up to 3½ minutes, style set by a text prompt "
-          "or a reference clip, lyrics as timestamped LRC lines. Runs on "
+          "or a reference clip, lyrics shaped by structure tags. Runs on "
           "the GPU (MPS) as of 2026-08-26; the estimate still shows the "
           "measured CPU worst case.",
           {
@@ -2098,9 +2162,16 @@ NEW_ENTRIES = [
               "duration": {"min_s": 10, "max_s": 210, "default_s": 60},
               "sample_rate": 44100, "outputs_per_job_max": 1,
               "est_seconds_per_audio_second": 11.0,
-              "lyrics_hint": ("LRC format: one line per lyric, each "
-                              "starting with a [mm:ss.xx] timestamp. "
-                              "Untimed plain lines work, less precisely."),
+              # No [mm:ss.xx] timestamps: the model never parses them —
+              # timestamped lines go through the phonemizer verbatim and
+              # the junk gets sung (audit §3). Structure tags are the real
+              # control surface.
+              "lyrics_tags": ["[verse]", "[chorus]", "[bridge]", "[inst]",
+                              "[intro]", "[outro]"],
+              "lyrics_hint": ("Plain lyric lines, with structure tags like "
+                              "[verse], [chorus] or [inst] on their own "
+                              "lines to shape the song. No timestamps — "
+                              "they would be sung as words."),
               "params": [
                   {"key": "style_audio", "type": "audio",
                    "label": "Style reference", "default": None,
@@ -2141,7 +2212,10 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": False, "instrumental_only": True,
               "duration": {"min_s": 10, "max_s": 180, "default_s": 30},
-              "sample_rate": 48000, "outputs_per_job_max": 1,
+              # 24 kHz is what the fast (no-flow) mode actually writes —
+              # the 48 kHz upsampler belongs to the skipped quality mode
+              # (audit §3).
+              "sample_rate": 24000, "outputs_per_job_max": 1,
               "est_seconds_per_audio_second": 3.5,
               "params": [
                   {"key": "extend_audio", "type": "audio",
@@ -2369,6 +2443,21 @@ NEW_ENTRIES = [
                    "nullable": False,
                    "help": "Keep the tokens around detected note onsets so "
                            "the rhythmic skeleton survives the vamp intact"},
+                  # Same in-fill controls as the base entry: the adapter
+                  # serves them for every voice, and omitting them here made
+                  # in-fill unreachable on the finetunes only (audit §2).
+                  {"key": "prefix_s", "type": "float",
+                   "label": "Keep the start (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 10.0, "step": 0.5,
+                   "help": "Leave this many opening seconds untouched and "
+                           "vamp only what follows — set both ends to "
+                           "in-fill the middle"},
+                  {"key": "suffix_s", "type": "float",
+                   "label": "Keep the end (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 10.0, "step": 0.5,
+                   "help": "Leave this many closing seconds untouched — "
+                           "with a kept start too, the model writes only "
+                           "the gap between them"},
                   {"key": "temperature", "type": "float",
                    "label": "Temperature", "default": 1.0, "nullable": False,
                    "min": 0.5, "max": 2.0, "step": 0.05},
@@ -2783,29 +2872,34 @@ NEW_ENTRIES = [
     task_entry(
         "separation-drumsep", "msst", [],
         "Drum-kit split (DrumSep)",
-        "Splits a DRUM track into its pieces — kick, snare, toms, hi-hat "
-        "and cymbals as separate parts. Feed it the drum stem from a "
+        "Splits a DRUM track into its pieces — kick, snare, toms, hi-hat, "
+        "ride and crash as separate parts. Feed it the drum stem from a "
         "4-stem split; nothing else in the catalog does this.",
         task_caps(["separate"], [
             source_audio_param("A drum stem — run a 4-stem split first "
                                "and feed the drums in"),
         ], est_realtime_factor=7.0),
         8, "slow",
-        {"name": "MIT (code); community checkpoint (jarredou)",
+        {"name": "MIT (code); community checkpoint (aufr33 + jarredou)",
          "commercial_use": False, "requires_hf_token": False,
          "url": "https://github.com/ZFTurbo/"
                 "Music-Source-Separation-Training"},
-        size_hint_bytes=180_000_000,
+        size_hint_bytes=438_000_000,
         variant_of="separation-bsrnn", format_="MDX23C · drum kit",
-        notes="Community-trained checkpoint (kick SDR 16.7 on the DrumSep "
-              "test set). Expects drums in, not a full mix.",
+        notes="Community-trained checkpoint (ep 141, SDR 10.81). Expects "
+              "drums in, not a full mix. The original jarredou GitHub "
+              "release vanished (2026-09 audit); these URLs are the "
+              "MSST-WebUI mirror of the same files.",
         settings={"engine": "msst", "model_type": "mdx23c",
-                  "config_url": "https://github.com/jarredou/models/"
-                                "releases/download/DrumSep/"
-                                "config_mdx23c.yaml",
-                  "ckpt_url": "https://github.com/jarredou/models/"
-                              "releases/download/DrumSep/"
-                              "drumsep_5stems_mdx23c_jarredou.ckpt",
+                  "config_url": "https://raw.githubusercontent.com/"
+                                "SUC-DriverOld/MSST-WebUI/main/"
+                                "configs_backup/multi_stem_models/"
+                                "aufr33-jarredou_DrumSep_model_mdx23c_"
+                                "ep_141_sdr_10.8059.ckpt.yaml",
+                  "ckpt_url": "https://huggingface.co/Sucial/MSST-WebUI/"
+                              "resolve/main/All_Models/multi_stem_models/"
+                              "aufr33-jarredou_DrumSep_model_mdx23c_"
+                              "ep_141_sdr_10.8059.ckpt",
                   "device": "mps"}),
     # ---- Split & Recombine: analysis -------------------------------------
     task_entry(
@@ -3094,10 +3188,18 @@ NEW_ENTRIES = [
         "it a melody (a sung or played line, or a MIDI file), the lyrics, "
         "and a few seconds of the voice that should perform them — your "
         "own recording works. Bilingual Chinese/English.",
-        task_caps(["sing"], [
-            source_audio_param("The melody to sing — a vocal or "
-                               "single-line instrumental recording the "
-                               "singer follows"),
+        # sample_rate overridden: the model writes 48 kHz, not task_caps's
+        # 44.1 default (audit B10).
+        {**task_caps(["sing"], [
+            # Nullable, unlike most source_audio: a MIDI melody is a full
+            # substitute, and requiring audio forced a throwaway attachment
+            # onto MIDI-only jobs (audit B10). The adapter checks that at
+            # least one of the two is present.
+            {"key": "source_audio", "type": "audio", "label": "Source audio",
+             "default": None, "nullable": True,
+             "help": "The melody to sing — a vocal or single-line "
+                     "instrumental recording the singer follows. Optional "
+                     "when a MIDI melody is set"},
             {"key": "melody_midi", "type": "midi", "label": "Melody (MIDI)",
              "default": None, "nullable": True,
              "help": "A MIDI melody instead of the recording — wins when "
@@ -3106,15 +3208,19 @@ NEW_ENTRIES = [
              "label": "Voice reference", "default": None, "nullable": False,
              "help": "A short clean recording of the voice that should "
                      "sing — yours, or one you have permission to use"},
+            # reference_text/lyrics_text are hard-required by the adapter;
+            # declaring them nullable turned a submit-time 422 into a late
+            # in-worker failure (audit B10).
             {"key": "reference_text", "type": "string",
-             "label": "Reference words", "default": None, "nullable": True,
+             "label": "Reference words", "default": None, "nullable": False,
              "placeholder": "the words spoken/sung in the reference clip",
              "help": "What the reference recording actually says or sings "
                      "— the model needs the text to read the voice"},
             {"key": "lyrics_text", "type": "string", "label": "Lyrics",
-             "default": None, "nullable": True,
+             "default": None, "nullable": False,
              "placeholder": "the words to sing",
              "help": "The words to perform to the melody"},
+            seed_param(),
             {"key": "nfe_steps", "type": "int", "label": "Steps",
              "default": 8, "nullable": False, "min": 4, "max": 64,
              "help": "Diffusion passes. 8 is the proven fast setting; 32 "
@@ -3130,7 +3236,7 @@ NEW_ENTRIES = [
              "nullable": False, "min": -12, "max": 12,
              "help": "Transpose the melody into the reference voice's "
                      "comfortable range"},
-        ], est_realtime_factor=3.0),
+        ], est_realtime_factor=3.0), "sample_rate": 48000},
         16, "slow", APACHE,
         notes="The voice is supplied per job and never stored — no voice "
               "library ships with this app, deliberately. Chinese-centric "
@@ -3334,8 +3440,7 @@ NEW_ENTRIES = [
         24, "medium", ACE_MIT,
         notes="16 GB of weights; loading it unloads the resident music "
               "model. No per-line timings — structure tags ride inline in "
-              "the text.",
-        settings={"role": "transcriber"}),
+              "the text."),
     task_entry(
         "caption-acestep-captioner", "qwenomni",
         ["ACE-Step/acestep-captioner"],
@@ -3360,8 +3465,7 @@ NEW_ENTRIES = [
         variant_of="lyrics-acestep-transcriber", format_="captioner",
         notes="16 GB of weights; loading it unloads the resident music "
               "model. The most precise describer tested here — feeds "
-              "prompt-from-reference and library annotation.",
-        settings={"role": "captioner"}),
+              "prompt-from-reference and library annotation."),
     # Experimental captioners, kept out of the catalog until each is proven
     # on this machine. Every one needs vendored inference code rather than a
     # plain transformers class, which is why LP-MusicCaps and Qwen2-Audio
@@ -3400,9 +3504,15 @@ NEW_ENTRIES = [
             {"key": "question", "type": "string", "label": "Question",
              "default": None, "nullable": True,
              "placeholder": "What is the chord progression in the chorus?",
-             "help": "Ask something specific. Left blank it writes a full "
-                     "analysis: genre, instrumentation, tempo, key, "
-                     "structure"},
+             "help": "Caption task only — the lyrics task always "
+                     "transcribes. Ask something specific; left blank it "
+                     "writes a full analysis: genre, instrumentation, "
+                     "tempo, key, structure"},
+            {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
+             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "help": "Token budget for reasoning plus answer. A Thinking "
+                     "model spends most of it reasoning — raise this if "
+                     "the answer arrives cut off"},
         ], est_realtime_factor=1.5),
         16, "medium", APACHE,
         variant_of="caption-qwen2audio", format_="MOSS 8B · MLX 8-bit",
@@ -3423,9 +3533,15 @@ NEW_ENTRIES = [
             {"key": "question", "type": "string", "label": "Question",
              "default": None, "nullable": True,
              "placeholder": "What is the chord progression in the chorus?",
-             "help": "Ask something specific. Left blank it writes a full "
-                     "analysis: genre, instrumentation, tempo, key, "
-                     "structure"},
+             "help": "Caption task only — the lyrics task always "
+                     "transcribes. Ask something specific; left blank it "
+                     "writes a full analysis: genre, instrumentation, "
+                     "tempo, key, structure"},
+            {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
+             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "help": "Token budget for reasoning plus answer. A Thinking "
+                     "model spends most of it reasoning — raise this if "
+                     "the answer arrives cut off"},
         ], est_realtime_factor=1.2),
         10, "medium", APACHE,
         variant_of="caption-moss-music", format_="MOSS 8B · MLX 4-bit",
@@ -3446,9 +3562,14 @@ NEW_ENTRIES = [
             {"key": "question", "type": "string", "label": "Question",
              "default": None, "nullable": True,
              "placeholder": "What is the chord progression in the chorus?",
-             "help": "Ask something specific. Left blank it writes a full "
-                     "analysis: genre, instrumentation, tempo, key, "
-                     "structure"},
+             "help": "Caption task only — the lyrics task always "
+                     "transcribes. Ask something specific; left blank it "
+                     "writes a full analysis: genre, instrumentation, "
+                     "tempo, key, structure"},
+            {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
+             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "help": "Token budget for the answer (this edition answers "
+                     "directly, without a visible reasoning pass)"},
         ], est_realtime_factor=1.0),
         10, "medium", APACHE,
         variant_of="caption-moss-music",
