@@ -243,18 +243,21 @@ final class GenerativeFlowTests: XCTestCase {
     func testProvenRecipesAreLive() {
         // These ids are wire values: they travel as `recipeId` on a recombine
         // submission, are written into the provenance of every mix, and key the
-        // `actions.lastRuns` blob. The Style Transfer consolidation re-pointed
-        // every one of them at a new engine case and renamed none, which is
-        // exactly what this test exists to hold.
-        for id in ["restyle", "rewrite-lyrics", "add-layer", "back-vocal",
-                   "repaint", "complete-band", "loop-reimagine", "ai-extract",
-                   "notes-instrument", "melody-start", "continue-song"] {
+        // `actions.lastRuns` blob. The 2026-09 consolidation cut ten of the
+        // per-mode doors — every mode stays reachable from the workspace's own
+        // switcher — so this list is the three group doors plus the renderer.
+        for id in ["restyle", "add-layer", "repaint", "notes-instrument"] {
             let recipe = RecipeCatalog.recipe(id: id)
             XCTAssertNotNil(recipe, id)
             XCTAssertTrue(recipe?.isAvailable == true, "\(id) must be live")
         }
-        XCTAssertNil(RecipeCatalog.recipe(id: "continue"),
-                     "'Continue This Song' was renamed — the spike showed "
-                     + "complete = arrangement completion, not extension")
+        // Retired ids resolve to nothing — and must never be reused for a
+        // card that does something else, or old provenance would lie.
+        for retired in ["rewrite-lyrics", "back-vocal", "complete-band",
+                        "loop-reimagine", "ai-extract", "melody-start",
+                        "continue-song", "keep-stems", "sound-like",
+                        "morph-style", "continue"] {
+            XCTAssertNil(RecipeCatalog.recipe(id: retired), retired)
+        }
     }
 }

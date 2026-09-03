@@ -25,28 +25,22 @@ final class RecipeSlotAcceptsTests: XCTestCase {
     }
 
     /// Splitting a stem into stems, and pulling the vocal out of something that
-    /// is already one part, are two of the four that stay closed: both need the
+    /// is already one part, are the two that stay closed: both need the
     /// whole mix by definition, and a dimmed row saying so beats a render that
-    /// returns mush.
-    ///
-    /// The two plan cards are closed for a different reason. A plan belongs to
-    /// a whole generated take — it is the tempo, key and sketch the model wrote
-    /// before rendering it — and it is stored against the song. A stem cut out
-    /// of that song afterwards carries no plan of its own, so offering one here
-    /// would promise an answer the engine cannot give.
-    func testOnlyFourSlotsRefuseParts() {
+    /// returns mush. (The two plan cards that used to join them are gone —
+    /// their song-only picker lives inside the merged plan page now.)
+    func testOnlyTwoSlotsRefuseParts() {
         let closed = allSlots.filter { songOnly($0.slot) }
             .map { "\($0.recipe.id).\($0.slot.id)" }
         XCTAssertEqual(closed.sorted(),
-                       ["karaoke.song", "plan-inspect.source",
-                        "plan-reroll.source", "split-instruments.source"])
+                       ["karaoke.song", "split-instruments.source"])
     }
 
-    /// The four that route into Style Transfer take what the Style Transfer
-    /// screen's own picker takes. They disagreed for a while, so the same stem
-    /// was pickable there and not from the card that opens it.
+    /// The doors into Style Transfer take what the Style Transfer screen's
+    /// own picker takes. They disagreed for a while, so the same stem was
+    /// pickable there and not from the card that opens it.
     func testStyleTransferCardsMatchTheirScreen() {
-        for id in ["keep-stems", "rewrite-lyrics", "repaint", "ai-extract"] {
+        for id in ["restyle", "repaint", "add-layer"] {
             let slot = RecipeCatalog.recipe(id: id)?.slots.first
             XCTAssertNotNil(slot, id)
             XCTAssertTrue(slot?.accepts(kind: "song.mix") ?? false, id)

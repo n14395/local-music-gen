@@ -22,6 +22,50 @@ struct TextPipelineView: View {
     let onOpenModels: () -> Void
     let onBack: () -> Void
 
+    init(recipe: Recipe, kind: TextChain.Kind, sourceId: String?,
+         settings: AppSettings, catalog: ModelCatalogStore,
+         library: LibraryStore, parts: PartsStore, jobs: JobsStore,
+         textStore: TextStore, chain: TextChainModel,
+         playback: PlaybackController, onOpenModels: @escaping () -> Void,
+         onBack: @escaping () -> Void) {
+        self.recipe = recipe
+        self.kind = kind
+        self.sourceId = sourceId
+        self.settings = settings
+        self.catalog = catalog
+        self.library = library
+        self.parts = parts
+        self.jobs = jobs
+        self.textStore = textStore
+        self.chain = chain
+        self.playback = playback
+        self.onOpenModels = onOpenModels
+        self.onBack = onBack
+        _pauseToEdit = State(initialValue: kind.pausesForEdit)
+    }
+
+    /// The card's kind with the pause toggle applied — what actually plans
+    /// and runs. The card carries the plain kind; the edited sibling is one
+    /// checkbox away rather than a second card.
+    private var effectiveKind: TextChain.Kind {
+        switch (kind, pauseToEdit) {
+        case (.roundTrip, true): .roundTripEdited
+        case (.roundTripEdited, false): .roundTrip
+        case (.abcRoundTrip, true): .abcEdited
+        case (.abcEdited, false): .abcRoundTrip
+        default: kind
+        }
+    }
+
+    /// Whether this card's pipeline has an editable-pause sibling at all —
+    /// the lyric and telephone pipelines do not.
+    private var canPauseToEdit: Bool {
+        switch kind {
+        case .roundTrip, .roundTripEdited, .abcRoundTrip, .abcEdited: true
+        case .lyrics, .telephone: false
+        }
+    }
+
     @State private var source: PickedMaterial?
     /// The source card's second line, resolved when the source changes.
     ///
@@ -37,6 +81,10 @@ struct TextPipelineView: View {
     @State private var separatorId: String?
     @State private var generatorId: String?
     @State private var separateVocalsFirst = true
+    /// The "…→ edit →…" cards folded into their plain siblings: same
+    /// pipeline, one toggle. Seeded from the card's own kind so a deep link
+    /// to an old edited-variant card still arrives paused.
+    @State private var pauseToEdit: Bool
     @State private var rounds = 3
     @State private var durationS: Double = 20
     @State private var name = ""
@@ -53,7 +101,7 @@ struct TextPipelineView: View {
     }
 
     private var plan: TextChain {
-        TextChain.make(kind: kind, inputs: inputs)
+        TextChain.make(kind: effectiveKind, inputs: inputs)
     }
 
     private var inputs: TextChain.Inputs {
@@ -253,6 +301,11 @@ struct TextPipelineView: View {
                     disabledReason: sourceIsVocal
                         ? "This already is a vocal" : nil)
             }
+            if canPauseToEdit {
+                ActionCheckChip(
+                    label: "Pause to edit the text before it becomes music",
+                    isOn: $pauseToEdit)
+            }
             if kind.repeats {
                 HStack(spacing: 12) {
                     Text("ROUNDS")
@@ -288,12 +341,12 @@ struct TextPipelineView: View {
     @ViewBuilder
     private var editCard: some View {
         if let run = activeRun, run.progress.awaitingEdit {
-            ActionOptionsCard(eyebrow: kind == .abcEdited
+            ActionOptionsCard(eyebrow: effectiveKind == .abcEdited
                                 ? "THE NOTATION — YOUR TURN"
                                 : "WHAT IT HEARD — YOUR TURN") {
                 LyricsEditor(
                     lyrics: $draft, tags: [],
-                    hint: kind == .abcEdited
+                    hint: effectiveKind == .abcEdited
                         ? "ABC notation. Edit it freely — what you leave "
                             + "here is what gets composed."
                         : "This is what the model heard. Rewrite anything "
@@ -303,8 +356,8 @@ struct TextPipelineView: View {
         } else if let text = activeRun?.progress.effectiveText,
                   !text.isEmpty {
             TextResultCard(eyebrow: "THE TEXT SO FAR", text: text,
-                           monospaced: kind == .abcEdited
-                               || kind == .abcRoundTrip)
+                           monospaced: effectiveKind == .abcEdited
+                               || effectiveKind == .abcRoundTrip)
         }
     }
 

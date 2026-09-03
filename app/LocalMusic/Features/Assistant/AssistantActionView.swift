@@ -58,6 +58,32 @@ struct AssistantActionView: View {
     @State private var chosenVariation: String?
     @State private var applied = false
 
+    /// The two flows of the merged "Help me describe it" card — the old
+    /// flesh-out card as "one-shot", the old interview card as itself.
+    enum DescribeFlow: String, CaseIterable { case quick, interview }
+    @State private var describeFlow: DescribeFlow = .quick
+
+    /// The kind the next ask will run, which is not always the card's own:
+    /// the describe card carries `.interview` and offers `.fleshOut` behind
+    /// the flow switch, and "More like this one" becomes `.critiqueFix` the
+    /// moment you type what should change. Everything the *user* is about to
+    /// do reads this; everything about an answer already on screen reads
+    /// `answeredKind`.
+    private var activeKind: AssistKind {
+        switch kind {
+        case .interview:
+            describeFlow == .quick ? .fleshOut : .interview
+        case .moreLikeThis:
+            input.trimmed.isEmpty ? .moreLikeThis : .critiqueFix
+        default:
+            kind
+        }
+    }
+
+    /// The kind of the answer being shown — the result's own, so editing the
+    /// change field after an answer arrived does not relabel it.
+    private var answeredKind: AssistKind { result?.kind ?? activeKind }
+
     private var slot: Slot? { recipe.slots.first }
     private var phase: AssistantStore.Phase { assistant.phase(recipe.id) }
     private var result: AssistResult? { phase.result }
@@ -133,6 +159,13 @@ struct AssistantActionView: View {
             }
             if autoRuns, source != nil { ask() }
         }
+        // Switching flows drops the answer: an interview's questions shown
+        // over a one-shot input card would be answering a form that is no
+        // longer on screen.
+        .onChange(of: describeFlow) { _, _ in
+            assistant.clear(recipe.id)
+            draft = ""
+        }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Track",
@@ -157,7 +190,7 @@ struct AssistantActionView: View {
     private var canAsk: Bool {
         guard !phase.isWorking else { return false }
         if needsSource && source == nil { return false }
-        switch kind {
+        switch activeKind {
         case .fleshOut, .routeIntent, .pickModel, .planSong:
             return !input.trimmed.isEmpty
         case .translateLyrics:
@@ -170,7 +203,7 @@ struct AssistantActionView: View {
     }
 
     private func ask(kind override: AssistKind? = nil) {
-        let kind = override ?? self.kind
+        let kind = override ?? activeKind
         assistant.ask(slot: recipe.id, kind: kind, input: payload(for: kind),
                       targetModel: targetModel)
     }
@@ -317,8 +350,27 @@ struct AssistantActionView: View {
     private var inputCard: some View {
         switch kind {
         case .interview:
-            interviewCard
+            VStack(alignment: .leading, spacing: 10) {
+                // The old flesh-out card, folded in: same page, same answer
+                // shape, one switch instead of two gallery cards.
+                BenchSegmented(selection: $describeFlow, options: [
+                    .init(value: .quick, label: "One-shot"),
+                    .init(value: .interview, label: "Interview me"),
+                ])
+                if describeFlow == .interview {
+                    interviewCard
+                } else {
+                    plainInputCard
+                }
+            }
         default:
+            plainInputCard
+        }
+    }
+
+    @ViewBuilder
+    private var plainInputCard: some View {
+        Group {
             if let field = inputField {
                 ActionOptionsCard(eyebrow: field.eyebrow) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -342,7 +394,8 @@ struct AssistantActionView: View {
 
     private var askButton: some View {
         HStack(spacing: 10) {
-            AssistButton(title: phase.isWorking ? kind.workingLine : askTitle,
+            AssistButton(title: phase.isWorking ? activeKind.workingLine
+                                                : askTitle,
                         tone: .accent,
                         action: { ask() })
                 .disabled(!canAsk)
@@ -709,7 +762,7 @@ struct AssistantActionView: View {
     }
 
     private var inputField: InputField? {
-        switch kind {
+        switch activeKind {
         case .fleshOut:
             InputField(eyebrow: "YOUR IDEA",
                        placeholder: "e.g. something sad with a piano",
@@ -744,13 +797,19 @@ struct AssistantActionView: View {
             InputField(eyebrow: "WHAT'S WRONG WITH IT?",
                        placeholder: "e.g. too busy, and the drums are too loud",
                        multiline: false)
+        case .moreLikeThis:
+            // Empty means "more of the same" — the moment something is typed
+            // the ask becomes a critique-and-rewrite. See `activeKind`.
+            InputField(eyebrow: "ANYTHING TO CHANGE? (OPTIONAL)",
+                       placeholder: "e.g. slower, and lose the vocals",
+                       multiline: false)
         default:
             nil
         }
     }
 
     private var secondField: String? {
-        switch kind {
+        switch activeKind {
         case .lyrics: "Lines you've already written (optional)"
         case .planSong: "How long, in seconds (optional)"
         default: nil
@@ -771,7 +830,7 @@ struct AssistantActionView: View {
     }
 
     private var askTitle: String {
-        switch kind {
+        switch activeKind {
         case .fleshOut: "Flesh it out"
         case .lyrics: "Write the lyrics"
         case .pickModel: "Recommend one"
@@ -788,7 +847,7 @@ struct AssistantActionView: View {
     }
 
     private var answerEyebrow: String {
-        switch kind {
+        switch answeredKind {
         case .lyrics, .translateLyrics: "LYRICS"
         case .pickModel: "RECOMMENDED"
         case .planSong: "THE SHAPE"
@@ -804,6 +863,7 @@ struct AssistantActionView: View {
         switch kind {
         case .nameAndTag: "The track to name."
         case .critiqueFix: "The track that came out wrong."
+        case .moreLikeThis: "The track to riff on — or fix."
         default: "A song or part from your library."
         }
     }
@@ -895,7 +955,7 @@ struct AssistantActionView: View {
     }
 
     private var noticeForUse: String {
-        switch kind {
+        switch answeredKind {
         case .critiqueFix: "Rewritten to fix what you said was wrong."
         case .moreLikeThis: "In the same vein as \(source?.name ?? "your track")."
         case .describeSong: "Described from \(source?.name ?? "your track")."

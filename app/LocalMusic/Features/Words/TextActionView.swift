@@ -36,6 +36,51 @@ struct TextActionView: View {
         case failed(String)
     }
 
+    init(recipe: Recipe, action: TextAction, sourceId: String?,
+         settings: AppSettings, catalog: ModelCatalogStore,
+         library: LibraryStore, parts: PartsStore, jobs: JobsStore,
+         textStore: TextStore, playback: PlaybackController,
+         onOpenModels: @escaping () -> Void,
+         onUseText: @escaping (PrefillBox.Prefill) -> Void,
+         onBack: @escaping () -> Void) {
+        self.recipe = recipe
+        self.action = action
+        self.sourceId = sourceId
+        self.settings = settings
+        self.catalog = catalog
+        self.library = library
+        self.parts = parts
+        self.jobs = jobs
+        self.textStore = textStore
+        self.playback = playback
+        self.onOpenModels = onOpenModels
+        self.onUseText = onUseText
+        self.onBack = onBack
+        _keepOnTrack = State(initialValue: action.savesByDefault)
+    }
+
+    /// The caption card's one choice, since "Music → text" folded into
+    /// "Describe it by listening": keep the words on the track, or only read
+    /// them here. Seeded from the card's action; flipping it swaps between
+    /// the persisting caption (`.describe`) and the read-once one
+    /// (`.freeCaption`) — the same two the two cards used to hard-code.
+    @State private var keepOnTrack: Bool
+
+    /// What actually runs and renders. Only the caption pair participates;
+    /// every other action is exactly its card.
+    private var effectiveAction: TextAction {
+        switch (action, keepOnTrack) {
+        case (.describe, false): .freeCaption
+        case (.freeCaption, true): .describe
+        default: action
+        }
+    }
+
+    /// Whether this card offers the keep-or-read choice at all.
+    private var offersKeepToggle: Bool {
+        action == .describe || action == .freeCaption
+    }
+
     @State private var source: PickedMaterial?
     /// The source card's second line, resolved when the source changes.
     ///
@@ -127,10 +172,10 @@ struct TextActionView: View {
                             costSubline: "THE AUDIO IS UNTOUCHED",
                             isEnabled: canRun,
                             error: jobs.lastError ?? phaseError,
-                            queueTitle: action.savesByDefault
+                            queueTitle: effectiveAction.savesByDefault
                                 ? "Add to queue" : nil,
                             onCommit: { submit(back: false) },
-                            onQueue: action.savesByDefault
+                            onQueue: effectiveAction.savesByDefault
                                 ? { submit(back: true) } : nil)
         } rail: {
             ActionRail(outputs: outputs, explanation: explanation,
@@ -160,7 +205,7 @@ struct TextActionView: View {
 
     @ViewBuilder
     private var optionsCard: some View {
-        switch action {
+        switch effectiveAction {
         case .ask:
             ActionOptionsCard(eyebrow: "YOUR QUESTION") {
                 HStack(spacing: 10) {
@@ -176,9 +221,11 @@ struct TextActionView: View {
                 ActionFootnote(text: "Answered from the audio itself — the "
                     + "model listens, it does not look anything up.")
             }
-        case .describe:
+        case .describe, .freeCaption:
             ActionOptionsCard {
-                if tagModel != nil {
+                ActionCheckChip(label: "Keep the words on the track",
+                                isOn: $keepOnTrack)
+                if effectiveAction == .describe, tagModel != nil {
                     ActionCheckChip(label: "Also tag genre & mood",
                                     isOn: $alsoTag)
                 }
@@ -193,14 +240,14 @@ struct TextActionView: View {
     /// actions, the in-memory payload for read-once ones.
     @ViewBuilder
     private var resultCard: some View {
-        if action.savesByDefault {
+        if effectiveAction.savesByDefault {
             if let doc = landedDoc {
                 TextResultCard(
                     eyebrow: resultEyebrow,
                     text: doc.text,
                     attribution: "\(doc.modelName) · saved to the "
                         + (doc.ownerType == "song" ? "song" : "part"),
-                    monospaced: action == .extractABC,
+                    monospaced: effectiveAction == .extractABC,
                     onUse: canUseInGenerate
                         ? { useInGenerate(doc.text) } : nil)
             }
@@ -254,7 +301,7 @@ struct TextActionView: View {
         let title = "\(recipe.name): \(source.name)"
         Task {
             defer { submitting = false }
-            if action.savesByDefault {
+            if effectiveAction.savesByDefault {
                 await submitPersisting(source: source, model: model)
             } else {
                 await runReadOnce(source: source, model: model,
@@ -274,7 +321,7 @@ struct TextActionView: View {
     private func submitPersisting(source: PickedMaterial,
                                   model: ModelInfo) async {
         submittedAt = Date()
-        switch action {
+        switch effectiveAction {
         case .describe:
             await jobs.submitCaption(
                 modelId: model.id, ownerId: docOwnerId(source),
@@ -355,7 +402,7 @@ struct TextActionView: View {
             context: TextJobContext(
                 ownerId: docOwnerId(source),
                 ownerType: docOwnerType(source), title: source.name,
-                kind: action == .ask ? .qa : .caption,
+                kind: effectiveAction == .ask ? .qa : .caption,
                 question: asked.isEmpty ? nil : asked),
             modelId: model.id, modelName: model.displayName, jobId: nil)
         else { return }
@@ -381,15 +428,15 @@ struct TextActionView: View {
     ]
 
     private func docOwnerId(_ source: PickedMaterial) -> String {
-        action == .extractABC ? source.songId : source.id
+        effectiveAction == .extractABC ? source.songId : source.id
     }
 
     private func docOwnerType(_ source: PickedMaterial) -> String {
-        action == .extractABC || source.kind == "song.mix" ? "song" : "part"
+        effectiveAction == .extractABC || source.kind == "song.mix" ? "song" : "part"
     }
 
     private var docKind: TextDocKind {
-        switch action {
+        switch effectiveAction {
         case .describe: .description
         case .freeCaption: .caption
         case .ask: .qa
@@ -399,11 +446,11 @@ struct TextActionView: View {
     }
 
     private var sourceEyebrow: String {
-        action == .extractABC ? "AUDIO TO NOTATE" : "AUDIO TO LISTEN TO"
+        effectiveAction == .extractABC ? "AUDIO TO NOTATE" : "AUDIO TO LISTEN TO"
     }
 
     private var resultEyebrow: String {
-        switch action {
+        switch effectiveAction {
         case .describe: "WHAT IT HEARD"
         case .freeCaption: "WHAT IT HEARD"
         case .ask: "THE ANSWER"
@@ -413,7 +460,7 @@ struct TextActionView: View {
     }
 
     private var workingLine: String {
-        action == .ask ? "Listening, then answering…" : "Listening…"
+        effectiveAction == .ask ? "Listening, then answering…" : "Listening…"
     }
 
     private func modelMeta(_ candidate: ModelInfo) -> String {
@@ -424,7 +471,7 @@ struct TextActionView: View {
     }
 
     private var commitTitle: String {
-        switch action {
+        switch effectiveAction {
         case .describe: "Describe it"
         case .freeCaption: "Listen and write"
         case .ask: "Ask"
@@ -434,7 +481,7 @@ struct TextActionView: View {
     }
 
     private var costLine: String? {
-        switch action {
+        switch effectiveAction {
         case .describe: "SAVED AS A DESCRIPTION ON THE TRACK"
         case .tags: "TAGS LAND ON THE TRACK"
         case .extractABC: "NOTES + NOTATION, ATTACHED TO THE SONG"
@@ -443,7 +490,7 @@ struct TextActionView: View {
     }
 
     private var footnote: String {
-        switch action {
+        switch effectiveAction {
         case .describe:
             "The words are saved as a description slot on the track — edit "
                 + "them there, add more slots, or delete them."
@@ -460,7 +507,7 @@ struct TextActionView: View {
     }
 
     private var gateTitle: String {
-        switch action {
+        switch effectiveAction {
         case .describe, .freeCaption, .ask: "No describer is installed"
         case .tags: "No tagging model is installed"
         case .extractABC: "No transcription model is installed"
@@ -468,7 +515,7 @@ struct TextActionView: View {
     }
 
     private var gateDetail: String {
-        switch action {
+        switch effectiveAction {
         case .describe, .freeCaption, .ask:
             "These models listen to the audio itself and write prose about "
                 + "it — unlike the writing assistant, which only reads the "
@@ -483,7 +530,7 @@ struct TextActionView: View {
     }
 
     private var explanation: String {
-        switch action {
+        switch effectiveAction {
         case .describe:
             "A description slot on the track, searchable like your notes — "
                 + "and the writing assistant quotes it from then on."
@@ -499,7 +546,7 @@ struct TextActionView: View {
     }
 
     private var outputs: [ActionOutput] {
-        switch action {
+        switch effectiveAction {
         case .describe:
             [ActionOutput(id: "doc", name: "Description", meta: "TEXT")]
         case .freeCaption:
@@ -516,7 +563,7 @@ struct TextActionView: View {
     }
 
     private var canUseInGenerate: Bool {
-        action == .describe || action == .freeCaption
+        effectiveAction == .describe || effectiveAction == .freeCaption
     }
 
     private var phaseError: String? {

@@ -78,9 +78,9 @@ enum RecipeEngine: Equatable {
     case batchTag
     /// The writing assistant, doing one of the jobs it knows how to do.
     ///
-    /// The kind carries everything that differs between these cards, so twelve
-    /// of them share one page: what changes is which question gets asked and
-    /// how the answer is laid out, and both of those are properties of the
+    /// The kind carries everything that differs between these cards, so the
+    /// whole shelf shares one page: what changes is which question gets asked
+    /// and how the answer is laid out, and both of those are properties of the
     /// kind. `needsSource` is separate because it is a fact about the *card*,
     /// not the kind — "Describe this song back to me" and "Name and file it"
     /// both read a song, and both use kinds that would work without one.
@@ -109,12 +109,12 @@ enum RecipeEngine: Equatable {
     case similar
 }
 
-/// What a plan card does with the plan once it has one.
+/// What the plan page does with the plan once it has one.
 ///
-/// All four run against a model that declares the `plan` task, and all four
-/// show the same readable facts; they differ in what happens next, which is
-/// enough of a difference to be worth four cards rather than one page with a
-/// mode switch on it.
+/// All modes run against a model that declares the `plan` task and show the
+/// same readable facts; they differ in what happens next. One card carries
+/// them now — the page switches between fresh plans and a take's stored one —
+/// so `.inspect` and `.pin` survive as internal modes rather than cards.
 enum PlanCardMode: Equatable, Sendable {
     /// Roll several plans, show them, render only the chosen one.
     case choose
@@ -317,60 +317,12 @@ enum RecipeCatalog {
                mode: .invent, category: .generate, icon: "music.mic",
                slots: [], engine: generate("gen-song-lyrics"), phase: 1,
                wantsLyrics: true),
-        Recipe(id: "gen-instrumental",
-               name: "Instrumental track",
-               tagline: "A full-length backing, no voice on it",
-               mode: .invent, category: .generate,
-               icon: "music.quarternote.3",
-               slots: [], engine: generate("gen-instrumental"), phase: 1),
-        Recipe(id: "gen-sketch",
-               name: "Song sketch",
-               tagline: "Four short takes, before you commit to a long one",
-               mode: .invent, category: .generate, icon: "bolt",
-               slots: [], engine: generate("gen-sketch"), phase: 1),
-        Recipe(id: "gen-drum-loop",
-               name: "Drum loop",
-               tagline: "A bar or two of drums to build the rest on",
-               mode: .invent, category: .generate, icon: "metronome",
-               slots: [], engine: generate("gen-drum-loop"), phase: 1),
-        Recipe(id: "gen-bassline",
-               name: "Bassline",
-               tagline: "Low end to drop under something",
-               mode: .invent, category: .generate, icon: "waveform.path",
-               slots: [], engine: generate("gen-bassline"), phase: 1),
-        Recipe(id: "gen-chord-bed",
-               name: "Chord bed",
-               tagline: "Pads and harmony to write over",
-               mode: .invent, category: .generate, icon: "pianokeys",
-               slots: [], engine: generate("gen-chord-bed"), phase: 1),
-        Recipe(id: "gen-hook",
-               name: "Melody or hook",
-               tagline: "The line the song gets remembered by",
-               mode: .invent, category: .generate, icon: "music.note",
-               slots: [], engine: generate("gen-hook"), phase: 1),
-        Recipe(id: "gen-ambient-bed",
-               name: "Ambient bed",
-               tagline: "Long, slow and edgeless — for underneath",
-               mode: .invent, category: .generate, icon: "wind",
-               slots: [], engine: generate("gen-ambient-bed"), phase: 1),
         Recipe(id: "gen-sound-effect",
                name: "Sound effect",
                tagline: "Foley and one-off noises, not music",
                mode: .invent, category: .generate,
                icon: "speaker.wave.2",
                slots: [], engine: generate("gen-sound-effect"), phase: 1),
-        Recipe(id: "gen-riser",
-               name: "Riser or transition",
-               tagline: "The lift into a drop, or the sweep out of one",
-               mode: .invent, category: .generate,
-               icon: "arrow.up.forward",
-               slots: [], engine: generate("gen-riser"), phase: 1),
-        Recipe(id: "gen-one-shot",
-               name: "One-shot sample",
-               tagline: "A single hit, short enough to drop in a sampler",
-               mode: .invent, category: .generate,
-               icon: "circle.grid.cross",
-               slots: [], engine: generate("gen-one-shot"), phase: 1),
         Recipe(id: "gen-fit-track",
                name: "Generate to fit this track",
                tagline: "New audio at the tempo and key of one you have",
@@ -398,12 +350,6 @@ enum RecipeCatalog {
                             arity: 1...1, autoDerive: nil)],
                engine: generate("gen-my-voice"), phase: 2,
                wantsLyrics: true),
-        Recipe(id: "gen-explore-prompt",
-               name: "Explore a prompt",
-               tagline: "Four takes of one idea, four different seeds",
-               mode: .invent, category: .generate,
-               icon: "square.on.square.dashed",
-               slots: [], engine: generate("gen-explore-prompt"), phase: 1),
         Recipe(id: "gen-compare-models",
                name: "Compare models on one prompt",
                tagline: "The same description through several models at once",
@@ -413,30 +359,18 @@ enum RecipeCatalog {
 
         // MARK: The model's own plan
         //
-        // Four cards over one capability: a model that declares the `plan`
+        // One card over one capability: a model that declares the `plan`
         // task can run its planning half alone, cheaply, and say what it
-        // intends before the expensive half starts. They sit on the Generate
-        // shelf because that is what they lead to.
+        // intends before the expensive half starts. It sits on the Generate
+        // shelf because that is what it leads to. Its page also reads the
+        // plan back off a take you already have, and re-renders it — the
+        // jobs the plan-inspect and plan-reroll cards used to carry.
         Recipe(id: "plan-choose",
                name: "Plan → choose → render",
-               tagline: "Three quick plans — choose one before the slow part",
+               tagline: "Quick plans first — or reread the plan behind "
+                   + "a take you have",
                mode: .invent, category: .generate, icon: "list.bullet.rectangle",
                slots: [], engine: .songPlan(mode: .choose), phase: 1),
-        Recipe(id: "plan-inspect",
-               name: "What was it thinking?",
-               tagline: "The tempo, key and shape the model chose for you",
-               mode: .analyse, category: .generate, icon: "eye",
-               slots: [planSlot()], engine: .songPlan(mode: .inspect), phase: 1),
-        Recipe(id: "plan-reroll",
-               name: "Same song, new sound",
-               tagline: "Keep what it wrote; record it again differently",
-               mode: .invent, category: .generate, icon: "arrow.triangle.2.circlepath",
-               slots: [planSlot()], engine: .songPlan(mode: .reroll), phase: 1),
-        Recipe(id: "plan-pin",
-               name: "Lock in the tempo and key",
-               tagline: "You set the facts; the model fills in the rest",
-               mode: .invent, category: .generate, icon: "pin",
-               slots: [], engine: .songPlan(mode: .pin), phase: 1),
 
         // MARK: Help me write
         //
@@ -444,16 +378,15 @@ enum RecipeCatalog {
         // that lives on this machine. None of them render audio, and none of
         // them commit anything: each ends in an editable draft the user
         // accepts, changes, or throws away.
+        // Also the home of the old "Flesh out my idea" card: the page
+        // offers one-shot and interview flows behind a switch, because both
+        // end in the same editable description.
         Recipe(id: "assist-interview",
                name: "Help me describe it",
-               tagline: "Answer a few questions; it writes the description",
+               tagline: "A rough phrase or a few questions — it writes "
+                   + "the description",
                mode: .write, category: .assist, icon: "bubble.left.and.bubble.right",
                slots: [], engine: .assistant(kind: .interview), phase: 1),
-        Recipe(id: "assist-flesh-out",
-               name: "Flesh out my idea",
-               tagline: "A rough phrase in, a vivid description back",
-               mode: .write, category: .assist, icon: "wand.and.stars",
-               slots: [], engine: .assistant(kind: .fleshOut), phase: 1),
         Recipe(id: "assist-lyrics",
                name: "Write the lyrics with me",
                tagline: "Verses and choruses, tagged the way the model likes",
@@ -484,26 +417,14 @@ enum RecipeCatalog {
                tagline: "The same song, in French — or fifty others",
                mode: .write, category: .assist, icon: "globe",
                slots: [], engine: .assistant(kind: .translateLyrics), phase: 1),
-        Recipe(id: "assist-describe",
-               name: "Describe this song back to me",
-               tagline: "Hear what the app hears, in a sentence",
-               mode: .write, category: .assist, icon: "quote.bubble",
-               slots: [assistSourceSlot()],
-               engine: .assistant(kind: .describeSong, needsSource: true),
-               phase: 1),
+        // Also the home of the old "Fix what bothers me" card: say what
+        // should change and the same page rewrites instead of riffing.
         Recipe(id: "assist-more-like",
                name: "More like this one",
-               tagline: "Point at a song you love; get more of that family",
+               tagline: "More of that family — or say what to change",
                mode: .write, category: .assist, icon: "square.on.square",
                slots: [assistSourceSlot()],
                engine: .assistant(kind: .moreLikeThis, needsSource: true),
-               phase: 1),
-        Recipe(id: "assist-critique",
-               name: "Fix what bothers me",
-               tagline: "Say what's wrong; it rewrites the description",
-               mode: .write, category: .assist, icon: "bandage",
-               slots: [assistSourceSlot()],
-               engine: .assistant(kind: .critiqueFix, needsSource: true),
                phase: 1),
         Recipe(id: "assist-name",
                name: "Name and file it",
@@ -519,21 +440,16 @@ enum RecipeCatalog {
         // whose small LLM reads the analyzer's measurements and never hears
         // a thing. The two compound: what a listener writes down here feeds
         // the digest the assistant reasons from.
+        // Also the home of the old "Music → text" card: the page has a
+        // switch for whether the caption is kept on the track or only read.
         Recipe(id: "describe-song",
                name: "Describe it by listening",
-               tagline: "Not the measurements — a model hears the track, "
-                   + "and the words are saved onto it",
+               tagline: "A model hears the track — keep the words on it, "
+                   + "or just read them",
                mode: .analyse, category: .words, icon: "ear",
                slots: [wordsSlot()], engine: .textAction(.describe),
                phase: 1,
                prefersModelIds: ["caption-lpmusiccaps"]),
-        Recipe(id: "music-to-text",
-               name: "Music → text",
-               tagline: "Caption any audio; read it, copy it, keep it "
-                   + "if you like it",
-               mode: .analyse, category: .words, icon: "captions.bubble",
-               slots: [wordsSlot()], engine: .textAction(.freeCaption),
-               phase: 1),
         Recipe(id: "ask-about",
                name: "Ask about this song",
                tagline: "Type a question about what's in the audio; "
@@ -588,18 +504,12 @@ enum RecipeCatalog {
                prefersModelIds: ["transcribe-basicpitch"]),
         Recipe(id: "music-text-music",
                name: "Music → text → music",
-               tagline: "Describe it, then generate from the description",
+               tagline: "Describe it, then generate — pausing to rewrite "
+                   + "the words if you want",
                mode: .reimagine, category: .words,
                icon: "arrow.triangle.2.circlepath",
                slots: [wordsSlot()], engine: .textPipeline(.roundTrip),
                phase: 1),
-        Recipe(id: "music-text-edit-music",
-               name: "Music → text → edit → music",
-               tagline: "Pause in the middle and rewrite what the "
-                   + "model heard",
-               mode: .reimagine, category: .words, icon: "pencil.line",
-               slots: [wordsSlot()],
-               engine: .textPipeline(.roundTripEdited), phase: 1),
         Recipe(id: "telephone-game",
                name: "Telephone: music → text → music → …",
                tagline: "Each round drifts further from the track you "
@@ -610,17 +520,11 @@ enum RecipeCatalog {
                phase: 1),
         Recipe(id: "abc-roundtrip",
                name: "ABC: extract → generate",
-               tagline: "Notation out of one model, straight into another",
+               tagline: "Notation out of one model, into another — with a "
+                   + "stop to edit it if you want",
                mode: .reimagine, category: .words,
                icon: "arrow.triangle.2.circlepath.circle",
                slots: [wordsSlot()], engine: .textPipeline(.abcRoundTrip),
-               phase: 1),
-        Recipe(id: "abc-edit",
-               name: "ABC: extract → edit → generate",
-               tagline: "Rewrite the notation before it becomes sound",
-               mode: .reimagine, category: .words,
-               icon: "square.and.pencil",
-               slots: [wordsSlot()], engine: .textPipeline(.abcEdited),
                phase: 1),
         Recipe(id: "prompt-score",
                name: "Score against its prompt",
@@ -641,12 +545,6 @@ enum RecipeCatalog {
                             arity: 1...1, autoDerive: nil)],
                engine: .similar, phase: 1),
         // Seeds: cheap to promise, one-liners once the pages above exist.
-        Recipe(id: "liner-notes",
-               name: "Liner notes",
-               tagline: "A long-form write-up, as if for the back of "
-                   + "the sleeve",
-               mode: .analyse, category: .words, icon: "doc.text",
-               slots: [wordsSlot()], engine: .textAction(.ask), phase: 3),
         Recipe(id: "describe-library",
                name: "Describe everything",
                tagline: "Every untagged track described in one batch",
@@ -696,46 +594,13 @@ enum RecipeCatalog {
                icon: "square.stack.3d.up",
                slots: [], engine: .batchSplit, phase: 1),
 
-        // MARK: One track, one transform
+        // MARK: One track, one job
         //
-        // Everything here is `mix_spec` doing what it has always been able to
-        // do (contract §5.4) with no model in the way. The Editor does each of
-        // them too, and better; these are the version where you do not open a
-        // window. See `TrackTransform`.
-        Recipe(id: "reverse",
-               name: "Reverse it",
-               tagline: "Backwards, sample for sample",
-               mode: .exact, category: .recombine,
-               icon: "arrow.uturn.backward",
-               slots: [transformSlot()], engine: .transform(.reverse),
-               phase: 1),
-        Recipe(id: "speed",
-               name: "Change the speed",
-               tagline: "Faster or slower, same pitch",
-               mode: .exact, category: .recombine, icon: "speedometer",
-               slots: [transformSlot()], engine: .transform(.speed),
-               phase: 1),
-        Recipe(id: "key-shift",
-               name: "Change the key",
-               tagline: "Up or down in semitones, formants intact",
-               mode: .exact, category: .recombine, icon: "arrow.up.arrow.down",
-               slots: [transformSlot()], engine: .transform(.key), phase: 1),
-        Recipe(id: "fades",
-               name: "Fade in and out",
-               tagline: "A clean top and tail, both ends the same",
-               mode: .exact, category: .recombine,
-               icon: "slider.horizontal.3",
-               slots: [transformSlot()], engine: .transform(.fades),
-               phase: 1),
-        // Renamed from "Clean up a recording" when the two model-driven
-        // repair cards below arrived — three cards named "clean" would ask
-        // the user to guess. The id is a wire value and stays.
-        Recipe(id: "clean-up",
-               name: "Tidy the levels",
-               tagline: "Rumble out, silence down, peaks in — plain DSP",
-               mode: .exact, category: .recombine, icon: "bandage",
-               slots: [transformSlot()], engine: .transform(.cleanUp),
-               phase: 1),
+        // The plain DSP transforms that used to open this section — reverse,
+        // speed, key, fades, levels, loop — are gone as cards: the Editor
+        // does each of them, and better (`TrackTransform` still exists for
+        // `conform`, the one two-track job the Editor cannot do). What is
+        // left here are the model-driven repairs and the notes continuation.
         Recipe(id: "dereverb",
                name: "Dry out the room",
                tagline: "Echo and reverb out; the dry take back",
@@ -760,12 +625,6 @@ enum RecipeCatalog {
                                   + "the noise floor as the other."),
                phase: 1,
                prefersModelIds: ["cleanup-uvr-denoise"]),
-        Recipe(id: "loop-cut",
-               name: "Make a loop",
-               tagline: "Whole bars, cut on the track's own downbeats",
-               mode: .exact, category: .recombine,
-               icon: "repeat",
-               slots: [transformSlot()], engine: .transform(.loop), phase: 1),
         Recipe(id: "continue-notes",
                name: "Continue these notes",
                tagline: "The transformer picks up where the part stops — "
@@ -802,12 +661,6 @@ enum RecipeCatalog {
                                       KindPattern(pattern: "layer.*")],
                             arity: 1...1, autoDerive: nil)],
                engine: .transform(.conform), phase: 1),
-        Recipe(id: "editor",
-               name: "Open in Editor",
-               tagline: "Trim, cut, level and fade one file by hand",
-               mode: .exact, category: .recombine, icon: "scissors",
-               slots: [], engine: .editor, phase: 1),
-
         Recipe(id: "split-instruments",
                name: "Split into instruments",
                tagline: "Vocals, drums, bass and more as separate parts",
@@ -916,46 +769,29 @@ enum RecipeCatalog {
                                 note: "Split a song into instruments for cleaner material"))],
                engine: .mix(defaults: MixDefaults()),
                phase: 2),
+        // Also the home of the old "Replace the drums" card: the swapped-in
+        // slot takes any stem now, and the rest of the song rides beside it.
+        // The id keeps its original name — it is a wire value in provenance.
         Recipe(id: "swap-vocals",
-               name: "Swap the vocals",
-               tagline: "This voice over that backing track",
+               name: "Swap a stem",
+               tagline: "This voice — or any stem — over the rest of "
+                   + "that song",
                mode: .exact, category: .recombine, icon: "person.wave.2",
-               slots: [Slot(id: "vocals", label: "Vocals",
-                            accepts: [KindPattern(pattern: "stem.vocals")],
+               slots: [Slot(id: "vocals", label: "The stem to swap in",
+                            accepts: [KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*")],
                             arity: 1...1,
                             autoDerive: AutoDerive(
                                 splitTask: "separate",
-                                note: "Split a song to get its vocal stem")),
-                       Slot(id: "backing", label: "Backing track",
-                            accepts: [KindPattern(pattern: "stem.instrumental"),
+                                note: "Split a song to get the stem")),
+                       Slot(id: "backing", label: "The rest of the song",
+                            accepts: [KindPattern(pattern: "stem.*"),
+                                      KindPattern(pattern: "layer.*"),
                                       KindPattern(pattern: "song.mix")],
-                            arity: 1...1,
-                            autoDerive: AutoDerive(
-                                splitTask: "separate",
-                                note: "Split a song to get its instrumental"))],
-               engine: .mix(defaults: MixDefaults()),
-               phase: 2),
-        Recipe(id: "replace-drums",
-               name: "Replace the drums",
-               tagline: "New rhythm section under the same song",
-               mode: .exact, category: .recombine, icon: "metronome",
-               slots: [Slot(id: "song", label: "Song (minus drums)",
-                            accepts: [KindPattern(pattern: "stem.vocals"),
-                                      KindPattern(pattern: "stem.bass"),
-                                      KindPattern(pattern: "stem.other"),
-                                      KindPattern(pattern: "stem.guitar"),
-                                      KindPattern(pattern: "stem.piano")],
                             arity: 1...5,
                             autoDerive: AutoDerive(
                                 splitTask: "separate",
-                                note: "Split the song into instruments first")),
-                       Slot(id: "drums", label: "Drums",
-                            accepts: [KindPattern(pattern: "stem.drums"),
-                                      KindPattern(pattern: "stem.drums.*")],
-                            arity: 1...1,
-                            autoDerive: AutoDerive(
-                                splitTask: "separate",
-                                note: "Split a song to get its drum stem"))],
+                                note: "Split a song into instruments first"))],
                engine: .mix(defaults: MixDefaults()),
                phase: 2),
         Recipe(id: "polish",
@@ -1005,34 +841,21 @@ enum RecipeCatalog {
                                       KindPattern(pattern: "layer.*")],
                             arity: 1...1, autoDerive: nil)],
                engine: .match, phase: 2),
-        Recipe(id: "workbench",
-               name: "Open in Workbench",
-               tagline: "Freeform: stack any parts, tweak everything",
-               mode: .exact, category: .recombine,
-               icon: "slider.horizontal.3",
-               slots: [],
-               engine: .workbench,
-               phase: 2),
 
         // MARK: Reimagine — a model rewrites it
         // (SR3 — every generative mode below passed the Mac-path spike)
-        Recipe(id: "melody-start",
-               name: "Start a song from this melody",
-               tagline: "A new arrangement that follows this tune",
-               mode: .reimagine, category: .reimagine,
-               icon: "waveform.badge.plus",
-               slots: [Slot(id: "melody", label: "Melody",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*"),
-                                      KindPattern(pattern: "notes.melody")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "melody-start", mode: .melody)),
-               phase: 1),
+        //
+        // Three doors into the Style Transfer workspace, one per group on
+        // its own mode switcher — which reaches every mode, documented in
+        // its own words. The ten per-mode cards this shelf used to carry
+        // (melody-start, sound-like, keep-stems, morph-style, rewrite-lyrics,
+        // back-vocal, complete-band, loop-reimagine, continue-song,
+        // ai-extract) are those modes' old names; their ids live on in
+        // provenance and open nothing.
         Recipe(id: "restyle",
                name: "Restyle this song",
-               tagline: "Same song, new sound — an AI cover",
+               tagline: "An AI cover — and five more ways to restyle, "
+                   + "inside",
                mode: .reimagine, category: .reimagine, icon: "sparkles",
                slots: [Slot(id: "source", label: "Song or part",
                             accepts: [KindPattern(pattern: "song.mix"),
@@ -1047,70 +870,10 @@ enum RecipeCatalog {
                engine: .styleTransfer(preset: StylePreset(
                    id: "restyle", mode: .cover)),
                phase: 2),
-        Recipe(id: "sound-like",
-               name: "Make it sound like this",
-               tagline: "Borrow another track's texture, keep your own song",
-               mode: .reimagine, category: .reimagine,
-               icon: "square.on.square.dashed",
-               slots: [Slot(id: "source", label: "Your track (optional)",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 0...1, autoDerive: nil),
-                       Slot(id: "reference", label: "Sound to borrow",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "sound-like", mode: .reference)),
-               phase: 2),
-        Recipe(id: "keep-stems",
-               name: "Keep the vocal: split → restyle → mix back",
-               tagline: "The stems you keep are the original recording",
-               mode: .reimagine, category: .reimagine,
-               icon: "square.stack.3d.up",
-               slots: [Slot(id: "source", label: "Song or part",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1,
-                            autoDerive: AutoDerive(
-                                splitTask: "separate",
-                                note: "Split a song into stems first"))],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "keep-stems", mode: .stems)),
-               phase: 2),
-        Recipe(id: "morph-style",
-               name: "Morph into another style",
-               tagline: "Describe what it is, then what it should become",
-               mode: .reimagine, category: .reimagine,
-               icon: "arrow.triangle.swap",
-               slots: [Slot(id: "source", label: "Song or part",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "morph-style", mode: .morph)),
-               phase: 2),
-        Recipe(id: "rewrite-lyrics",
-               name: "Rewrite the lyrics",
-               tagline: "The same music sings your new words",
-               mode: .reimagine, category: .reimagine, icon: "text.quote",
-               slots: [Slot(id: "source", label: "Song or part",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "rewrite-lyrics", mode: .cover,
-                   notice: "Type the new words below. The music stays; the "
-                       + "model sings what you write.")),
-               phase: 2, wantsLyrics: true),
         Recipe(id: "add-layer",
                name: "Add a new layer",
-               tagline: "AI plays a new instrument over your track",
+               tagline: "AI plays over your track — or extracts a stem "
+                   + "from it",
                mode: .reimagine, category: .reimagine,
                icon: "plus.square.on.square",
                slots: [Slot(id: "context", label: "Track",
@@ -1120,19 +883,6 @@ enum RecipeCatalog {
                             arity: 1...1, autoDerive: nil)],
                engine: .styleTransfer(preset: StylePreset(
                    id: "add-layer", mode: .layer)),
-               phase: 2),
-        Recipe(id: "back-vocal",
-               name: "Back this vocal",
-               tagline: "An AI band behind your singer",
-               mode: .reimagine, category: .reimagine, icon: "person.2.wave.2",
-               slots: [Slot(id: "context", label: "Vocals",
-                            accepts: [KindPattern(pattern: "stem.vocals")],
-                            arity: 1...1,
-                            autoDerive: AutoDerive(
-                                splitTask: "separate",
-                                note: "Split a song to get its vocal stem"))],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "back-vocal", mode: .layer)),
                phase: 2),
         Recipe(id: "timbre-transfer",
                name: "Repaint the sound",
@@ -1248,8 +998,11 @@ enum RecipeCatalog {
                                       KindPattern(pattern: "layer.*")],
                             arity: 1...1, autoDerive: nil)],
                engine: generate("vamp-loop"), phase: 2),
+        // Renamed from "Morph between two sounds": it collided with the
+        // Style Transfer shelf's morph card and mode. The id is a wire value
+        // and stays.
         Recipe(id: "style-morph",
-               name: "Morph between two sounds",
+               name: "Blend one sound into another",
                tagline: "Start as one thing; arrive as another",
                mode: .reimagine, category: .reimagine,
                icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -1261,7 +1014,8 @@ enum RecipeCatalog {
                engine: generate("style-morph"), phase: 2),
         Recipe(id: "repaint",
                name: "Fill or fix a section",
-               tagline: "Regenerate just the seconds you select",
+               tagline: "Regenerate the seconds you select — or complete "
+                   + "or continue the track",
                mode: .reimagine, category: .reimagine, icon: "bandage",
                slots: [Slot(id: "source", label: "Song or part",
                             accepts: [KindPattern(pattern: "song.mix"),
@@ -1270,57 +1024,6 @@ enum RecipeCatalog {
                             arity: 1...1, autoDerive: nil)],
                engine: .styleTransfer(preset: StylePreset(
                    id: "repaint", mode: .repaint)),
-               phase: 2),
-        Recipe(id: "complete-band",
-               name: "Complete the band",
-               tagline: "A sparse track becomes a full arrangement",
-               mode: .reimagine, category: .reimagine, icon: "person.3",
-               slots: [Slot(id: "source", label: "Sparse track",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "complete-band", mode: .complete)),
-               phase: 2),
-        Recipe(id: "loop-reimagine",
-               name: "Reimagine a loop",
-               tagline: "Short section in, fresh texture out",
-               mode: .reimagine, category: .reimagine,
-               icon: "arrow.2.squarepath",
-               slots: [Slot(id: "loop", label: "Loop or short section "
-                                + "(bigger models take whole songs)",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "loop-reimagine", mode: .shape)),
-               phase: 2),
-        Recipe(id: "continue-song",
-               name: "Continue this song",
-               tagline: "How far depends on the model — up to 6:20 "
-                   + "on Stable Audio 3 Medium",
-               mode: .reimagine, category: .reimagine, icon: "forward.end",
-               slots: [Slot(id: "source", label: "Song to continue",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "continue-song", mode: .continueTrack)),
-               phase: 2),
-        Recipe(id: "ai-extract",
-               name: "Extract a stem with AI",
-               tagline: "Generative stems, not the original recording",
-               mode: .reimagine, category: .reimagine, icon: "scissors",
-               slots: [Slot(id: "source", label: "Song or part",
-                            accepts: [KindPattern(pattern: "song.mix"),
-                                      KindPattern(pattern: "stem.*"),
-                                      KindPattern(pattern: "layer.*")],
-                            arity: 1...1, autoDerive: nil)],
-               engine: .styleTransfer(preset: StylePreset(
-                   id: "ai-extract", mode: .extract)),
                phase: 2),
         Recipe(id: "token-splice",
                name: "Token Splice playground",

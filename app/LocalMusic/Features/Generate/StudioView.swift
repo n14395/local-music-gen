@@ -377,6 +377,29 @@ struct StudioView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("PROMPT").eyebrow()
             StudioPromptEditor(text: $prompt, font: Bench.Typo.promptHero)
+            // The gallery's old seed-only Generate cards, at chip size.
+            // Only while the prompt is empty: a chip *replaces* the prompt
+            // and the defaults, which over a sentence you typed would be a
+            // destructive click dressed as a suggestion.
+            if prompt.isEmpty, mode == .simple {
+                FlowLayout(spacing: 6, rowSpacing: 6) {
+                    Text("START WITH")
+                        .font(Bench.Typo.mono(10, .semibold))
+                        .tracking(0.9)
+                        .foregroundStyle(Bench.Palette.textFaintest)
+                        .padding(.vertical, 5)
+                    ForEach(GeneratePreset.starters, id: \.id) { starter in
+                        Button(starter.label) { applyStarter(id: starter.id) }
+                            .buttonStyle(.plain)
+                            .font(Bench.Typo.secondary)
+                            .foregroundStyle(Bench.Palette.textSecondary)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(RoundedRectangle(
+                                cornerRadius: Bench.Metrics.Radius.button)
+                                .fill(Bench.Palette.controlDim))
+                    }
+                }
+            }
             if mode == .simple {
                 HStack(spacing: 10) {
                     attachment("Lyrics",
@@ -810,6 +833,19 @@ struct StudioView: View {
         case .fixed:
             installed.first { $0.id == fixed }?.id
         }
+    }
+
+    /// One "starting points" chip, applied. Through the prefill mailbox
+    /// rather than by poking fields, so a chip and the card it replaced set
+    /// the composer up through the same code — model choice included.
+    private func applyStarter(id: String) {
+        guard let preset = GeneratePreset.preset(id: id) else { return }
+        prefill.pending = .init(
+            prompt: preset.promptSeed,
+            lyrics: preset.lyricsSeed,
+            modelId: preset.need.best(catalog.models)?.id,
+            durationS: preset.durationS,
+            takes: preset.takes)
     }
 
     private func applyPrefill() {

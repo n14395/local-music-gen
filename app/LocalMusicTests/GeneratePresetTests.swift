@@ -94,10 +94,25 @@ final class GeneratePresetTests: XCTestCase {
         }
     }
 
-    func testEveryPresetHasItsCard() {
+    /// A preset with no card is reachable only if a starter chip carries it —
+    /// the 2026-09 consolidation moved the seed-only cards into the Studio's
+    /// "starting points" row, and their presets stayed for the chips (and for
+    /// old provenance) to name.
+    func testEveryPresetHasACardOrAStarterChip() {
+        let chipIds = Set(GeneratePreset.starters.map(\.id))
         for preset in GeneratePreset.all {
-            XCTAssertNotNil(RecipeCatalog.recipe(id: preset.id),
-                            "\(preset.id) is a preset no card opens")
+            XCTAssertTrue(RecipeCatalog.recipe(id: preset.id) != nil
+                              || chipIds.contains(preset.id),
+                          "\(preset.id) is a preset nothing opens")
+        }
+    }
+
+    /// …and every chip names a preset that exists, or it is a dead button.
+    func testEveryStarterChipHasItsPreset() {
+        for starter in GeneratePreset.starters {
+            XCTAssertNotNil(GeneratePreset.preset(id: starter.id), starter.id)
+            XCTAssertNil(RecipeCatalog.recipe(id: starter.id),
+                         "\(starter.id) is both a chip and a card")
         }
     }
 
@@ -146,8 +161,9 @@ final class GeneratePresetTests: XCTestCase {
             }
         }
         // A `where` clause that stopped matching would leave every assertion
-        // above unrun and the test still green.
-        XCTAssertEqual(examined, 15, "the Generate shelf changed size")
+        // above unrun and the test still green. Five since the seed-only
+        // cards became Studio chips.
+        XCTAssertEqual(examined, 5, "the Generate shelf changed size")
     }
 
     /// …and the converse, so a slot cannot be added to a card that would
@@ -331,7 +347,11 @@ final class TrackTransformTests: XCTestCase {
                 }
             }
         }
-        XCTAssertEqual(seen, Set(TrackTransform.allCases))
+        // Only conform keeps a card: it is the one transform the Editor
+        // cannot do (it needs two tracks). The single-track transforms lost
+        // their cards to the Editor in the 2026-09 consolidation; the
+        // transform type itself survives whole for the Editor and the wire.
+        XCTAssertEqual(seen, [.conform])
     }
 
     /// The specialists exist and are preferred by name. A typo here is a card

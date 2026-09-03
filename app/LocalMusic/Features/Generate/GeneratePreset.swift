@@ -139,8 +139,29 @@ struct GeneratePreset: Equatable, Identifiable, Sendable {
 extension GeneratePreset {
 
     /// Every Generate preset, keyed by the recipe id that opens it.
+    ///
+    /// Bigger than the set of cards on purpose: the seed-only presets lost
+    /// their cards to the Studio's "starting points" chips, but the presets
+    /// stay — the chips read them, and old provenance still names their ids.
     static let byRecipe: [String: GeneratePreset] = Dictionary(
         uniqueKeysWithValues: all.map { ($0.id, $0) })
+
+    /// The Studio's "starting points" chips, in display order: what used to
+    /// be ten gallery cards whose whole contents were a starter prompt,
+    /// a length and a take count. Each chip applies the preset the card
+    /// applied; the label is the card's old name, shortened to chip length.
+    static let starters: [(label: String, id: String)] = [
+        ("Instrumental", "gen-instrumental"),
+        ("Drum loop", "gen-drum-loop"),
+        ("Bassline", "gen-bassline"),
+        ("Chord bed", "gen-chord-bed"),
+        ("Hook", "gen-hook"),
+        ("Ambient bed", "gen-ambient-bed"),
+        ("Riser", "gen-riser"),
+        ("One-shot", "gen-one-shot"),
+        ("Sketch ×4", "gen-sketch"),
+        ("Explore ×4", "gen-explore-prompt"),
+    ]
 
     static func preset(id: String) -> GeneratePreset? { byRecipe[id] }
 

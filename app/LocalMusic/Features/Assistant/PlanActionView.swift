@@ -46,6 +46,15 @@ struct PlanActionView: View {
     @State private var pinnedBpm = ""
     @State private var pinnedKey = ""
     @State private var pinnedTime = ""
+    /// The merged card's two starts: roll fresh plans, or read the plan back
+    /// off a take you already rendered — the job the plan-inspect and
+    /// plan-reroll cards used to carry. Only the choose card offers the
+    /// switch; a deep link arriving on another mode keeps that mode.
+    @State private var fromTake = false
+
+    private var activeMode: PlanCardMode {
+        mode == .choose && fromTake ? .reroll : mode
+    }
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
 
     private var slot: Slot? { recipe.slots.first }
@@ -71,7 +80,7 @@ struct PlanActionView: View {
     }
 
     private var visiblePlans: [SongPlan] {
-        switch mode {
+        switch activeMode {
         case .choose: phase.plans
         case .inspect, .reroll: storedPlan.map { [$0] } ?? []
         case .pin: phase.plans
@@ -80,7 +89,13 @@ struct PlanActionView: View {
 
     var body: some View {
         ActionPage(recipe: recipe, onBack: onBack) {
-            if !recipe.slots.isEmpty {
+            if mode == .choose {
+                BenchSegmented(selection: $fromTake, options: [
+                    .init(value: false, label: "Fresh plans"),
+                    .init(value: true, label: "From a take"),
+                ])
+            }
+            if fromTake || !recipe.slots.isEmpty {
                 ActionSourceCard(
                     eyebrow: "TRACK",
                     material: source,
@@ -101,8 +116,13 @@ struct PlanActionView: View {
                         + "of its variants to see and steer that step.",
                     onOpenModels: onOpenModels)
             } else {
-                if mode == .choose || mode == .pin { describeCard }
-                if mode == .pin { pinCard }
+                if activeMode == .choose || activeMode == .pin {
+                    describeCard
+                    // The old "Lock in the tempo and key" card, folded in:
+                    // `requestPlans` has always sent the pins, only the
+                    // fields were hidden outside the pin card.
+                    pinCard
+                }
                 planCards
             }
         } commit: {
@@ -122,6 +142,12 @@ struct PlanActionView: View {
             sourceMeta = source.map {
                 ActionCopy.sourceMeta($0, library: library, parts: parts)
             }
+            if fromTake, let source,
+               let song = library.song(id: source.songId) {
+                caption = song.prompt
+                lyrics = song.lyrics ?? ""
+                durationS = song.durationS
+            }
         }
         .onAppear {
             if source == nil, let sourceId {
@@ -140,6 +166,17 @@ struct PlanActionView: View {
             }
         }
         .onDisappear { plans.clear(recipe.id) }
+        .onChange(of: fromTake) { _, _ in
+            chosenPlan = nil
+            plans.clear(recipe.id)
+            // The take's own words seed the re-render, as the reroll card
+            // always did on arrival.
+            if fromTake, let source, let song = library.song(id: source.songId) {
+                caption = song.prompt
+                lyrics = song.lyrics ?? ""
+                durationS = song.durationS
+            }
+        }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: slot?.label ?? "Song",
@@ -168,7 +205,7 @@ struct PlanActionView: View {
                         .foregroundStyle(Bench.Palette.textTertiary)
                     Slider(value: $durationS, in: 10...300, step: 5)
                         .frame(maxWidth: 240)
-                    if mode == .choose {
+                    if activeMode == .choose {
                         Picker("Plans", selection: $howMany) {
                             ForEach([2, 3, 4, 5], id: \.self) {
                                 Text("\($0) plans").tag($0)
@@ -201,7 +238,7 @@ struct PlanActionView: View {
 
     /// Card 11: the facts you take out of the model's hands.
     private var pinCard: some View {
-        ActionOptionsCard(eyebrow: "YOUR CALL") {
+        ActionOptionsCard(eyebrow: "YOUR CALL — OPTIONAL") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     AssistField(text: $pinnedBpm, placeholder: "Tempo (BPM)")
@@ -238,7 +275,7 @@ struct PlanActionView: View {
             }
         default:
             if visiblePlans.isEmpty {
-                if mode == .inspect || mode == .reroll {
+                if activeMode == .inspect || activeMode == .reroll {
                     ActionOptionsCard(eyebrow: "NO PLAN") {
                         ActionFootnote(text: source == nil
                             ? "Choose a generated song to see what the model "
@@ -261,15 +298,15 @@ struct PlanActionView: View {
     }
 
     private func planRow(_ plan: SongPlan) -> some View {
-        let selectable = mode == .choose && plan.isRenderable
+        let selectable = activeMode == .choose && plan.isRenderable
         let isChosen = chosenPlan == plan.index
-            || (visiblePlans.count == 1 && mode != .choose)
+            || (visiblePlans.count == 1 && activeMode != .choose)
         return Button {
             if selectable { chosenPlan = plan.index }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Text(mode == .choose ? "Plan \(plan.index + 1)"
+                    Text(activeMode == .choose ? "Plan \(plan.index + 1)"
                                          : "What it was thinking")
                         .font(Bench.Typo.bodyEmphasis)
                         .foregroundStyle(Bench.Palette.textPrimary)
@@ -338,7 +375,7 @@ struct PlanActionView: View {
         plans.plan(slot: recipe.id, model: model,
                    caption: caption.trimmingCharacters(in: .whitespacesAndNewlines),
                    lyrics: lyrics, durationS: durationS,
-                   count: mode == .pin ? 1 : howMany,
+                   count: activeMode == .pin ? 1 : howMany,
                    pinned: pinned)
     }
 
@@ -351,7 +388,7 @@ struct PlanActionView: View {
     }
 
     private var commitTitle: String {
-        switch mode {
+        switch activeMode {
         case .choose: "Render this plan"
         case .inspect: "Reuse this description"
         case .reroll: "Record it again"
@@ -360,7 +397,7 @@ struct PlanActionView: View {
     }
 
     private var commitSubline: String? {
-        switch mode {
+        switch activeMode {
         case .reroll: "SAME SONG, DIFFERENT TAKE"
         case .inspect: "NOTHING RENDERS"
         default: "SAVED TO LIBRARY"
@@ -368,7 +405,7 @@ struct PlanActionView: View {
     }
 
     private var costLine: String? {
-        switch mode {
+        switch activeMode {
         case .inspect: "GOES TO › GENERATE"
         default: ActionFormat.join([
             ActionFormat.estimate(ActionEstimate.generativeSeconds(
@@ -379,7 +416,7 @@ struct PlanActionView: View {
 
     private var canCommit: Bool {
         guard !submitting, model != nil else { return false }
-        switch mode {
+        switch activeMode {
         case .inspect: return actingPlan != nil
         case .choose: return actingPlan?.isRenderable == true
         case .reroll: return actingPlan?.isRenderable == true
@@ -388,7 +425,7 @@ struct PlanActionView: View {
         }
     }
 
-    private var canQueue: Bool { mode != .inspect }
+    private var canQueue: Bool { activeMode != .inspect }
 
     private var errorText: String? {
         if case .failed(let message) = phase { return message }
@@ -397,7 +434,7 @@ struct PlanActionView: View {
 
     private func commit(back: Bool) {
         guard let model else { return }
-        if mode == .inspect {
+        if activeMode == .inspect {
             // Nothing to render: this card explains a take that already
             // exists. The useful onward move is the model's own words, which
             // are usually a better prompt than the one that produced them.
@@ -419,7 +456,7 @@ struct PlanActionView: View {
             if let bpm = plan.bpm { params["bpm"] = .int(bpm) }
             if let key = plan.keyscale { params["keyscale"] = .string(key) }
         }
-        if mode == .reroll {
+        if activeMode == .reroll {
             // A new seed is the whole point: same plan, different rendering
             // of it. Left unset the engine picks one, which is what we want.
             params.removeValue(forKey: "seed")
@@ -438,7 +475,7 @@ struct PlanActionView: View {
             guard created != nil else { return }
             runsJSON = ActionRunLog.recording(
                 ActionRunLog.Entry(
-                    summary: mode == .reroll ? "Re-recorded a plan"
+                    summary: activeMode == .reroll ? "Re-recorded a plan"
                                              : "Rendered a chosen plan",
                     detail: actingPlan?.summary ?? caption,
                     at: Date(), sourceId: source?.id, modelId: model.id),
@@ -450,11 +487,11 @@ struct PlanActionView: View {
     // MARK: - Copy
 
     private var planButtonTitle: String {
-        mode == .pin ? "Show me the plan" : "Write \(howMany) plans"
+        activeMode == .pin ? "Show me the plan" : "Write \(howMany) plans"
     }
 
     private var planEyebrow: String {
-        switch mode {
+        switch activeMode {
         case .choose: "PICK ONE — NOTHING HAS RENDERED YET"
         case .reroll: "THE PLAN BEHIND THIS TAKE"
         case .inspect: "WHAT THE MODEL DECIDED"
@@ -463,7 +500,7 @@ struct PlanActionView: View {
     }
 
     private var outputs: [ActionOutput] {
-        guard mode != .inspect else { return [] }
+        guard activeMode != .inspect else { return [] }
         return [ActionOutput(id: "take", name: "A new take",
                              meta: ActionFormat.join([
                                 ActionFormat.length(durationS), "WAV"]),

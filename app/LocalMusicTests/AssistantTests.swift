@@ -300,9 +300,9 @@ final class AssistantCardTests: XCTestCase {
         }
     }
 
-    func testAllSixteenCardsExist() {
-        XCTAssertEqual(assistCards.count, 12)
-        XCTAssertEqual(planCards.count, 4)
+    func testAllTenCardsExist() {
+        XCTAssertEqual(assistCards.count, 9)
+        XCTAssertEqual(planCards.count, 1)
     }
 
     func testEveryNewCardIsAvailable() {
@@ -316,15 +316,16 @@ final class AssistantCardTests: XCTestCase {
     /// plan cards, into the provenance of what they render. This is the list;
     /// changing one orphans what is already recorded under it.
     func testCardIdsAreStable() {
+        // Shrunk on purpose (2026-09-03): flesh-out folded into interview,
+        // critique into more-like, describe cut for the Words shelf's
+        // listening card, and three plan cards into plan-choose's page.
+        // The removed ids stay retired — never reused for a new card.
         XCTAssertEqual(assistCards.map(\.id).sorted(), [
-            "assist-brief", "assist-critique", "assist-describe",
-            "assist-flesh-out", "assist-interview", "assist-lyrics",
+            "assist-brief", "assist-interview", "assist-lyrics",
             "assist-more-like", "assist-name", "assist-pick-model",
             "assist-plan-song", "assist-route", "assist-translate",
         ])
-        XCTAssertEqual(planCards.map(\.id).sorted(), [
-            "plan-choose", "plan-inspect", "plan-pin", "plan-reroll",
-        ])
+        XCTAssertEqual(planCards.map(\.id).sorted(), ["plan-choose"])
     }
 
     /// The whole shelf produces words, never audio. Badging any of it
@@ -343,13 +344,12 @@ final class AssistantCardTests: XCTestCase {
         XCTAssertEqual(RecipeCategory.allCases.dropFirst().first, .assist)
     }
 
-    /// Only the four source-reading cards ask for a track. The other eight
-    /// would be asking for something they never look at.
+    /// Only the source-reading cards ask for a track. The others would be
+    /// asking for something they never look at.
     func testOnlyTheSourceReadingCardsHaveASlot() {
         let withSlots = assistCards.filter { !$0.slots.isEmpty }.map(\.id)
         XCTAssertEqual(withSlots.sorted(),
-                       ["assist-critique", "assist-describe",
-                        "assist-more-like", "assist-name"])
+                       ["assist-more-like", "assist-name"])
     }
 
     /// `needsSource` and having a slot are two statements of one fact, and a
