@@ -41,7 +41,9 @@ struct LibraryPartList: View {
     private var flat: [PartRecord] { groups.flatMap(\.parts) }
 
     var body: some View {
-        ScrollViewReader { proxy in
+        // Measured once for the whole list — see `LibraryRowMetrics`.
+        GeometryReader { pane in
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(groups) { group in
@@ -50,6 +52,8 @@ struct LibraryPartList: View {
                                 id: \.element.id) { index, part in
                             LibraryPartRow(
                                 part: part,
+                                contentWidth: LibraryRowMetrics
+                                    .contentWidth(pane: pane.size.width),
                                 analysis: analyses[part.id],
                                 isZebra: index.isMultiple(of: 2),
                                 isSelected: part.id == selectedId,
@@ -66,7 +70,8 @@ struct LibraryPartList: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, LibraryRowMetrics.listPadding)
+                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .remembersLibraryScroll(scroll, proxy: proxy)
@@ -84,6 +89,7 @@ struct LibraryPartList: View {
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo(selectedId)
                 }
+            }
             }
         }
     }
@@ -178,6 +184,8 @@ struct LibraryPartList: View {
 /// clip carry, so a glance down the list still reads as instrumentation.
 struct LibraryPartRow: View {
     let part: PartRecord
+    /// The width this row's content has to draw in — see `LibraryRowMetrics`.
+    var contentWidth: CGFloat = .infinity
     let analysis: AnalysisRecord?
     let isZebra: Bool
     let isSelected: Bool
@@ -203,16 +211,36 @@ struct LibraryPartRow: View {
     /// signal and is only taking room from the label beside it.
     static let minStripWidth: CGFloat = 96
 
+    /// What this row needs before the strip is affordable without asking. A
+    /// parts row carries no badge and no spinner, so its shape varies only by
+    /// the tick box.
+    private var widthForStrip: CGFloat {
+        Self.stripIdealWidth
+            + (showsCheckbox ? LibrarySongRow.checkboxSlot : 0)
+    }
+
+    /// A plain parts row's strip variant. Wider than the song row's by the
+    /// stem bar in front of the title.
+    static let stripIdealWidth: CGFloat = 400
+
     var body: some View {
-        // The same ladder the song rows climb: the strip is the one thing in
-        // the row that degrades to nothing gracefully — the inspector draws
-        // the same signal at a size worth aiming at — while half a title
-        // identifies nothing.
-        ViewThatFits(in: .horizontal) {
-            content(showsStrip: true)
-            content(showsStrip: false)
+        // Wide enough and the strip is taken without asking; near the edge the
+        // ladder decides, as it always did — the strip is the one thing in the
+        // row that degrades to nothing gracefully, the inspector draws the same
+        // signal at a size worth aiming at, while half a title identifies
+        // nothing.
+        Group {
+            if contentWidth >= widthForStrip {
+                content(showsStrip: true)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    content(showsStrip: true)
+                    content(showsStrip: false)
+                }
+            }
         }
-        .padding(.horizontal, 12).padding(.vertical, 11)
+        .padding(.horizontal, LibraryRowMetrics.rowPadding)
+        .padding(.vertical, 11)
         .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                      style: .continuous)
             .fill(fill))
@@ -233,7 +261,7 @@ struct LibraryPartRow: View {
         return isZebra ? Bench.Palette.rowZebra : .clear
     }
 
-    private func content(showsStrip: Bool) -> some View {
+    func content(showsStrip: Bool) -> some View {
         HStack(spacing: 12) {
             if showsCheckbox {
                 LibraryCheckbox(isOn: isChecked, action: onToggleCheck)

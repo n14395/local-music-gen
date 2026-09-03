@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // The small parts the library screen is assembled from. They live here rather
@@ -630,5 +631,44 @@ private struct RemembersLibraryScroll: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+// MARK: - Row width
+
+/// What a library row has to lay out in, and what it costs to draw a waveform
+/// in it.
+///
+/// Both lists used to answer that per row with `ViewThatFits`: build the row
+/// *with* a strip, build it again *without*, measure both, keep one. That is
+/// two full row layouts — two title blocks, two meta lines, two sets of stars
+/// — every pass, and a pass happens for each of the thirty-odd widths a
+/// sliding sidebar or queue panel walks the pane through. Measured over forty
+/// rows it cost about 1.4× a single-variant list.
+///
+/// The pane is one width for every row in it, so it is measured once above the
+/// rows and handed down. A row wide enough for the shape it is drawing takes
+/// the strip without asking; only a row that is genuinely near the edge falls
+/// back to the ladder, which arbitrates exactly as it always did.
+///
+/// The numbers are measured, not guessed — `SongRowFitTests` and
+/// `PartRowFitTests` render the real rows and fail if either outgrows what is
+/// declared here.
+enum LibraryRowMetrics {
+    /// The horizontal inset the lists put around their rows…
+    static let listPadding: CGFloat = 12
+    /// …and the one each row puts around its own content.
+    static let rowPadding: CGFloat = 12
+
+    /// Legacy scrollers take their width out of the content; overlay ones do
+    /// not. Read rather than assumed, because getting it wrong in this
+    /// direction is a row that keeps a strip it has no room for.
+    static var scrollerAllowance: CGFloat {
+        NSScroller.preferredScrollerStyle == .legacy ? 16 : 0
+    }
+
+    /// The width a row's content gets inside a pane this wide.
+    static func contentWidth(pane: CGFloat) -> CGFloat {
+        pane - listPadding * 2 - rowPadding * 2 - scrollerAllowance
     }
 }

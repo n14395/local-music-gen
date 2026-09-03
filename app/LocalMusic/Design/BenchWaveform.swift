@@ -19,12 +19,24 @@ struct BenchWaveform: View {
     /// bar weight constant instead of stretching with the container.
     var barPitch: CGFloat = 3
     var minBarHeight: CGFloat = 1.5
+    /// What to file this strip's resampled bars under, so the same track drawn
+    /// again — next tick, next scroll, next screen — reuses them. Nil for a
+    /// caller with no stable name for its material; see `WaveformBars`.
+    var barsID: String?
     var onSeek: ((Double) -> Void)?
 
     var body: some View {
         GeometryReader { geo in
+            // Resolved here rather than inside the draw, so a redraw that
+            // changed neither the width nor the peaks — a transport tick, a
+            // selection ring, a republished list — reads the answer instead of
+            // working it out again. See `WaveformBars`.
+            let bars = WaveformBars.bars(
+                id: barsID, count: Self.barCount(width: geo.size.width,
+                                                 pitch: barPitch),
+                peaks: peaks)
             let canvas = Canvas(rendersAsynchronously: false) { context, size in
-                draw(in: context, size: size)
+                draw(bars, in: context, size: size)
             }
             // Only where there is somewhere to seek to. A hit region and a
             // gesture that does nothing still swallow the click, which in a
@@ -46,6 +58,12 @@ struct BenchWaveform: View {
         }
     }
 
+    /// How many bars a strip this wide draws. The design's bar pitch is fixed,
+    /// so the count follows the width rather than the other way round.
+    static func barCount(width: CGFloat, pitch: CGFloat) -> Int {
+        max(1, Int(width / max(pitch, 1)))
+    }
+
     private func seekGesture(width: CGFloat,
                              onSeek: @escaping (Double) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0).onChanged { value in
@@ -54,10 +72,11 @@ struct BenchWaveform: View {
         }
     }
 
-    private func draw(in context: GraphicsContext, size: CGSize) {
-        guard size.width > 0, size.height > 0 else { return }
-        let bars = max(1, Int(size.width / max(barPitch, 1)))
-        let pitch = size.width / CGFloat(bars)
+    private func draw(_ bars: [Float], in context: GraphicsContext,
+                      size: CGSize) {
+        guard size.width > 0, size.height > 0, !bars.isEmpty else { return }
+        let count = bars.count
+        let pitch = size.width / CGFloat(count)
         let barWidth = max(1, pitch - 1)
         let mid = size.height / 2
         let playedX = size.width * playedFraction.clamped(to: 0...1)
@@ -66,9 +85,9 @@ struct BenchWaveform: View {
         var played = Path()
         var unplayed = Path()
 
-        for i in 0..<bars {
-            let magnitude = amplitude(bar: i, of: bars)
-            let height = max(minBarHeight, CGFloat(magnitude) * size.height * 0.96)
+        for i in 0..<count {
+            let height = max(minBarHeight,
+                             CGFloat(bars[i]) * size.height * 0.96)
             let x = CGFloat(i) * pitch
             let rect = CGRect(x: x, y: mid - height / 2, width: barWidth, height: height)
             let path = Path(roundedRect: rect, cornerRadius: radius)
@@ -78,20 +97,83 @@ struct BenchWaveform: View {
         context.fill(unplayed, with: .color(rest))
         if playedFraction > 0 { context.fill(played, with: .color(tint)) }
     }
+}
+
+/// One bar magnitude per bar, resampled from a track's cached peaks and kept.
+///
+/// The strip in a library row is redrawn far more often than it changes: the
+/// transport ticks four times a second, a selection ring lands, the list
+/// republishes after a rating — and each of those used to walk all 2000 cached
+/// bins again to produce the same hundred-odd numbers, once per visible row.
+/// The answer depends on nothing but the peaks and how many bars fit, so it is
+/// worked out once and read from then on.
+///
+/// Keyed on the caller's id and the bar count, and *checked* against the peaks
+/// it was made from rather than trusted: `Array`'s `==` returns in constant
+/// time when both sides share a buffer, which is the case every time the same
+/// cached peaks come round again. So a hit costs a dictionary lookup, and
+/// bytes changing under a path — an apply, a revert — recompute rather than
+/// serve the drawing of a file that no longer exists.
+@MainActor
+enum WaveformBars {
+    /// Under a real magnitude, so an unloaded strip reads as a flat line
+    /// rather than as silence.
+    static let placeholder: Float = 0.12
+
+    private struct Key: Hashable {
+        var id: String
+        var count: Int
+    }
+
+    private struct Entry {
+        var peaks: WaveformExtractor.Peaks
+        var bars: [Float]
+    }
+
+    /// Enough for every row, clip and hero strip a screen can hold, at several
+    /// widths each. Past it the memo starts over rather than growing for the
+    /// rest of the session.
+    private static let capacity = 512
+    private static var entries: [Key: Entry] = [:]
+
+    /// The bars for one strip. `id` is what makes an answer reusable — a
+    /// caller with nothing stable to name its material by passes nil and gets
+    /// the arithmetic unmemoised, which is what every draw used to do.
+    static func bars(id: String?, count: Int,
+                     peaks: WaveformExtractor.Peaks?) -> [Float] {
+        guard let peaks, !peaks.maxs.isEmpty else {
+            return [Float](repeating: placeholder, count: max(1, count))
+        }
+        guard let id else { return resample(peaks, to: count) }
+        let key = Key(id: id, count: count)
+        if let hit = entries[key], hit.peaks == peaks { return hit.bars }
+        let bars = resample(peaks, to: count)
+        if entries.count >= capacity { entries.removeAll(keepingCapacity: true) }
+        entries[key] = Entry(peaks: peaks, bars: bars)
+        return bars
+    }
 
     /// Resample the cached peaks (a fixed 2000 bins per file) down to the bar
     /// count this width wants, taking the max over each span so transients
     /// survive the downsample instead of averaging away.
-    private func amplitude(bar: Int, of bars: Int) -> Float {
-        guard let peaks, !peaks.maxs.isEmpty else { return 0.12 }
+    ///
+    /// One magnitude per bin — `max(|min|, |max|)` — because the design's bars
+    /// are symmetric about the centre line.
+    static func resample(_ peaks: WaveformExtractor.Peaks,
+                         to count: Int) -> [Float] {
         let bins = peaks.maxs.count
-        let lo = bins * bar / bars
-        let hi = max(lo + 1, bins * (bar + 1) / bars)
-        var peak: Float = 0
-        for i in lo..<min(hi, bins) {
-            peak = max(peak, max(abs(peaks.maxs[i]), abs(peaks.mins[i])))
+        let count = max(1, count)
+        var bars = [Float](repeating: 0, count: count)
+        for bar in 0..<count {
+            let lo = bins * bar / count
+            let hi = min(max(lo + 1, bins * (bar + 1) / count), bins)
+            var peak: Float = 0
+            for i in lo..<hi {
+                peak = max(peak, max(abs(peaks.maxs[i]), abs(peaks.mins[i])))
+            }
+            bars[bar] = peak
         }
-        return peak
+        return bars
     }
 }
 
@@ -112,8 +194,13 @@ struct BenchWaveformLoader: View {
 
     var body: some View {
         ZStack {
-            BenchWaveform(peaks: peaks, playedFraction: playedFraction, tint: tint,
-                          rest: rest, barPitch: barPitch, onSeek: onSeek)
+            BenchWaveform(peaks: peaks, playedFraction: playedFraction,
+                          tint: tint, rest: rest, barPitch: barPitch,
+                          // The peaks file's path names the material: it is
+                          // one per track, it is what the extractor keys its
+                          // own caches on, and it survives this view being
+                          // rebuilt — which a row scrolled out and back in is.
+                          barsID: cacheURL.path, onSeek: onSeek)
                 // Before the peaks arrive the bars are a flat placeholder rather
                 // than a spinner: a row that pops from spinner to waveform makes
                 // a list of forty rows flicker on every scroll.

@@ -495,12 +495,19 @@ struct LibraryScreen: View {
     /// two row types itself instead of handing off to one of the lists — two
     /// scroll views stacked would each scroll on their own.
     private var favouritesList: some View {
-        ScrollViewReader { proxy in
-            favouritesScroll.remembersLibraryScroll(scrollSlot, proxy: proxy)
+        // Measured once for the whole list, as the two dedicated lists do —
+        // see `LibraryRowMetrics`.
+        GeometryReader { pane in
+            ScrollViewReader { proxy in
+                favouritesScroll(
+                    contentWidth: LibraryRowMetrics
+                        .contentWidth(pane: pane.size.width))
+                    .remembersLibraryScroll(scrollSlot, proxy: proxy)
+            }
         }
     }
 
-    private var favouritesScroll: some View {
+    private func favouritesScroll(contentWidth: CGFloat) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if !songs.isEmpty {
@@ -510,7 +517,8 @@ struct LibraryScreen: View {
                     ForEach(Array(songs.enumerated()), id: \.element.id) {
                         index, song in
                         LibrarySongRow(
-                            song: song, isZebra: index.isMultiple(of: 2),
+                            song: song, contentWidth: contentWidth,
+                            isZebra: index.isMultiple(of: 2),
                             isSelected: song.id == selectedSongId,
                             isChecked: checked.contains(song.id),
                             showsCheckbox: true,
@@ -541,7 +549,8 @@ struct LibraryScreen: View {
                     ForEach(Array(parts.results.enumerated()),
                             id: \.element.id) { index, part in
                         LibraryPartRow(
-                            part: part, analysis: parts.analysis(for: part.id),
+                            part: part, contentWidth: contentWidth,
+                            analysis: parts.analysis(for: part.id),
                             isZebra: index.isMultiple(of: 2),
                             isSelected: part.id == selectedPartId,
                             isChecked: checked.contains(part.id),
@@ -580,7 +589,8 @@ struct LibraryScreen: View {
                     }
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.horizontal, LibraryRowMetrics.listPadding)
+            .padding(.vertical, 8)
         }
     }
 

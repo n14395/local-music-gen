@@ -32,17 +32,36 @@ final class PartRowFitTests: XCTestCase {
 
     private func analysis() -> AnalysisRecord? { nil }
 
-    private func row(_ part: PartRecord) -> LibraryPartRow {
-        LibraryPartRow(part: part, analysis: analysis(), isZebra: false,
+    private func row(_ part: PartRecord,
+                     contentWidth: CGFloat = .infinity) -> LibraryPartRow {
+        LibraryPartRow(part: part, contentWidth: contentWidth,
+                       analysis: analysis(), isZebra: false,
                        isSelected: false, playback: PlaybackController(),
                        onPlay: {}, onSelect: {}, onSeek: { _ in })
     }
 
-    /// The rendered height of one row laid out at `width`.
+    /// The rendered height of one row laid out at `width`, given the same
+    /// content width the list would hand it there.
     private func height(at width: CGFloat, part: PartRecord) -> CGFloat {
-        let host = NSHostingView(rootView: row(part).frame(width: width))
+        let content = width - LibraryRowMetrics.rowPadding * 2
+        let host = NSHostingView(
+            rootView: row(part, contentWidth: content).frame(width: width))
         host.layoutSubtreeIfNeeded()
         return host.fittingSize.height
+    }
+
+    /// The declared width the parts row's fast path trusts, against what the
+    /// row actually measures — the same pinning `SongRowFitTests` does, for
+    /// the same reason: the arithmetic replaced a measurement, so it has to
+    /// stay true to the row it replaced it for.
+    func testTheDeclaredStripWidthCoversTheRealRow() {
+        let host = NSHostingView(
+            rootView: AnyView(row(part()).content(showsStrip: true)))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertLessThanOrEqual(host.fittingSize.width,
+                                 LibraryPartRow.stripIdealWidth,
+                                 "the parts row's strip variant has outgrown "
+                                 + "LibraryPartRow.stripIdealWidth")
     }
 
     /// Two lines of the title block plus the row's 11 pt of vertical padding

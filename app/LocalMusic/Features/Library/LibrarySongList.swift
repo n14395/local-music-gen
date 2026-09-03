@@ -34,12 +34,18 @@ struct LibrarySongList: View {
     var scroll: LibraryScrollSlot?
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
+        // One measurement for the whole list, rather than each row building
+        // itself twice to find out whether it has room for a waveform. See
+        // `LibrarySongRow.contentWidth`.
+        GeometryReader { pane in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
                     ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
                         LibrarySongRow(
                             song: song,
+                            contentWidth: LibraryRowMetrics
+                                .contentWidth(pane: pane.size.width),
                             isZebra: !index.isMultiple(of: 2),
                             isSelected: song.id == selectedId,
                             isChecked: checked.contains(song.id),
@@ -56,7 +62,8 @@ struct LibrarySongList: View {
                             .contextMenu { menu(for: song) }
                     }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, LibraryRowMetrics.listPadding)
+                .padding(.vertical, 8)
             }
             .remembersLibraryScroll(scroll, proxy: proxy)
             .focusable()
@@ -72,6 +79,7 @@ struct LibrarySongList: View {
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo(selectedId)
                 }
+            }
             }
         }
     }
@@ -167,6 +175,11 @@ struct LibrarySongList: View {
 /// pins.
 struct LibrarySongRow: View {
     let song: SongRecord
+    /// The width this row's content has to draw in, measured once by the list
+    /// rather than discovered by each row building itself twice — see
+    /// `LibraryRowMetrics`. Unbounded by default, which is what a row hosted on
+    /// its own (a test, a preview) should assume.
+    var contentWidth: CGFloat = .infinity
     let isZebra: Bool
     let isSelected: Bool
     let isChecked: Bool
@@ -213,16 +226,48 @@ struct LibrarySongRow: View {
     static let minTitleWidth: CGFloat = 122
     static let maxTitleWidth: CGFloat = 480
 
-    var body: some View {
-        // The same ladder the parts rows climb, in the same order: the strip
-        // is the one thing in the row that degrades to nothing gracefully —
-        // the detail pane draws the same signal at a size worth aiming at —
-        // while half a title identifies nothing.
-        ViewThatFits(in: .horizontal) {
-            content(showsStrip: true)
-            content(showsStrip: false)
+    /// What this row's shape needs before the strip is affordable without
+    /// asking. Conservative on purpose: the two optional trailing clauses are
+    /// allowed more than either measures, because over-estimating only sends a
+    /// row back to the ladder, while under-estimating would let one keep a
+    /// waveform it has no room for and overflow the pane.
+    private var widthForStrip: CGFloat {
+        var width = Self.stripIdealWidth
+        if showsCheckbox { width += Self.checkboxSlot }
+        if isSplitting { width += Self.splittingAllowance }
+        if let count = Self.editCount(of: song), count > 0 {
+            width += Self.badgeAllowance
         }
-        .padding(.horizontal, 12).padding(.vertical, 11)
+        return width
+    }
+
+    /// A plain row's strip variant, with no checkbox, badge or spinner on it.
+    static let stripIdealWidth: CGFloat = 382
+    /// What the tick box in front of a row adds, spacing included.
+    static let checkboxSlot: CGFloat = 27
+    /// The SPLITTING spinner and its label measure 86; the edits badge 74 to
+    /// 94 by digit count, plus 12 of spacing. Both are rounded up here.
+    static let splittingAllowance: CGFloat = 100
+    static let badgeAllowance: CGFloat = 112
+
+    var body: some View {
+        // Wide enough for this shape, and there is nothing to decide. Narrow
+        // enough to be interesting, and the ladder decides exactly as it always
+        // did: the strip is the one thing in the row that degrades to nothing
+        // gracefully — the detail pane draws the same signal at a size worth
+        // aiming at — while half a title identifies nothing.
+        Group {
+            if contentWidth >= widthForStrip {
+                content(showsStrip: true)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    content(showsStrip: true)
+                    content(showsStrip: false)
+                }
+            }
+        }
+        .padding(.horizontal, LibraryRowMetrics.rowPadding)
+        .padding(.vertical, 11)
         .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
                                      style: .continuous)
             .fill(fill))
@@ -235,7 +280,7 @@ struct LibrarySongRow: View {
         .onTapGesture(perform: onSelect)
     }
 
-    private func content(showsStrip: Bool) -> some View {
+    func content(showsStrip: Bool) -> some View {
         HStack(spacing: 12) {
             if showsCheckbox {
                 LibraryCheckbox(isOn: isChecked, action: onToggleCheck)
