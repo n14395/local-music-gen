@@ -1520,7 +1520,17 @@ def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
               "allow_patterns": ACESTEP_CPP_CORE + [dit_file]}]
     settings = {"lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
                 "synth_model": dit_file,
-                "vae": "vae-BF16.gguf"}
+                "vae": "vae-BF16.gguf",
+                # Which of the two acestep.cpp runtimes drives this entry.
+                # "server" is the resident `ace-server` process — models stay
+                # loaded between takes, cancel is cooperative; "cli" is the
+                # original pair of one-shot binaries, kept as a per-entry
+                # rollback that needs no code change. `keep_loaded` is the
+                # server's --keep-loaded: the residency itself, separable from
+                # the transport so a machine that cannot hold ~10 GB between
+                # takes can still have the cancel and the latent cache.
+                "runtime": "server",
+                "keep_loaded": True}
     if loras:
         caps["params"] += [
             {"key": "adapter", "type": "enum", "label": "Style LoRA",
@@ -2525,12 +2535,72 @@ NEW_ENTRIES = [
            "commercial_use": False, "requires_hf_token": False,
            "url": "https://github.com/LiuZH-19/SongGen"},
           settings={"device": "mps"},
-          notes="The mixed-mode checkpoint (one combined track). A "
-                "dual-track variant (separate vocal + accompaniment) exists "
-                "upstream and is a natural follow-up. The 2026-08-26 MPS "
-                "port is unmeasured — the est still carries the CPU "
-                "baseline, so the estimate is worst-case until a render "
-                "lands."),
+          notes="The mixed-mode checkpoint: one combined track, the full "
+                "120 seconds. For the vocal and the backing as separate "
+                "parts, use the dual-track entry — same family, half the "
+                "length, about twice the wait."),
+    # The dual-track sibling. Upstream ships exactly two checkpoints and this
+    # is the other one; the layout is baked into the weights, not chosen at
+    # runtime (`track_pattern` in the checkpoint's own config).
+    #
+    # Why 60 s where mixed gets 120: the decoder has 6547 positions and the
+    # codec runs at 50 Hz, so mixed tops out near 131 s. `interleaving_A_V`
+    # weaves both streams along TIME — `reshape(bsz, n, 2 * seq_len)` in
+    # `modeling_songgen_dual_track.py` — spending two positions per frame of
+    # audio, which halves the reach and roughly doubles the wait. The
+    # `parallel_*` layouts in the same file stack the streams on the codebook
+    # axis instead and would cost neither, but no checkpoint for them has been
+    # released, and the pattern cannot be changed after training.
+    entry("songgen-dual-track", "songgen",
+          ["LiuZH-19/SongGen_interleaving_A_V",
+           {"repo_id": "ZhenYe234/xcodec", "gated": False,
+            "allow_patterns": ["xcodec_hubert_general_audio_v2.pth",
+                               "config_hubert_general.yaml"]}],
+          "SongGen dual-track (vocal + backing)",
+          "The same song generator, writing the vocal and the accompaniment "
+          "as two separate parts instead of one finished mix. You get the "
+          "song and both stems, already perfectly aligned and summing back to "
+          "exactly what you hear — no separation model guessing where the "
+          "voice ends. Half the maximum length of the mixed entry, and about "
+          "three times the wait for the same duration.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 5, "max_s": 60, "default_s": 20},
+              "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
+              # Measured 2026-09-04 on MPS: 180.8 s of job for 9.86 s of
+              # audio, of which 171 s was the decode itself. That is 2.9× the
+              # mixed entry's measured rate, not the 2× the token count alone
+              # suggests — doubling the sequence length also makes every
+              # attention step more expensive.
+              "est_seconds_per_audio_second": 18.0,
+              "lyrics_hint": ("Plain lyric lines; keep them short and "
+                              "singable. English works best."),
+              "params": [
+                  {"key": "ref_voice", "type": "audio",
+                   "label": "Reference voice", "default": None,
+                   "nullable": True},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.0, "nullable": False,
+                   "min": 0.3, "max": 1.5, "step": 0.05},
+                  {"key": "top_k", "type": "int", "label": "Top-K",
+                   "default": 250, "nullable": False, "min": 10, "max": 500},
+                  {"key": "top_p", "type": "float", "label": "Top-P",
+                   "default": 1.0, "nullable": False, "min": 0.1, "max": 1.0,
+                   "step": 0.05},
+                  seed_param(),
+              ],
+          },
+          16, "slow",
+          {"name": "Apache-2.0 (code); research checkpoint",
+           "commercial_use": False, "requires_hf_token": False,
+           "url": "https://github.com/LiuZH-19/SongGen"},
+          variant_of="songgen-mixed-pro",
+          settings={"device": "mps", "dual_track": True,
+                    "track_pattern": "interleaving_A_V"},
+          notes="The take is the mix of the two parts, made engine-side by "
+                "summing them — the model never produces one. Both parts "
+                "land in the library beside the song, and they sum back to "
+                "exactly what you hear."),
     entry("diffrhythm2", "diffrhythm2",
           ["ASLP-lab/DiffRhythm2"],
           "DiffRhythm2 (full songs)",
@@ -3689,17 +3759,23 @@ NEW_ENTRIES = [
              "help": "Diffusion passes. 30 is the upstream default; more "
                      "refines the timbre and takes proportionally longer"},
             # The wrapper has two conversion paths and only one was wired up.
+            # The help is measured rather than inferred (2026-09-04): upstream
+            # runs its autoregressive stage only `if convert_style` (or
+            # anonymize), so with both off the two modes are the same
+            # computation — the two takes came back byte-identical, in the
+            # same 80 s. The mode is a real choice only alongside those two.
             {"key": "mode", "type": "enum", "label": "What to convert",
              "default": "full", "nullable": False,
              "choices": [
                  {"value": "full", "label": "Voice and delivery"},
                  {"value": "timbre", "label": "Voice only (keep the timing)"}],
-             "help": "'Voice and delivery' re-speaks the line in the target "
-                     "voice and may re-phrase it. 'Voice only' skips that "
-                     "stage entirely: the timing, phrasing and expression of "
-                     "your recording are kept exactly, and only the timbre "
-                     "changes. Faster, and the right choice for anything "
-                     "that has to stay in time."},
+             "help": "'Voice and delivery' allows the model to re-speak the "
+                     "line, which can re-time it — a 12.5 s recording came "
+                     "back 13.4 s. It only does that when Copy style or "
+                     "Anonymize is on; with both off, the two settings do "
+                     "the same work and return the same audio. 'Voice only' "
+                     "never re-speaks the line, so your timing, phrasing and "
+                     "expression survive whatever else is set."},
             {"key": "convert_style", "type": "bool", "label": "Copy style",
              "default": False, "nullable": False,
              "help": "Also carry the reference's emotion, accent and "
@@ -4792,9 +4868,18 @@ def main() -> None:
             m["size_bytes"] = previous[m["id"]]
             m["requirements"]["disk_bytes"] = previous[m["id"]]
 
-    cache: dict[tuple, int] = {}
+    # None, not 0, for a lookup that failed. A model with one unreachable repo
+    # must keep its preset size, which is what the message below has always
+    # claimed — but summing 0 for the failed repo and writing the total the
+    # moment it was non-zero did the opposite: one transient API hiccup on
+    # `facebook/magnet-medium-30secs` silently rewrote that entry from 4.81 GB
+    # to 0.89 GB, the size of its t5-base sibling alone. An under-reported
+    # download is a wrong disk-space check and a wrong install estimate, and
+    # nothing downstream can tell it from a real number.
+    cache: dict[tuple, int | None] = {}
     for m in models:
         total = 0
+        unknown = False
         for repo in m["hf_repos"]:
             rid = repo["repo_id"]
             pats = repo.get("allow_patterns")
@@ -4804,11 +4889,14 @@ def main() -> None:
                     cache[key] = effective_size(rid, tok, pats)
                 except Exception as e:  # noqa: BLE001 — mirror repos may not exist yet
                     print(f"  {rid}: size unavailable ({e}); keeping preset")
-                    cache[key] = 0
+                    cache[key] = None
                 else:
                     print(f"  {rid}: {cache[key] / 1e9:.2f} GB"
                           + (f" ({len(pats)} files)" if pats else ""))
-            total += cache[key]
+            if cache[key] is None:
+                unknown = True
+            else:
+                total += cache[key]
         for repo in m.get("ms_repos") or []:
             pats = repo.get("allow_patterns")
             key = ("ms", repo["repo_id"], tuple(pats) if pats else None)
@@ -4818,11 +4906,14 @@ def main() -> None:
                 except Exception as e:  # noqa: BLE001 — same best-effort as HF
                     print(f"  ms:{repo['repo_id']}: size unavailable ({e}); "
                           f"keeping preset")
-                    cache[key] = 0
+                    cache[key] = None
                 else:
                     print(f"  ms:{repo['repo_id']}: {cache[key] / 1e9:.2f} GB")
-            total += cache[key]
-        if total > 0:
+            if cache[key] is None:
+                unknown = True
+            else:
+                total += cache[key]
+        if total > 0 and not unknown:
             m["size_bytes"] = total
             m["requirements"]["disk_bytes"] = total
 

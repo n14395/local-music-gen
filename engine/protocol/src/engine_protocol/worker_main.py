@@ -340,7 +340,8 @@ def main() -> None:
                 messages.send(proto_out, "result", wav_path=result.wav_path,
                               duration_s=result.duration_s,
                               sample_rate=result.sample_rate,
-                              seed_used=result.seed_used, extra=result.extra)
+                              seed_used=result.seed_used, extra=result.extra,
+                              stems=result.stems)
             elif msg["t"] == "task":
                 if adapter is None:
                     messages.send(proto_out, "error", kind="runtime",

@@ -1084,6 +1084,28 @@ class JobQueue:
                           "sample_rate": msg["sample_rate"],
                           "duration_s": msg["duration_s"],
                           "seed_used": msg.get("seed_used")}
+                # Separated parts of this take, for the models that render a
+                # song as parts (5.6a). Path-checked exactly as a task artifact
+                # is: a worker naming a file outside the job's own directory
+                # loses the stem, never the take — the song itself is fine and
+                # failing the render over a part would be the wrong trade.
+                stems = []
+                stem_root = os.path.realpath(out_dir)
+                for s in msg.get("stems") or []:
+                    real = os.path.realpath(str(s.get("path", "")))
+                    if (not real.startswith(stem_root + os.sep)
+                            or not os.path.isfile(real)):
+                        self.bus.emit_threadsafe(
+                            "job.log",
+                            {"job_id": job.id,
+                             "line": "dropped a stem with an invalid path"})
+                        continue
+                    stems.append({"label": s.get("label") or "stem",
+                                  "path": real, "format": "wav",
+                                  "sample_rate": s.get("sample_rate"),
+                                  "duration_s": s.get("duration_s")})
+                if stems:
+                    output["stems"] = stems
                 if take_meta:
                     output["meta"] = take_meta
                     meta.update(take_meta)

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build the acestep.cpp binaries (GGML + Metal) for the acestepcpp adapter.
 #
-# The adapter runs ace-lm / ace-synth as subprocesses; this script produces them
-# in engine/adapters/acestepcpp/bin/. Requires cmake and the Xcode toolchain.
+# The adapter runs ace-server (or, on the "cli" runtime, ace-lm / ace-synth) as
+# subprocesses; this script produces all three in
+# engine/adapters/acestepcpp/bin/. Requires cmake and the Xcode toolchain.
 # Idempotent: skips the build when the pinned revision is already built.
 #
 # Usage: scripts/build_acestep_cpp.sh [--force | --relink]

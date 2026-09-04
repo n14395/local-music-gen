@@ -2,10 +2,12 @@
 sections, and integrated loudness — the metadata layer that powers part
 badges and literal-recombine alignment.
 
-The beat_this checkpoint ("final0", ~78 MB) is fetched by the package itself
-into TORCH_HOME on first use (CPJKU hosting; no HF mirror exists with the
-.ckpt format).  TODO(assets-mirror): once the user-owned HF mirror hosts
-final0.ckpt, add it to the catalog entry and pass the snapshot path here.
+The beat_this checkpoint ("final0", ~78 MB) and BTC's two chord models now come
+from the user-owned assets mirror (`rtikw/localmusic-assets`), declared on the
+catalog entries and passed in as snapshot paths below — so install-state is
+real, the fetch resumes, and neither depends on a single upstream host. The
+package's own CPJKU/GitHub download remains as the fallback when a snapshot is
+missing; it is not normally reached.
 """
 
 from __future__ import annotations

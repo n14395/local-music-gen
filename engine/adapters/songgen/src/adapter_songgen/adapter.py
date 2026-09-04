@@ -182,6 +182,11 @@ class SongGenAdapter(ModelAdapter):
         self.model = None
         self.processor = None
         self.device = str(self.settings.get("device") or "cpu")
+        # Dual-track: the checkpoint writes the vocal and the accompaniment as
+        # two streams and never mixes them, so the take is a mix we make and
+        # the two parts travel with it. Selected by the entry, because it is a
+        # different checkpoint and a different model class, not a flag.
+        self.dual = bool(self.settings.get("dual_track"))
 
     def _snapshot(self, needle: str) -> str:
         for repo, path in self.model_paths.items():
@@ -205,15 +210,32 @@ class SongGenAdapter(ModelAdapter):
         _teach_processor_float32()
 
         progress_cb(None, "loading SongGen (5 GB)")
-        from songgen import (SongGenMixedForConditionalGeneration,
+        from songgen import (SongGenDualTrackForConditionalGeneration,
+                             SongGenMixedForConditionalGeneration,
                              SongGenProcessor)
 
         _define_missing_torch_flag()
 
         ckpt = self._snapshot("songgen")
-        self.model = SongGenMixedForConditionalGeneration.from_pretrained(
+        cls = (SongGenDualTrackForConditionalGeneration if self.dual
+               else SongGenMixedForConditionalGeneration)
+        self.model = cls.from_pretrained(
             ckpt, attn_implementation="sdpa").to(self.device).eval()
         self.processor = SongGenProcessor(ckpt, self.device)
+        if self.dual:
+            # The pattern is a property of the trained weights, not a runtime
+            # choice — the checkpoint's own config carries it, and generate()
+            # reads it from there. Surfaced here so the log says which layout
+            # is loaded, and so a mismatched settings/checkpoint pair is
+            # visible rather than mysterious.
+            pattern = getattr(self.model.decoder.config, "track_pattern", "?")
+            declared = self.settings.get("track_pattern")
+            if declared and declared != pattern:
+                raise RuntimeError(
+                    f"this checkpoint is a '{pattern}' dual-track model but "
+                    f"the entry declares '{declared}'")
+            progress_cb(None, f"SongGen dual-track ready ({pattern})")
+            return
         progress_cb(None, "SongGen ready on the GPU (MPS)"
                           if self.device == "mps" else "SongGen ready (CPU)")
 
@@ -225,7 +247,17 @@ class SongGenAdapter(ModelAdapter):
 
         assert self.model is not None and self.processor is not None
         duration_s = float(params.get("duration_s") or 15.0)
-        max_tokens = int(min(duration_s, 120) * TOKENS_PER_S)
+        # The decoder has 6547 positions and the codec runs at 50 Hz, so a
+        # mixed render tops out near 131 s and the catalog declares 120. The
+        # interleaving dual-track layout weaves both streams along *time*
+        # (`reshape(bsz, n, 2 * seq_len)`), spending two positions per frame of
+        # audio — so the same context reaches about 65 s and that entry
+        # declares 60. Two tokens per frame is also why it takes roughly twice
+        # as long for the same length. (The `parallel_*` layouts stack the
+        # streams on the codebook axis instead and would cost neither, but no
+        # checkpoint for them has ever been released.)
+        cap, per_frame = (60, 2) if self.dual else (120, 1)
+        max_tokens = int(min(duration_s, cap) * TOKENS_PER_S * per_frame)
         # Drawn rather than left to chance when the job did not pin one:
         # an unreproducible take is one you cannot come back to after
         # changing a single other setting. `seed_used` reports it back.
@@ -280,16 +312,51 @@ class SongGenAdapter(ModelAdapter):
             raise CancelledError()
 
         progress_cb(None, "saving", phase="master")
-        audio = gen.cpu().numpy().squeeze()
         sample_rate = int(self.model.config.sampling_rate)
-        tmp = out_path + ".part"
-        sf.write(tmp, audio, sample_rate, format="WAV", subtype="PCM_16")
-        os.replace(tmp, out_path)
+
+        def _write(path: str, samples) -> None:
+            tmp = path + ".part"
+            sf.write(tmp, samples, sample_rate, format="WAV",
+                     subtype="PCM_16")
+            os.replace(tmp, path)
+
+        stems: list[dict] = []
+        if self.dual:
+            # Dual-track generate() returns (accompaniment, vocal) and no mix
+            # — the two streams ARE the song. We make the mix by summing them,
+            # which is what "dual track" means.
+            acc_t, vocal_t = gen
+            acc = acc_t.cpu().numpy().squeeze()
+            vocal = vocal_t.cpu().numpy().squeeze()
+            n = min(len(acc), len(vocal))
+            acc, vocal = acc[:n], vocal[:n]
+            audio = acc + vocal
+            # Two full-scale streams summed will clip. Scale all three by the
+            # same factor rather than only the mix, so the stems still sum to
+            # exactly the song the user hears — the one property that makes
+            # them worth having over a separation model's guess.
+            peak = float(abs(audio).max()) if n else 0.0
+            if peak > 1.0:
+                acc, vocal, audio = acc / peak, vocal / peak, audio / peak
+            out_dir = os.path.dirname(os.path.abspath(out_path))
+            take = os.path.splitext(os.path.basename(out_path))[0]
+            for label, samples in (("vocals", vocal),
+                                   ("accompaniment", acc)):
+                path = os.path.join(out_dir, f"{take}-{label}.wav")
+                _write(path, samples)
+                stems.append({"label": label, "path": path,
+                              "sample_rate": sample_rate,
+                              "duration_s": round(n / sample_rate, 3)})
+        else:
+            audio = gen.cpu().numpy().squeeze()
+
+        _write(out_path, audio)
         return GenerateResult(
             wav_path=out_path,
             duration_s=round(len(audio) / sample_rate, 3),
             sample_rate=sample_rate,
-            seed_used=seed)
+            seed_used=seed,
+            stems=stems)
 
     def unload(self) -> None:
         self.model = None

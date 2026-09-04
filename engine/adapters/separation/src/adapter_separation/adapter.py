@@ -7,8 +7,15 @@ settings.engine selects the backend:
 Weights are fetched by the backends themselves on first use (demucs: HF hub
 with fbaipublicfiles fallback; audio-separator: its own registry, ckpt+yaml
 pairs). Caches are steered into the engine's data dir so wiping the data dir
-is a clean slate.  TODO(assets-mirror): point catalog entries at the user-owned
-HF mirror once it exists so install-state becomes real for these families.
+is a clean slate.
+
+An entry that names a checkpoint on the user-owned assets mirror instead gets
+real install-state and a resumable fetch: `settings["stage_as"]` maps snapshot
+files into the layout the backend expects, which is how
+`separation-bsroformer-viperx` avoids audio-separator's own (non-resuming)
+download. The mirror carries that one checkpoint today; the other fifteen
+entries here still fetch from their backend's host, and each new one is a
+mirror upload away from the same treatment.
 """
 
 from __future__ import annotations

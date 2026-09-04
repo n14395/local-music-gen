@@ -704,6 +704,21 @@ struct JobOutput: Codable, Equatable, Sendable {
     /// `var` so the memberwise initialiser defaults it, the way `preview` and
     /// `priority` on JobInfo do: every hand-built fixture predates this field.
     var meta: [String: JSONValue]?
+    /// The separated parts of this take, for models that render a song as
+    /// parts rather than as a finished mix (SongGen's dual-track checkpoint
+    /// writes the vocal and the backing and never mixes them). `path` above is
+    /// still the song — the engine sums them — and these land as parts of it,
+    /// the same shape a separation job produces, so nothing downstream needs
+    /// to know which of the two made them. Absent for every other model.
+    var stems: [JobStem]?
+}
+
+struct JobStem: Codable, Equatable, Sendable {
+    let label: String
+    let path: String
+    let format: String
+    let sampleRate: Int?
+    let durationS: Double?
 }
 
 struct JobsResponse: Codable, Sendable {

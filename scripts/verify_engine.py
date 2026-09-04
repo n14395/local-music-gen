@@ -193,14 +193,21 @@ def check_retention_logic() -> None:
           and sorted(os.listdir(out)) == left)
 
     class _Job:
-        def __init__(self, jid: str, status: str, created_at: str) -> None:
+        # `terminal_monotonic` is the eviction key: a job created early but
+        # finished late must not be evicted the moment it succeeds (audit H5).
+        # The stub lacked the field entirely, so this whole block raised
+        # AttributeError from the day that fix landed.
+        def __init__(self, jid: str, status: str, created_at: str,
+                     terminal_monotonic: float | None = None) -> None:
             self.id, self.status, self.created_at = jid, status, created_at
+            self.terminal_monotonic = terminal_monotonic
 
     q = object.__new__(jq.JobQueue)   # no runner thread, no registry
     q.jobs = {}
     for i in range(5):
         jid = f"job_{i}"
-        q.jobs[jid] = _Job(jid, "succeeded", f"2026-08-0{i + 1}T00:00:00Z")
+        q.jobs[jid] = _Job(jid, "succeeded", f"2026-08-0{i + 1}T00:00:00Z",
+                           terminal_monotonic=float(i + 1))
     q.jobs["job_run"] = _Job("job_run", "generating", "2026-08-01T00:00:00Z")
     cap = jq.JOB_HISTORY_CAP
     try:
@@ -209,6 +216,17 @@ def check_retention_logic() -> None:
         check("history trim evicts the oldest terminal jobs past the cap",
               sorted(q.jobs) == ["job_2", "job_3", "job_4", "job_run"],
               str(sorted(q.jobs)))
+        # The H5 case itself: oldest by creation, newest by completion. Under
+        # the old created_at key this row was the first thing evicted, which
+        # is exactly how a just-finished render became "finished job had no
+        # result" in the app.
+        q.jobs["job_slow"] = _Job("job_slow", "succeeded",
+                                  "2026-07-01T00:00:00Z",
+                                  terminal_monotonic=99.0)
+        jq.JOB_HISTORY_CAP = 3
+        q._trim_history_locked()
+        check("a long-queued job that just finished is not evicted first",
+              "job_slow" in q.jobs, str(sorted(q.jobs)))
         jq.JOB_HISTORY_CAP = 1
         q._trim_history_locked()
         check("a running job is never evicted, even over the cap",
@@ -332,11 +350,20 @@ def check_catalog_curation() -> None:
     check("every model onboarding installs exists in the catalog",
           not unknown, f"unknown ids: {unknown}")
 
-    # Onboarding deliberately avoids gated repos: a token in the Keychain is
-    # the wrong thing to demand in the first minute of the app.
+    # Onboarding mostly avoids gated repos: a token in the Keychain is the
+    # wrong thing to demand in the first minute of the app. `stableaudio3-
+    # medium` is the one deliberate exception, documented at
+    # OnboardingPlan.swift's `generatorIds` — the row appears, says what it
+    # needs and points at Settings, but is never ticked without a token. This
+    # check used to forbid all of them and so contradicted that decision,
+    # failing on every run; what it should catch is a *second* gated model
+    # arriving without anyone thinking about it.
+    GATED_BY_DESIGN = {"stableaudio3-medium"}
     gated = [i for i in plan_ids
              if any(r.get("gated") for r in by_id.get(i, {}).get("hf_repos", []))]
-    check("nothing onboarding installs is gated", not gated, f"gated: {gated}")
+    check("only the documented gated model is offered at onboarding",
+          set(gated) <= GATED_BY_DESIGN, f"unexpected gated: "
+          f"{sorted(set(gated) - GATED_BY_DESIGN)}")
 
     # Every control the parameter panel renders says what it does, under the
     # control itself. A param with no `help` draws a bare slider with a jargon
@@ -757,29 +784,49 @@ def main() -> int:
         _, body = c.req("POST", "/v1/jobs", {
             "model_ids": ["test-tiny"], "prompt": "two takes",
             "duration_s": 2, "count": 2})
-        multi = body["jobs"][0]["job_id"]
-        finished = sse.wait_for("job.completed", 600,
-                                lambda d: d["job_id"] == multi)
-        check("multi-take job completes", finished is not None)
-        _, job = c.req("GET", f"/v1/jobs/{multi}")
-        check("a count:2 job returns two outputs",
-              len(((job.get("result") or {}).get("outputs")) or []) == 2,
-              str(job.get("result")))
+        # These three checks were written for the older shape — one job that
+        # looped over its takes — and were never updated when 5.1 expanded a
+        # `count: N` submit into N sibling jobs. They went unnoticed because
+        # the block above raised AttributeError first, so the run never got
+        # this far. What matters now is the expansion itself.
+        siblings = body["jobs"]
+        check("a count:2 submit returns two sibling jobs sharing a group",
+              len(siblings) == 2
+              and len({j["job_id"] for j in siblings}) == 2
+              and body.get("group_id"), str(body))
+        multi = siblings[0]["job_id"]
+        for sib in siblings:
+            finished = sse.wait_for("job.completed", 600,
+                                    lambda d, s=sib: d["job_id"] == s["job_id"])
+            check(f"sibling take completes ({sib['job_id'][-4:]})",
+                  finished is not None)
+        rows = [c.req("GET", f"/v1/jobs/{j['job_id']}")[1] for j in siblings]
+        check("each sibling carries one take and its index",
+              [r["take_index"] for r in rows] == [0, 1]
+              and all(r["take_of"] == 2 for r in rows)
+              and all(len(((r.get("result") or {}).get("outputs")) or []) == 1
+                      for r in rows),
+              str([(r["take_index"], r["take_of"],
+                    len(((r.get("result") or {}).get("outputs")) or []))
+                   for r in rows]))
+        check("siblings share the submission's group_id",
+              len({r["group_id"] for r in rows}) == 1
+              and rows[0]["group_id"] == body["group_id"],
+              str([r["group_id"] for r in rows]))
         multi_events = [d for _, e, d in sse.events[mark:]
                         if e == "job.progress" and d["job_id"] == multi]
         gen_takes = [d["take"] for d in multi_events
                      if d["stage"] == "generating"]
-        check("job.progress names the take it is rendering",
-              bool(gen_takes) and set(gen_takes) == {0, 1}, str(gen_takes[:8]))
-        # Monotonic: an index that went backwards would draw the render walking
-        # back through takes it had already finished.
-        check("take never goes backwards",
-              all(b >= a for a, b in zip(gen_takes, gen_takes[1:])),
-              str(gen_takes))
+        # 5.5: `take` is the job's own take index, so on a current engine it is
+        # 0 throughout — which take of the *batch* this is comes from
+        # take_index/take_of above. A non-zero value here would mean a job had
+        # silently gone back to looping.
+        check("job.progress reports the job's own take, which is always 0",
+              bool(gen_takes) and set(gen_takes) == {0}, str(gen_takes[:8]))
         encode_takes = [d["take"] for d in multi_events
                         if d["stage"] == "encoding"]
         check("the final encode stays on the last take rather than blanking",
-              bool(encode_takes) and all(t == 1 for t in encode_takes),
+              bool(encode_takes) and all(t == 0 for t in encode_takes),
               str(encode_takes))
 
         time.sleep(3)

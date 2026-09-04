@@ -2468,7 +2468,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-turbo-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -2852,7 +2854,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-sftturbo50-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -3320,7 +3324,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-base-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -3788,7 +3794,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-sft-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -4172,7 +4180,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-xl-turbo-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -4556,7 +4566,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-xl-sftturbo50-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -5084,6 +5096,8 @@
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-xl-sft-Q8_0.gguf",
         "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true,
         "adapters": {
           "music": "rtikw/acestep15xlsft-lora-music",
           "piano": "rtikw/acestep15xlsft-lora-piano",
@@ -5557,7 +5571,9 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-xl-base-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "runtime": "server",
+        "keep_loaded": true
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
@@ -12861,11 +12877,140 @@
         "requires_hf_token": false,
         "url": "https://github.com/LiuZH-19/SongGen"
       },
-      "notes": "The mixed-mode checkpoint (one combined track). A dual-track variant (separate vocal + accompaniment) exists upstream and is a natural follow-up. The 2026-08-26 MPS port is unmeasured — the est still carries the CPU baseline, so the estimate is worst-case until a render lands.",
+      "notes": "The mixed-mode checkpoint: one combined track, the full 120 seconds. For the vocal and the backing as separate parts, use the dual-track entry — same family, half the length, about twice the wait.",
       "settings": {
         "device": "mps"
       },
       "homepage": "https://huggingface.co/LiuZH-19/SongGen_mixed_pro",
+      "tags": [
+        "Songs with vocals"
+      ]
+    },
+    {
+      "id": "songgen-dual-track",
+      "family": "songgen",
+      "featured": false,
+      "format": null,
+      "variant_of": "songgen-mixed-pro",
+      "display_name": "SongGen dual-track (vocal + backing)",
+      "description": "The same song generator, writing the vocal and the accompaniment as two separate parts instead of one finished mix. You get the song and both stems, already perfectly aligned and summing back to exactly what you hear — no separation model guessing where the voice ends. Half the maximum length of the mixed entry, and about three times the wait for the same duration.",
+      "hf_repos": [
+        {
+          "repo_id": "LiuZH-19/SongGen_interleaving_A_V",
+          "gated": false
+        },
+        {
+          "repo_id": "ZhenYe234/xcodec",
+          "gated": false,
+          "allow_patterns": [
+            "xcodec_hubert_general_audio_v2.pth",
+            "config_hubert_general.yaml"
+          ]
+        }
+      ],
+      "size_bytes": 6132802816,
+      "capabilities": {
+        "supports_lyrics": true,
+        "instrumental_only": false,
+        "duration": {
+          "min_s": 5,
+          "max_s": 60,
+          "default_s": 20
+        },
+        "sample_rate": 16000,
+        "outputs_per_job_max": 16,
+        "est_seconds_per_audio_second": 18.0,
+        "lyrics_hint": "Plain lyric lines; keep them short and singable. English works best.",
+        "pipeline": [
+          {
+            "id": "prompt_encode",
+            "label": "Prompt encode"
+          },
+          {
+            "id": "lm_decode",
+            "label": "Token decode"
+          },
+          {
+            "id": "master",
+            "label": "Master & save"
+          }
+        ],
+        "params": [
+          {
+            "key": "ref_voice",
+            "type": "audio",
+            "label": "Reference voice",
+            "default": null,
+            "nullable": true,
+            "help": "A short recording of the voice the song should be sung in — about three seconds is enough. Your own recording, or one you have permission to use; leave empty for the model's own voice.",
+            "group": "task"
+          },
+          {
+            "key": "temperature",
+            "type": "float",
+            "label": "Temperature",
+            "default": 1.0,
+            "nullable": false,
+            "min": 0.3,
+            "max": 1.5,
+            "step": 0.05,
+            "help": "How adventurous the model is at each step. Lower is safer and more repetitive; higher is more surprising and more likely to wander or fall apart. What counts as high differs between models, so move away from the default in small steps.",
+            "group": "sampling"
+          },
+          {
+            "key": "top_k",
+            "type": "int",
+            "label": "Top-K",
+            "default": 250,
+            "nullable": false,
+            "min": 10,
+            "max": 500,
+            "help": "At each step the model considers only its K likeliest options. Small keeps it tight and predictable; large lets rarer, stranger sounds through. Temperature then chooses among whatever this leaves.",
+            "group": "sampling"
+          },
+          {
+            "key": "top_p",
+            "type": "float",
+            "label": "Top-P",
+            "default": 1.0,
+            "nullable": false,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is.",
+            "group": "sampling"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          }
+        ]
+      },
+      "requirements": {
+        "min_ram_bytes": 17179869184,
+        "disk_bytes": 6132802816,
+        "speed_tier": "slow"
+      },
+      "license": {
+        "name": "Apache-2.0 (code); research checkpoint",
+        "commercial_use": false,
+        "requires_hf_token": false,
+        "url": "https://github.com/LiuZH-19/SongGen"
+      },
+      "notes": "The take is the mix of the two parts, made engine-side by summing them — the model never produces one. Both parts land in the library beside the song, and they sum back to exactly what you hear.",
+      "settings": {
+        "device": "mps",
+        "dual_track": true,
+        "track_pattern": "interleaving_A_V"
+      },
+      "homepage": "https://huggingface.co/LiuZH-19/SongGen_interleaving_A_V",
       "tags": [
         "Songs with vocals"
       ]
@@ -17500,7 +17645,7 @@
                 "label": "Voice only (keep the timing)"
               }
             ],
-            "help": "'Voice and delivery' re-speaks the line in the target voice and may re-phrase it. 'Voice only' skips that stage entirely: the timing, phrasing and expression of your recording are kept exactly, and only the timbre changes. Faster, and the right choice for anything that has to stay in time."
+            "help": "'Voice and delivery' allows the model to re-speak the line, which can re-time it — a 12.5 s recording came back 13.4 s. It only does that when Copy style or Anonymize is on; with both off, the two settings do the same work and return the same audio. 'Voice only' never re-speaks the line, so your timing, phrasing and expression survive whatever else is set."
           },
           {
             "key": "convert_style",

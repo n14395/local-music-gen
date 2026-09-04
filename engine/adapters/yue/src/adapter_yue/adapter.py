@@ -2,7 +2,8 @@
 
 There is no Metal port of YuE; on Apple Silicon this runs on CPU/MPS-fallback and
 takes HOURS per song. It ships for honesty — the catalog flags it "experimental" and
-the UI warns loudly. The upstream repo is cloned at a pinned SHA on first load; its
+the UI warns loudly. The upstream repo is cloned at a pinned SHA on first load, into
+the aux cache (`aux_dir("yue")`) like every other fetched research checkout; its
 inference/ tree expects the xcodec_mini_infer checkout inside it, which we symlink
 from the downloaded snapshot.
 """
@@ -18,7 +19,7 @@ import sys
 
 from engine_protocol.progress import iter_progress_lines
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb)
+                                     ModelAdapter, ProgressCb, aux_dir)
 
 YUE_REPO = "https://github.com/multimodal-art-projection/YuE"
 YUE_SHA = "9f1394bae1d8d218fea750c1413c2d9d731c7310"
@@ -35,10 +36,17 @@ class YuEAdapter(ModelAdapter):
         self.proc: subprocess.Popen | None = None
 
     def load(self, progress_cb: ProgressCb) -> None:
-        # vendor/ lives next to the adapter venv, outside any GC'd scratch space
-        base = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "..", "..", "vendor")
-        base = os.path.abspath(base)
+        # The aux cache, like every other fetched research checkout (seed-vc,
+        # songbloom, diffrhythm2). This used to live in `vendor/` inside the
+        # source tree, which cost twice: the clone carries its own `.git`, so
+        # it was recorded in the app repo as an accidental gitlink and then
+        # broke `git status` outright once the xcodec symlink below existed
+        # (git refuses a submodule path that is a symlink); and `build.sh`
+        # needed a special exclude to keep rsync from copying the whole clone —
+        # and its absolute symlink — into the .app, where it broke signing.
+        # Out here it is what it always was: downloaded data, in the directory
+        # for downloaded data, relocatable with the rest of the library.
+        base = aux_dir("yue")
         self.repo_dir = os.path.join(base, "YuE")
         if not os.path.exists(os.path.join(self.repo_dir, "inference")):
             progress_cb(None, "cloning YuE repository")

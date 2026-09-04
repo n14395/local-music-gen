@@ -1866,11 +1866,49 @@ final class JobsStore {
             notes: "", favorite: false)
         do {
             try repo.insert(song)
-            return song
         } catch {
             lastError = "Could not save song: \(error.localizedDescription)"
             return nil
         }
+        // A model that renders the song as parts hands them over with the
+        // take. They land exactly where a separation job's stems land, so the
+        // rest of the app — the parts list, the workbench, the player — needs
+        // to know nothing about where they came from. Best-effort on purpose:
+        // the song is already saved, and losing a part must not lose the take.
+        let parts = ingestTakeStems(output.stems ?? [], song: song, job: job)
+        if !parts.isEmpty { onPartsIngested(parts) }
+        return song
+    }
+
+    /// File a take's own stems as parts of the song it became.
+    private func ingestTakeStems(_ stems: [JobStem], song: SongRecord,
+                                 job: JobInfo) -> [PartRecord] {
+        guard let partsRepo, !stems.isEmpty else { return [] }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: StoragePaths.libraryParts,
+                                withIntermediateDirectories: true)
+        var parts: [PartRecord] = []
+        for stem in stems {
+            let partId = UUID().uuidString.lowercased()
+            let partFile = "\(partId).wav"
+            let dest = StoragePaths.libraryParts
+                .appendingPathComponent(partFile)
+            guard (try? fm.moveItem(at: URL(fileURLWithPath: stem.path),
+                                    to: dest)) != nil else { continue }
+            let label = stem.label.isEmpty ? "track" : stem.label
+            let kind = "stem.\(Self.sanitize(label))"
+            let part = PartRecord(
+                id: partId, songId: song.id, kind: kind,
+                name: partName(songTitle: song.title, kind: kind,
+                               repo: partsRepo),
+                fileName: partFile, format: "wav", previewFileName: nil,
+                modelId: job.modelId, modelName: modelName(job.modelId),
+                jobId: job.jobId, splitParamsJSON: "{}",
+                durationS: stem.durationS, sampleRate: stem.sampleRate,
+                createdAt: Date())
+            if (try? partsRepo.insert(part)) != nil { parts.append(part) }
+        }
+        return parts
     }
 
     /// Route a task job's typed artifacts: stems/notes → parts library,

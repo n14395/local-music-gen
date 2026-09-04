@@ -23,7 +23,8 @@ AUX_DIRS = ("audio-separator-models", "bsrnn-weights", "btc-chords",
             "bytedance-piano", "diffrhythm2", "essentia-models",
             "inspiremusic", "localmusic-soundfonts", "magenta-home",
             "mossmusic", "msst", "msst-weights", "mt3-checkpoints",
-            "rave-models", "seedvc", "songbloom", "torch-cache", "yingmusic")
+            "rave-models", "seedvc", "songbloom", "torch-cache", "yingmusic",
+            "yue")
 
 
 # Directories in the aux root that hold the *user's* files rather than weights
@@ -180,6 +181,17 @@ class GenerateResult:
     sample_rate: int
     seed_used: int | None = None
     extra: dict = field(default_factory=dict)
+    # Separated parts of THIS take, when the model produced the song as parts
+    # rather than as a finished mix (SongGen's dual-track checkpoint writes the
+    # vocal and the backing as two streams and never mixes them). Each entry is
+    # {"label", "path", "duration_s", "sample_rate"} — the same vocabulary a
+    # task job's `stem` artifact uses, because they land in the same place: the
+    # app files them as parts of the song this take became.
+    #
+    # `wav_path` is still the song. A model that only emits parts owes the
+    # engine a mix of them, because every downstream surface — the library row,
+    # the player, ingest — is built on a take being one piece of audio.
+    stems: list[dict] = field(default_factory=list)
 
 
 @dataclass

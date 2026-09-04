@@ -37,6 +37,13 @@ engine/adapters/acestepcpp/build-src/
 engine/adapters/acestepcpp/bin/
 engine/adapters/acestepcpp/.revision
 
+# YuE's upstream clone now lives in the aux cache, not here — it carried its
+# own .git, which git recorded as an accidental gitlink (mode 160000, no
+# .gitmodules) and then choked on, because upstream declares
+# `inference/xcodec_mini_infer` a submodule and the adapter replaces it with a
+# symlink. Kept as a guard for checkouts that still have the old directory.
+engine/adapters/yue/vendor/
+
 # Model weights / engine runtime state never belong in the repo (they live in
 # ~/Library/Application Support/LocalMusic and the shared HF cache), but guard
 # against a stray dev-mode data dir

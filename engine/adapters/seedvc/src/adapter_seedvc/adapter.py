@@ -98,12 +98,26 @@ class SeedVCAdapter(ModelAdapter):
                                  0.7 if intel is None else float(intel)))
             style = bool(params.get("convert_style"))
             anon = bool(params.get("anonymize"))
-            # v2 has two conversion paths and only the slow one was reachable.
-            # `convert_timbre` skips the autoregressive stage entirely: the
-            # CFM re-voices the source while the source's own timing and
-            # delivery are left exactly as they were. That is the right tool
-            # for a sung line, where the AR path is free to re-phrase it.
+            # v2 has two conversion paths and only one was reachable.
+            # `convert_timbre` never runs the autoregressive stage: the CFM
+            # re-voices the source while its own timing and delivery are left
+            # exactly as they were. That is the right tool for a sung line,
+            # where the AR path is free to re-phrase it.
+            #
+            # Measured 2026-09-04: the *other* path only reaches the AR when
+            # `convert_style` or `anonymization_only` is set (`if
+            # convert_style:` in vc_wrapper.py), so with both off the two
+            # modes are the same computation and return byte-identical audio
+            # in the same time. The mode is a real choice only next to those
+            # two flags — which is what the catalog help now says.
             timbre_only = str(params.get("mode") or "full") == "timbre"
+            if timbre_only and (style or anon):
+                # Say it rather than drop it: both flags belong to the stage
+                # this mode exists to skip.
+                print("seed-vc: 'Voice only' does not run the stage that "
+                      "copies style or anonymizes — those settings are "
+                      "ignored for this conversion", file=sys.stderr,
+                      flush=True)
             # Not inference_v2.py: that CLI hardcodes fp16, which CPU
             # linears reject (Half×Float mat1/mat2 crash, proven in the
             # 2026-08-26 smoke). Drive the wrapper directly in float32 —
@@ -137,7 +151,35 @@ class SeedVCAdapter(ModelAdapter):
                 # this path's single guidance knob; the similarity /
                 # intelligibility pair belongs to the AR path that is being
                 # skipped, so the similarity dial stands in for it.
+                #
+                # Upstream's convert_timbre does not run at this pin. It calls
+                # CFM.inference with `sway_sampling` / `amo_sampling`, which
+                # that class does not accept (TypeError, proven live), and
+                # hands it a scalar `inference_cfg_rate` where `solve_euler`
+                # both iterates it (`all(i == 0 for i in ...)`) and indexes
+                # [0] and [1]. `convert_voice`, which we do not use, is broken
+                # the same way: only `convert_voice_with_streaming` — which
+                # passes `[intel, sim]` and no sampling flags — was updated
+                # when modules/v2/cfm.py was rewritten. Adapt at the call
+                # boundary rather than editing their tree: the shim is a
+                # no-op for the streaming path, and it refuses rather than
+                # silently drops a sampling flag that was actually asked for.
                 bootstrap += (
+                    "_cfm_cls = type(vc.cfm)\n"
+                    "_cfm_inference = _cfm_cls.inference\n"
+                    "def _cfm_shim(self, *a, inference_cfg_rate=0.5,\n"
+                    "              sway_sampling=False, amo_sampling=False,\n"
+                    "              **kw):\n"
+                    "    if sway_sampling or amo_sampling:\n"
+                    "        raise RuntimeError('this seed-vc revision has no "
+                    "sway/amo sampling')\n"
+                    "    try:\n"
+                    "        rate = [float(r) for r in inference_cfg_rate]\n"
+                    "    except TypeError:\n"
+                    "        rate = [float(inference_cfg_rate)] * 2\n"
+                    "    return _cfm_inference(self, *a, "
+                    "inference_cfg_rate=rate, **kw)\n"
+                    "_cfm_cls.inference = _cfm_shim\n"
                     "audio = vc.convert_timbre("
                     f"source_audio_path={src!r}, target_audio_path={ref!r}, "
                     f"diffusion_steps={steps}, length_adjust={length}, "
@@ -209,8 +251,17 @@ class SeedVCAdapter(ModelAdapter):
             got = parse_tqdm(line)
             if got:
                 step, total = got
+                # Not all one thing, and none of them was a "chunk" on a
+                # 12-second clip: the CFM solver counts diffusion steps (its
+                # total is exactly the number we asked for), the AR — which
+                # only runs for convert_style/anonymize — counts generated
+                # tokens (4000 of them, observed), and only a source long
+                # enough to window adds a real per-chunk bar. Name the one we
+                # can identify exactly and stay generic about the rest.
                 progress_cb(min(0.98, step / total),
-                            f"converting — chunk {step}/{total}",
+                            (f"denoising — step {step}/{total}"
+                             if total == steps
+                             else f"converting — step {step}/{total}"),
                             step=step, steps=total)
         proc.wait()
         if cancel.cancelled:

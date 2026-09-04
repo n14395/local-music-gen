@@ -790,6 +790,29 @@ JobInfo = {
 }
 ```
 
+An entry of `outputs` may also carry **`stems`**: the separated parts of that
+take, for the few models that render a song *as parts* rather than as a
+finished mix. `path` is still the song — a model that only emits parts owes the
+engine a mix of them, because every surface downstream is built on a take being
+one piece of audio — and each stem repeats the `stem` artifact's vocabulary
+from 5.4, so a client files them exactly as it files a separation job's output:
+
+```json
+"outputs": [{"path": "/abs/.../Outputs/job_x/take-0.wav", "format": "wav",
+             "sample_rate": 16000, "duration_s": 20.0, "seed_used": 1234,
+             "stems": [
+               {"label": "vocals", "path": "/abs/.../take-0-vocals.wav",
+                "format": "wav", "sample_rate": 16000, "duration_s": 20.0},
+               {"label": "accompaniment", "path": "/abs/.../take-0-accompaniment.wav",
+                "format": "wav", "sample_rate": 16000, "duration_s": 20.0}]}]
+```
+
+Paths are validated exactly as task artifacts are: a stem naming a file outside
+the job's own directory is dropped with a `job.log` line and the take still
+succeeds — the song is fine, and failing a render over one of its parts would
+be the wrong trade. Absent entirely for every other model; today only SongGen's
+dual-track entry sends it, where the two stems sum to exactly the take.
+
 A generate `result` may additionally carry `meta`, and each entry of `outputs`
 may carry a `meta` of its own — the job-level object is the takes' merged.
 This mirrors the task result's optional `meta` (5.4), and the same rule
@@ -1193,6 +1216,13 @@ to be reported: a stage marked `optional` may be skipped for a job, and a phase
 too brief or too opaque to observe may simply never appear.
 
 ### 5.6 Streaming render previews
+
+**Status: an engine capability with no client today.** The shipped app submits
+`preview: false` everywhere — the streaming controls and the "keep this
+partial" path were removed when the feature was found to cost a real decode per
+frame for nothing the user could see (audit H3). Everything below still works
+and is still tested; four adapters still implement it. Read this section as
+"what a client would get if it asked", not as a description of the app.
 
 A job submitted with `"preview": true` publishes partial audio while it renders:
 one `job.preview` event per frame, each naming a complete WAV file on disk.
