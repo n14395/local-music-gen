@@ -101,11 +101,12 @@ final class GenerationFlowTests: XCTestCase {
         await env.shutdown()
     }
 
-    /// Contract 5.3 + 5.6: cancelling still means the job produced no output.
-    /// A take that was streaming previews leaves nothing behind either — unless
-    /// the user explicitly keeps the partial, which is a decision about a file
-    /// the app was already handed, not something inferred from the cancel.
-    func testCancelKeepsNothingUnlessAskedToKeepThePartial() async throws {
+    /// Contract 5.3: cancelling means the job produced no output — the row
+    /// lands as `canceled` with a null result, and nothing reaches the
+    /// library. (The "keep partial" preview path this test once covered was
+    /// removed with the live-preview feature, 2026-09-03: only 15 of 129
+    /// models could ever produce a frame, which broke uniform behavior.)
+    func testCancelKeepsNothing() async throws {
         setenv("LOCALMUSIC_STUB_DOWNLOAD_S", "2", 1)
         setenv("LOCALMUSIC_STUB_PROVISION_S", "1", 1)
         setenv("LOCALMUSIC_STUB_JOB_SPEED", "4", 1)
@@ -126,55 +127,29 @@ final class GenerationFlowTests: XCTestCase {
 
         let model = try XCTUnwrap(
             env.catalog.models.first { $0.id == "musicgen-small" })
-        XCTAssertTrue(model.capabilities.canPreview,
-                      "fixture must be a model that can preview")
         await env.catalog.startDownload(model)
         try await waitFor("installed") {
             env.catalog.models.first { $0.id == "musicgen-small" }?
                 .installState == .installed
         }
 
-        func renderUntilFirstPreview() async throws -> String {
-            let created = await env.jobsStore.submit(
-                modelId: "musicgen-small", prompt: "cancel me", lyrics: nil,
-                durationS: 30, count: 1, params: [:], preview: true)
-            let jobId = try XCTUnwrap(created?.jobs.first?.jobId,
-                                      "submit failed: \(env.jobsStore.lastError ?? "-")")
-            try await waitFor("a preview frame") {
-                env.jobsStore.previewFrame(jobId) != nil
-            }
-            return jobId
-        }
-
         let before = env.library.recent.count
-        let discarded = try await renderUntilFirstPreview()
-        let frame = try XCTUnwrap(env.jobsStore.previewFrame(discarded))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: frame.path),
-                      "the engine wrote a real wav for the frame")
-        await env.jobsStore.cancel(discarded)
-        try await waitFor("cancel lands") {
-            env.jobsStore.job(discarded)?.status == .canceled
+        let created = await env.jobsStore.submit(
+            modelId: "musicgen-small", prompt: "cancel me", lyrics: nil,
+            durationS: 30, count: 1, params: [:])
+        let jobId = try XCTUnwrap(created?.jobs.first?.jobId,
+                                  "submit failed: \(env.jobsStore.lastError ?? "-")")
+        try await waitFor("the render is underway") {
+            env.jobsStore.job(jobId)?.status == .generating
         }
-        XCTAssertNil(env.jobsStore.job(discarded)?.info.result,
+        await env.jobsStore.cancel(jobId)
+        try await waitFor("cancel lands") {
+            env.jobsStore.job(jobId)?.status == .canceled
+        }
+        XCTAssertNil(env.jobsStore.job(jobId)?.info.result,
                      "a canceled job has no result")
         XCTAssertEqual(env.library.recent.count, before,
-                       "an ordinary cancel keeps nothing")
-
-        let kept = try await renderUntilFirstPreview()
-        let keptSong = await env.jobsStore.keepPartial(kept)
-        let song = try XCTUnwrap(keptSong,
-                                 "keep partial: \(env.jobsStore.lastError ?? "-")")
-        try await waitFor("cancel lands") {
-            env.jobsStore.job(kept)?.status == .canceled
-        }
-        XCTAssertEqual(env.library.recent.count, before + 1)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: song.fileURL.path),
-                      "the partial moved into Library/Audio")
-        XCTAssertGreaterThan(song.durationS, 0,
-                             "duration comes from the frame, not the request")
-        XCTAssertLessThan(song.durationS, 30,
-                          "a partial is shorter than the take that was asked for")
-        try? FileManager.default.removeItem(at: song.fileURL)
+                       "a cancel keeps nothing")
 
         await env.shutdown()
     }

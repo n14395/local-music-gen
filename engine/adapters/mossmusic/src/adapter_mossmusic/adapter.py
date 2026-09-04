@@ -120,9 +120,15 @@ class MossMusicAdapter(ModelAdapter):
                             f"thinking and writing — {count} tokens",
                             step=count, steps=max_tokens)
 
+        # temp 0.7 / top_p 0.8, never the fork's greedy default: a Thinking
+        # model decoded greedily falls into an unclosable repetition loop
+        # inside <think> and burns ANY token budget (reproduced on the 4-bit
+        # weights, 2026-09-03 — "or a drop, or a build-up, …" forever).
+        # 0.8 is the fork's own reference nucleus setting.
         reply = "".join(self._generate(self.model, self.processor, prompt,
                                        audio_path=src,
                                        max_new_tokens=max_tokens,
+                                       temp=0.7, top_p=0.8,
                                        on_token=on_token))
         if cancel.cancelled:
             raise CancelledError()

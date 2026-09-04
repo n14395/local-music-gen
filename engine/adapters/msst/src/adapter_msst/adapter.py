@@ -143,7 +143,7 @@ class MSSTAdapter(ModelAdapter):
         if not src or not os.path.isfile(src):
             raise RuntimeError("source_audio missing")
         if self._engine() == "msst":
-            cmd, cleanup = self._msst_cmd(src, out_dir, progress_cb)
+            cmd, cleanup = self._msst_cmd(src, params, out_dir, progress_cb)
         else:
             cmd, cleanup = self._bsrnn_cmd(src, out_dir, params, progress_cb)
 
@@ -203,7 +203,8 @@ class MSSTAdapter(ModelAdapter):
         return TaskResult(artifacts=artifacts,
                           meta={"engine": self._engine()})
 
-    def _msst_cmd(self, src: str, out_dir: str, progress_cb: ProgressCb):
+    def _msst_cmd(self, src: str, params: dict, out_dir: str,
+                  progress_cb: ProgressCb):
         model_type = str(self.settings["model_type"])
         weights = aux_dir("msst-weights")
         config = os.path.join(weights,
@@ -225,6 +226,17 @@ class MSSTAdapter(ModelAdapter):
         if self.device != "mps":
             # Without the flag their CLI auto-picks MPS on its own.
             cmd.append("--force_cpu")
+        if params.get("tta"):
+            # Upstream's own summary: polarity and channel inversion averaged
+            # back in, "triples the runtime, reduces noise and slightly
+            # improves prediction quality". The estimate the catalog prints is
+            # scaled to match rather than left lying.
+            cmd.append("--use_tta")
+        if params.get("extract_instrumental"):
+            # Not a second model: the mix minus the vocal stem, computed by the
+            # CLI itself. Free, and the stem people actually want from a
+            # vocal-only separator.
+            cmd.append("--extract_instrumental")
         return cmd, lambda: shutil.rmtree(indir, ignore_errors=True)
 
     def _bsrnn_cmd(self, src: str, out_dir: str, params: dict,

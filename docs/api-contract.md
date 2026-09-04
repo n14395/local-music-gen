@@ -1033,6 +1033,8 @@ all beat math is precomputed — the dsp worker performs no analysis):
   "tracks": [
     {"source": "up_abc123",             // upload id; engine resolves to a path
      "role": "vocals", "gain_db": -1.5, "mute": false,
+     "pan": -0.4,                        // optional, default 0 (centre);
+                                         // -1 hard left … +1 hard right
      "offset_s": 0.0,                    // placement on the target timeline;
                                          // must be >= 0 (negative → job fails)
      "section": {"start_s": 43.2, "end_s": 71.9},    // optional source trim
@@ -1076,6 +1078,14 @@ complementary crossfades above), `scurve` (smoothstep — eases both ends),
 gentle fade). Per-ramp rather than per-track because one track routinely
 carries both an audible head fade (curved) and a crossfade tail (linear). An
 unknown value fails the job.
+
+`pan` (optional, default 0) places the track across the stereo field, -1 hard
+left through 0 centre to +1 hard right, applied last — after `gain_db`, so the
+two controls are independent. The law is **constant power** (sine/cosine,
+scaled so centre is unity gain): a linear pan law loses 3 dB in the middle of
+its own sweep, which is audible as a dip every time a part is moved off centre.
+A stereo source is balanced rather than collapsed to mono first, so a wide pad
+nudged left stays wide.
 
 `reverse` (optional, default false) plays the track's audio backwards:
 sample-for-sample reversal of the `section` trim (or the whole file without

@@ -118,6 +118,39 @@ def zero_shot(audio_vector: list[float], snapshot: str, top_k: int = 5,
     return tags
 
 
+def custom(audio_vector: list[float], labels: list[str],
+           snapshot: str) -> list[dict]:
+    """Score labels the caller supplied, in the group "custom".
+
+    The vocabularies above are curated; this is the door out of them. CLAP has
+    no label set of its own — every tag in this module is a cosine against a
+    sentence — so a question the built-in lists cannot ask ("bagpipes?",
+    "sounds like a demo recorded in a garage") is answered exactly as well as
+    the ones they can.
+
+    No template, unlike the three groups above, and for `prompt_score`'s
+    reason: the caller wrote these words themselves, and wrapping them in "a
+    {} track" would score a rephrasing of what they asked rather than what
+    they asked. Every label is returned with its score — the user named these
+    specific labels, so silently keeping the top few would answer a question
+    nobody asked — best first, so the list still reads as an answer.
+    """
+    from . import clap
+
+    terms = [label.strip() for label in labels if label and label.strip()]
+    if not terms:
+        return []
+    query = np.asarray(audio_vector, dtype=np.float32)
+    norm = float(np.linalg.norm(query))
+    if norm > 1e-9:
+        query = query / norm
+    vectors = clap.embed_text(terms, snapshot)
+    scores = vectors @ query
+    order = np.argsort(-scores)
+    return [{"label": terms[int(i)], "score": round(float(scores[int(i)]), 4),
+             "group": "custom"} for i in order]
+
+
 def prompt_score(audio_vector: list[float], prompt: str,
                  snapshot: str) -> float | None:
     """Cosine between a prompt and the audio — "did it land?", as a number.

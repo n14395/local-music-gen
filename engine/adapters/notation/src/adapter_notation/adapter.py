@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
@@ -76,10 +77,16 @@ class NotationAdapter(ModelAdapter):
                 "ABC notation to work from")
         max_tokens = max(64, min(2048, int(params.get("max_tokens") or 1024)))
         temperature = _clamp(params.get("temperature"), 0.7, 0.0, 1.5)
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        seed = int(seed) if seed is not None else None
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
 
         engine = self._engine()
+        # Only ChatMusician has modes: text2music is a BART trained on
+        # description→ABC pairs and can do nothing else, so it never sees this.
+        mode = str(params.get("mode") or "auto").strip()
         progress_cb(0.15, "reading the prompt")
         if engine == "text2music":
             from . import text2music
@@ -90,9 +97,13 @@ class NotationAdapter(ModelAdapter):
             from . import chatmusician
 
             raw = chatmusician.compose(self.bundle, prompt, max_tokens,
-                                       temperature, seed, progress_cb, cancel)
+                                       temperature, seed, progress_cb, cancel,
+                                       mode=mode)
         if cancel.cancelled:
             raise CancelledError()
+
+        if engine == "chatmusician" and mode == "ask":
+            return self._answer(prompt, raw, out_dir, progress_cb, seed)
 
         abc = abc_convert.clean(raw)
         if not abc:
@@ -108,7 +119,8 @@ class NotationAdapter(ModelAdapter):
         os.replace(tmp, text_path)
         artifacts = [Artifact(kind="text", label="abc", path=text_path,
                               format="json")]
-        meta = {"text": payload, "abc_preview": abc[:200]}
+        meta = {"text": payload, "abc_preview": abc[:200],
+                "seed_used": seed}
 
         # The MIDI is what makes the notation audible, but a tune that will
         # not convert is still a tune: the job succeeds with the text alone
@@ -126,6 +138,35 @@ class NotationAdapter(ModelAdapter):
 
         progress_cb(1.0, "done")
         return TaskResult(artifacts=artifacts, meta=meta)
+
+    def _answer(self, question: str, raw: str, out_dir: str,
+                progress_cb: ProgressCb, seed: int) -> TaskResult:
+        """A prose answer, written as a `qa` text document.
+
+        Deliberately not run through `abc_convert.clean`: that function exists
+        to salvage notation from a chatty reply, and putting an analysis
+        through it would keep whichever fragment happened to look like ABC and
+        throw the answer away. Nothing here converts to MIDI either — the
+        model was asked a question, not for a tune.
+        """
+        text = (raw or "").strip()
+        if not text:
+            raise RuntimeError("the model had no answer")
+        progress_cb(0.92, "writing the answer")
+        payload = {"text_version": 1, "kind": "qa", "text": text,
+                   "question": question, "model": self.model_id,
+                   "engine": "chatmusician"}
+        path = os.path.join(out_dir, "answer.json")
+        tmp = path + ".part"
+        with open(tmp, "w") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, path)
+        progress_cb(1.0, "done")
+        return TaskResult(
+            artifacts=[Artifact(kind="text", label="answer", path=path,
+                                format="json")],
+            meta={"text": payload, "answer_preview": text[:200],
+                  "seed_used": seed})
 
     def unload(self) -> None:
         self.bundle = None

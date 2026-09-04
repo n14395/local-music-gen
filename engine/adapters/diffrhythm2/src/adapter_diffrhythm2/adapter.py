@@ -28,6 +28,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,7 @@ def _fix(kind):
     kind.half = lambda self, *aa, **kk: self.float()
 for kind in (torch.Tensor, torch.nn.Module):
     _fix(kind)
+torch.manual_seed(SEED)
 sys.argv = ARGV
 runpy.run_path("inference.py", run_name="__main__")
 """
@@ -135,6 +137,13 @@ class DiffRhythm2Adapter(ModelAdapter):
         out_dir = os.path.join(work, "out")
         os.makedirs(out_dir, exist_ok=True)
 
+        # Their CLI has no --seed, and the render happens in a child process,
+        # so the seed is set inside the bootstrap that starts it — the same
+        # place the fp16 shims go. Reported back as `seed_used`, which was a
+        # flat None before this.
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+
         argv = ["inference.py", "--repo-id", REPO_ID,
                 "--input-jsonl", jsonl, "--output-dir", out_dir,
                 "--steps", str(steps), "--cfg-strength", str(cfg),
@@ -148,7 +157,8 @@ class DiffRhythm2Adapter(ModelAdapter):
                "LOCALMUSIC_DEVICE": self.device}
         if self.device == "mps":
             env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-        code = BOOTSTRAP.replace("ARGV", repr(argv))
+        code = (BOOTSTRAP.replace("ARGV", repr(argv))
+                         .replace("SEED", str(seed)))
 
         progress_cb(None, "rendering (GPU flow matching — MPS, fp32)"
                           if self.device == "mps" else
@@ -193,7 +203,7 @@ class DiffRhythm2Adapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(audio.shape[0] / sr, 3),
             sample_rate=int(sr),
-            seed_used=None)
+            seed_used=seed)
 
     def unload(self) -> None:
         pass

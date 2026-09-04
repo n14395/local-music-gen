@@ -172,10 +172,151 @@ _MINIMAX = Dialect(
 )
 
 
+_DIFFRHYTHM = Dialect(
+    name="diffrhythm2",
+    guidance=(
+        "Write one line of style: genre, instrumentation, vocal character, "
+        "production. This model takes the style from that line and the song "
+        "from the lyrics, so the caption should never contain words to be "
+        "sung. The structure tags in the lyrics decide the arrangement, so "
+        "use them generously."
+    ),
+    examples=(
+        "dream pop, shimmering reverbed guitars, breathy female vocal, "
+        "slow four-on-the-floor, wide and washed out",
+        "gritty southern blues rock, slide guitar, hammond organ, male vocal "
+        "with rasp, live room",
+    ),
+    target_words=(8, 30),
+    wants_lyrics=True,
+    lyric_tags=("[intro]", "[verse]", "[chorus]", "[bridge]", "[inst]",
+                "[outro]"),
+)
+
+
+_INSPIREMUSIC = Dialect(
+    name="inspiremusic",
+    guidance=(
+        "Write two or three flowing sentences describing an instrumental "
+        "piece — its mood, its instruments, how it moves and how it is "
+        "recorded. This model was trained on prose descriptions rather than "
+        "tag lists, and it writes long instrumental music, so describe how "
+        "the piece develops rather than freezing one moment. Never mention "
+        "vocals: it does not sing."
+    ),
+    examples=(
+        "A gentle solo piano piece that opens sparsely and gradually gathers "
+        "warmth, with soft sustain pedal and a slow, unhurried pulse. The "
+        "recording is close and intimate, with the room just audible behind "
+        "the notes.",
+        "An upbeat instrumental funk groove driven by a slap bass line and "
+        "tight rhythm guitar, with brass stabs answering the beat and "
+        "electric piano filling the gaps. Bright, punchy and cleanly mixed.",
+    ),
+    target_words=(25, 60),
+)
+
+
+_MAGENTART = Dialect(
+    name="magentart",
+    guidance=(
+        "Write a very short style phrase — genre, one or two instruments, a "
+        "mood. This model turns the text into a single style embedding it "
+        "holds for the whole take, so extra words blur it rather than "
+        "sharpen it. No sentences, no structure, no story."
+    ),
+    examples=(
+        "acoustic folk guitar, warm, fingerpicked",
+        "acid techno, squelchy 303 bassline, driving",
+    ),
+    target_words=(3, 12),
+)
+
+
+_MELODYFLOW = Dialect(
+    name="melodyflow",
+    guidance=(
+        "Describe what the audio should BECOME, not what it is now. This "
+        "model rewrites an existing recording towards the words, so name the "
+        "target instruments and treatment and nothing else — 'orchestral "
+        "strings and timpani', not 'the same song but orchestral'. Keep it "
+        "to a short descriptor list."
+    ),
+    examples=(
+        "orchestral strings, timpani, french horns, concert hall reverb",
+        "steel drums and marimba, sunny, live percussion, no synths",
+    ),
+    target_words=(4, 18),
+)
+
+
+_SONGBLOOM = Dialect(
+    name="songbloom",
+    guidance=(
+        "This model does not read a description at all: its style comes from "
+        "a ten-second reference recording and its song comes from the "
+        "lyrics. So write the lyrics, and use its structure tokens — "
+        "sections in square brackets, lyric lines separated by a full stop, "
+        "sections separated by ' , '. Repeating a section tag makes that "
+        "section longer. Anything you write as a caption is ignored."
+    ),
+    examples=(
+        "[intro] , [verse] I walked the long way home . the streetlights "
+        "counting time , [chorus] and I would do it all again . all again , "
+        "[outro]",
+        "[verse] Cold morning on the water . nothing moving but the tide , "
+        "[chorus] hold on . hold on . hold on , [inst] , [outro]",
+    ),
+    target_words=(0, 0),
+    wants_lyrics=True,
+    lyric_tags=("[intro]", "[verse]", "[chorus]", "[inst]", "[outro]"),
+)
+
+
+_SONGGEN = Dialect(
+    name="songgen",
+    guidance=(
+        "Write one short line describing the sound: genre, instrumentation, "
+        "and the voice singing it. This model renders short English songs "
+        "and reads a caption alongside the lyrics, so keep the caption to "
+        "the sound and the lyrics short and singable."
+    ),
+    examples=(
+        "acoustic pop ballad, piano and light strings, gentle female vocal",
+        "upbeat indie rock, jangly guitars, driving drums, male vocal",
+    ),
+    target_words=(6, 20),
+    wants_lyrics=True,
+)
+
+
+_VAMPNET = Dialect(
+    name="vampnet",
+    guidance=(
+        "This model reads no text whatsoever. It re-imagines a loop the user "
+        "supplies, and everything about the result comes from that audio and "
+        "from the mask controls beside it. Do not write a description as "
+        "though it will be heard — if you are asked for one, say plainly "
+        "that this model takes no prompt and point at the source audio and "
+        "the mask settings instead."
+    ),
+    examples=(
+        "(this model takes no text prompt — the loop you feed it is the "
+        "prompt)",
+        "(nothing to write here: use the source audio and the mask controls)",
+    ),
+    target_words=(0, 0),
+)
+
+
 _BY_FAMILY: dict[str, Dialect] = {
     "musicgen": _MUSICGEN,
     "acestep": _ACESTEP,
     "acestepcpp": _ACESTEP,
+    # DiffSynth's XL entries ARE ACE-Step 1.5, driven through a different
+    # runtime — the text format is identical and it fell back to plain English
+    # only because the table is keyed by family id.
+    "diffsynthace": _ACESTEP,
     "yue": _YUE,
     "stableaudio": _STABLEAUDIO,
     "stableaudio3": _STABLEAUDIO,
@@ -183,6 +324,13 @@ _BY_FAMILY: dict[str, Dialect] = {
     "audiocraft": _MAGNET,
     "minimax": _MINIMAX,
     "mlxaudio": _MINIMAX,
+    "diffrhythm2": _DIFFRHYTHM,
+    "inspiremusic": _INSPIREMUSIC,
+    "magentart": _MAGENTART,
+    "melodyflow": _MELODYFLOW,
+    "songbloom": _SONGBLOOM,
+    "songgen": _SONGGEN,
+    "vampnet": _VAMPNET,
 }
 
 
@@ -207,7 +355,11 @@ def describe(dialect: Dialect, *, lyric_tags: list[str] | None = None) -> str:
     """
     lines = [dialect.guidance]
     lo, hi = dialect.target_words
-    lines.append(f"Aim for roughly {lo}-{hi} words.")
+    # (0, 0) means "there is no caption to length" — the families whose text
+    # input is lyrics only, or nothing at all. Printing "roughly 0-0 words"
+    # would be an instruction to write nothing, which is not what is meant.
+    if hi > 0:
+        lines.append(f"Aim for roughly {lo}-{hi} words.")
     tags = [t for t in (lyric_tags or []) if t] or list(dialect.lyric_tags)
     if tags:
         lines.append(

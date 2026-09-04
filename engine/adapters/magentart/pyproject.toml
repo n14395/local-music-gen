@@ -11,6 +11,9 @@ dependencies = [
     "mlx>=0.30,<0.32",
     "soundfile>=0.12",
     "soxr",
+    # For note conditioning: the exported graph takes a 128-slot pianoroll and
+    # a drum flag, and something has to turn a MIDI file into them.
+    "pretty_midi",
     "numpy",
     "engine-protocol",
 ]

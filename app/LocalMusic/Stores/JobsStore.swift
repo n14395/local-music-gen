@@ -88,6 +88,10 @@ struct IngredientSubmission: Codable, Equatable, Sendable {
     // every provenance row written before fades existed.
     var fadeInS: Double?
     var fadeOutS: Double?
+    /// Stereo placement, -1…1. Optional for the same reason as the fades
+    /// above: provenance rows written before panning existed must still
+    /// decode.
+    var pan: Double?
 }
 
 /// An ingredient after resolution + auto-match planning: what actually went
@@ -162,6 +166,11 @@ struct MixSpec: Codable, Sendable, Equatable {
         var source: String               // upload id; engine resolves to a path
         var role: String
         var gainDb: Double
+        /// Where the track sits across the stereo field: -1 hard left, 0
+        /// centre, +1 hard right. Omitted when centred, so a mix nobody
+        /// panned puts nothing new on the wire. The engine pans with a
+        /// constant-power law (contract §5.4).
+        var pan: Double?
         var mute: Bool
         var offsetS: Double
         var section: Section?
@@ -404,18 +413,6 @@ final class JobsStore {
     /// constantly, and nothing outside the render card observes those.
     private(set) var logs: [String: JobLog] = [:]
 
-    /// Newest partial-audio frame per job, for the jobs that asked for
-    /// previews. Each frame replaces the last; the engine deletes them all
-    /// when the take succeeds, so a frame is only ever worth keeping on a
-    /// cancel — which is `keepPartial`, the only reader.
-    ///
-    /// Stored here rather than on `ActiveJob` for the same reason `logs` is:
-    /// as a field of the row it was part of `ActiveJob`'s synthesized
-    /// equality, so a frame every diffusion step made `displayJobs` and
-    /// `runningJob` differ from their last value and re-rendered all six
-    /// consumers — for a field no view draws. Its own property means a
-    /// preview frame invalidates only what reads previews.
-    private var previewFrames: [String: JobPreview] = [:]
     /// Observed as well as `active`, because `splittingSongIds` is a function
     /// of both and the two are written in either order — a submit fills this
     /// in before the row is adopted, a test after.
@@ -586,16 +583,20 @@ final class JobsStore {
     func submit(modelId: String, prompt: String, lyrics: String?,
                 durationS: Double, count: Int,
                 params: [String: JSONValue],
-                preview: Bool = false, name: String? = nil) async -> JobsCreated? {
+                name: String? = nil) async -> JobsCreated? {
         guard let client else { return nil }
         // A blank field is not a name — it means "use the default", which is
         // resolved at ingest.
         let chosen = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
+            // preview is always false: live preview was removed from the app
+            // (2026-09-03) — only 15 of 129 models could ever produce one,
+            // and a card that streams for some models and not others breaks
+            // the uniform-behavior rule. The engine capability stays dormant.
             let created = try await client.submit(JobSubmission(
                 modelIds: [modelId], prompt: prompt, lyrics: lyrics,
                 durationS: durationS, count: count, params: params,
-                force: false, preview: preview))
+                force: false, preview: false))
             lastError = nil
             let armed = autoArm()
             for ref in created.jobs {
@@ -897,6 +898,7 @@ final class JobsStore {
             }
             tracks.append(MixSpec.Track(
                 source: sub.partId, role: role, gainDb: sub.gainDb,
+                pan: (sub.pan ?? 0) != 0 ? sub.pan : nil,
                 mute: sub.muted,
                 offsetS: targetBpm.map { sub.offsetBeats * 60.0 / $0 } ?? 0,
                 section: section,
@@ -1341,10 +1343,6 @@ final class JobsStore {
     /// answer — there is nothing to show and nothing that will arrive.
     func log(for jobId: String) -> JobLog { logs[jobId] ?? Self.noLog }
 
-    /// The newest partial-audio frame for a job, for callers outside a view
-    /// body (and for tests).
-    func previewFrame(_ jobId: String) -> JobPreview? { previewFrames[jobId] }
-
     private static let noLog = JobLog()
 
     private func appendLog(jobId: String, line: String) {
@@ -1356,68 +1354,6 @@ final class JobsStore {
         logSequence += 1
         box.append(RenderLogLine(id: logSequence, at: Date(), text: text),
                    cap: Self.logCap)
-    }
-
-    /// "Keep partial": stop the take, and adopt the last preview frame it sent
-    /// as a library song.
-    ///
-    /// `canceled` keeps meaning "no output": the engine's job result stays null
-    /// and nothing here infers a song from a cancel event. Keeping the partial
-    /// is a separate act, on a file the app was already handed and told the
-    /// duration of — which is why it does not wait for the cancel to land, and
-    /// why an ordinary cancel still leaves nothing behind.
-    @discardableResult
-    func keepPartial(_ jobId: String) async -> SongRecord? {
-        let preview = previewFrames[jobId]
-        let info = active[jobId]?.info
-        await cancel(jobId)
-        guard let preview, let info else { return nil }
-        return ingestPreview(job: info, preview: preview)
-    }
-
-    private func ingestPreview(job: JobInfo, preview: JobPreview) -> SongRecord? {
-        let songId = UUID().uuidString.lowercased()
-        let fileName = songId + ".wav"
-        let dest = StoragePaths.libraryAudio.appendingPathComponent(fileName)
-        do {
-            try FileManager.default.createDirectory(
-                at: StoragePaths.libraryAudio, withIntermediateDirectories: true)
-            try FileManager.default.moveItem(at: preview.fileURL, to: dest)
-        } catch {
-            lastError = "Could not keep the partial take: \(error.localizedDescription)"
-            return nil
-        }
-        // The name you typed applies to a take you kept part-way through just
-        // as much as to a finished one. No letter: this is one track, whatever
-        // the job was going to produce.
-        var chosen: String?
-        if case .generate(let name)? = pendingContext[job.jobId] { chosen = name }
-        let wanted = chosen ?? SongRecord.trackName(
-            number: ((try? repo.highestTrackNumber()) ?? 0) + 1)
-        let title = (try? repo.uniqueTitle(wanted)) ?? wanted
-        let paramsJSON = (try? String(
-            decoding: BackendClient.encoder.encode(job.params),
-            as: UTF8.self)) ?? "{}"
-        // Recorded in notes rather than left to look like a finished take: this
-        // is audio the model had not finished making, and six months later
-        // nothing else on the row would say so.
-        let song = SongRecord(
-            id: songId, title: title,
-            prompt: job.prompt, lyrics: job.lyrics, modelId: job.modelId,
-            modelName: modelName(job.modelId), groupId: job.groupId,
-            paramsJSON: paramsJSON, durationS: preview.durationS,
-            sampleRate: preview.sampleRate, fileName: fileName,
-            seedUsed: nil, createdAt: Date(), rating: 0,
-            notes: "Partial render kept after cancelling.", favorite: false)
-        do {
-            try repo.insert(song)
-        } catch {
-            lastError = "Could not save the partial take: \(error.localizedDescription)"
-            return nil
-        }
-        record([song], for: job.jobId)
-        onSongsIngested([song])
-        return song
     }
 
     /// Take one row off the list.
@@ -1432,7 +1368,6 @@ final class JobsStore {
     private func dismissBody(_ jobId: String) {
         active.removeValue(forKey: jobId)
         logs.removeValue(forKey: jobId)
-        previewFrames.removeValue(forKey: jobId)
         pendingContext.removeValue(forKey: jobId)
         canceling.remove(jobId)
         // And the auto-clear stamp: a row dismissed by hand and somehow
@@ -1534,7 +1469,6 @@ final class JobsStore {
                     active[job.jobId]?.progress = job.progress
                     switch job.status {
                     case .succeeded:
-                        previewFrames.removeValue(forKey: job.jobId)
                         canceling.remove(job.jobId)
                         toIngest.append(job.jobId)
                     case .failed:
@@ -1617,17 +1551,11 @@ final class JobsStore {
             if let stage = JobStatus(rawValue: progress.stage) {
                 active[jobId]?.status = stage
             }
-        case .jobPreview(let jobId, let preview):
-            // Deliberately not routed through `active`: see `previewFrames`.
-            if active[jobId] != nil { previewFrames[jobId] = preview }
         case .jobLog(let jobId, let line):
             appendLog(jobId: jobId, line: line)
         case .jobTakeDone(let jobId, let take, let output):
             ingestTake(jobId: jobId, take: take, output: output)
         case .jobCompleted(let jobId):
-            // the engine drops a succeeded job's previews; keeping the path
-            // would leave the card drawing from a file that is gone
-            previewFrames.removeValue(forKey: jobId)
             // A take that landed while the cancel was in flight: the request
             // lost, and the row must stop claiming otherwise.
             canceling.remove(jobId)

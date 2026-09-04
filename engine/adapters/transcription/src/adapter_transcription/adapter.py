@@ -106,13 +106,23 @@ class TranscriptionAdapter(ModelAdapter):
         elif engine == "bytedance_piano":
             midis = self._bytedance_piano(src, out_dir, progress_cb)
         elif engine == "swiftf0":
-            midis = self._swiftf0(src, out_dir, progress_cb)
+            midis = self._swiftf0(src, params, out_dir, progress_cb)
         else:
             raise RuntimeError(f"unknown transcription engine '{engine}'")
         if cancel.cancelled:
             raise CancelledError()
         if not midis:
-            raise RuntimeError("no notes detected in this audio")
+            # Name the likely cause when the job set one. Measured 2026-09-04:
+            # the same 20 s piano clip gives 65 notes at Basic Pitch's
+            # defaults, 3350 with both thresholds at 0.1, and nothing at all
+            # at 0.9 — so "no notes" is usually the threshold talking, not the
+            # audio.
+            strict = [k for k in ("onset_threshold", "frame_threshold",
+                                  "confidence", "min_note_s")
+                      if params.get(k) is not None]
+            raise RuntimeError(
+                "no notes detected in this audio"
+                + (f" — try relaxing {', '.join(strict)}" if strict else ""))
 
         progress_cb(0.6, "preparing SoundFont")
         sf_path = ensure_soundfont(progress_cb)
@@ -172,7 +182,18 @@ class TranscriptionAdapter(ModelAdapter):
                     progress_cb: ProgressCb) -> list:
         from basic_pitch.inference import predict
 
-        _output, pm, _events = predict(src)
+        # The two thresholds the model was built around. Onset decides what
+        # counts as a note starting, frame what counts as one continuing, and
+        # they fail in opposite directions: too high loses quiet or legato
+        # playing, too low fills the transcript with ghost notes off the
+        # cymbals and the reverb tail. Upstream's defaults (0.5 / 0.3) stay
+        # the defaults here.
+        kwargs = {}
+        if (onset := params.get("onset_threshold")) is not None:
+            kwargs["onset_threshold"] = float(onset)
+        if (frame := params.get("frame_threshold")) is not None:
+            kwargs["frame_threshold"] = float(frame)
+        _output, pm, _events = predict(src, **kwargs)
         notes = sum(len(inst.notes) for inst in pm.instruments)
         if notes == 0:
             return []
@@ -312,13 +333,23 @@ class TranscriptionAdapter(ModelAdapter):
                     for i in pretty_midi.PrettyMIDI(path).instruments)
         return [("piano", path, notes)] if notes else []
 
-    def _swiftf0(self, src: str, out_dir: str,
+    def _swiftf0(self, src: str, params: dict, out_dir: str,
                  progress_cb: ProgressCb) -> list:
         from swift_f0 import SwiftF0, export_to_midi, segment_notes
 
         progress_cb(0.1, "detecting melody (SwiftF0)")
-        result = SwiftF0(confidence_threshold=0.9).detect_from_file(src)
-        notes = segment_notes(result)
+        # 0.9 was hardcoded and is deliberately strict: this runs on full
+        # mixes as often as on clean vocals, and a permissive tracker follows
+        # whatever is loudest between the notes. It is now the default rather
+        # than the only option, because a quiet or breathy line genuinely
+        # needs a lower bar.
+        confidence = params.get("confidence")
+        confidence = 0.9 if confidence is None else float(confidence)
+        min_note = params.get("min_note_s")
+        min_note = 0.05 if min_note is None else float(min_note)
+        result = SwiftF0(
+            confidence_threshold=confidence).detect_from_file(src)
+        notes = segment_notes(result, min_note_duration=min_note)
         if not notes:
             return []
         path = os.path.join(out_dir, "melody.mid")

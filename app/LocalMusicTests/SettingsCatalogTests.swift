@@ -181,7 +181,6 @@ final class SettingsCatalogTests: XCTestCase {
         settings.defaultDurationS = 42
         settings.defaultTakes = 3
         settings.holdSeed = true
-        settings.livePreview = true
         settings.autoAnalyze = false
         settings.analyzerModelId = "analysis-basic"
         settings.autoDescribe = true

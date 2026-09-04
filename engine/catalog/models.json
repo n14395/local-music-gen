@@ -84,6 +84,15 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
           }
         ]
       },
@@ -103,7 +112,8 @@
       "variant_of": null,
       "format": "mono",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ],
       "homepage": "https://huggingface.co/facebook/musicgen-small"
     },
@@ -191,6 +201,15 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
           }
         ]
       },
@@ -210,7 +229,8 @@
       "variant_of": null,
       "format": "mono",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ],
       "homepage": "https://huggingface.co/facebook/musicgen-medium"
     },
@@ -333,6 +353,16 @@
               }
             ],
             "help": "Which numerical sampler draws the audio. Pingpong is the distilled model's published recipe.",
+            "group": "sampling"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "low quality, distorted",
+            "help": "What to steer away from. This model defaults to guidance 1.0, where the model ignores both prompts equally — raise CFG scale above 1 for this to do anything.",
             "group": "sampling"
           }
         ]
@@ -1013,6 +1043,39 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "style_audio",
+            "type": "audio",
+            "label": "Sound like this",
+            "default": null,
+            "nullable": true,
+            "help": "A recording whose style the song should take on. The model listens to the window below before it writes, so the take comes out in that idiom — voice, production and all. Use music you have the right to learn from.",
+            "group": "task"
+          },
+          {
+            "key": "prompt_start_s",
+            "type": "float",
+            "label": "Reference from (s)",
+            "default": 0.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 1.0,
+            "help": "Where in the reference to start listening. Pick a passage that represents the whole track — a chorus rather than an intro.",
+            "group": "task"
+          },
+          {
+            "key": "prompt_end_s",
+            "type": "float",
+            "label": "Reference to (s)",
+            "default": 30.0,
+            "nullable": false,
+            "min": 1.0,
+            "max": 600.0,
+            "step": 1.0,
+            "help": "Where to stop listening. Thirty seconds is upstream's own figure; much more is mostly slower, not better.",
+            "group": "task"
           }
         ],
         "lyrics_tags": [
@@ -1039,7 +1102,8 @@
       "variant_of": null,
       "format": "pytorch",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ],
       "homepage": "https://huggingface.co/m-a-p/YuE-s1-7B-anneal-en-cot"
     },
@@ -1804,6 +1868,15 @@
             "group": "task"
           },
           {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
+          {
             "key": "guidance_scale",
             "type": "float",
             "label": "Guidance",
@@ -1937,6 +2010,15 @@
             "default": null,
             "nullable": true,
             "help": "Audio clip whose melody guides the generation (chroma-based; the mix is used as-is).",
+            "group": "task"
+          },
+          {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
             "group": "task"
           },
           {
@@ -2101,7 +2183,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2124,6 +2212,244 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
           }
         ]
       },
@@ -2146,7 +2472,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2240,7 +2567,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2263,6 +2596,244 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
           }
         ]
       },
@@ -2285,7 +2856,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2379,7 +2951,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2402,6 +2980,328 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              },
+              {
+                "value": "extract",
+                "label": "Extract a stem (AI)"
+              },
+              {
+                "value": "lego",
+                "label": "Add a layer"
+              },
+              {
+                "value": "complete",
+                "label": "Complete the band"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "track",
+            "type": "enum",
+            "label": "Track class",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "woodwinds",
+                "label": "Woodwinds"
+              },
+              {
+                "value": "brass",
+                "label": "Brass"
+              },
+              {
+                "value": "fx",
+                "label": "Fx"
+              },
+              {
+                "value": "synth",
+                "label": "Synth"
+              },
+              {
+                "value": "strings",
+                "label": "Strings"
+              },
+              {
+                "value": "percussion",
+                "label": "Percussion"
+              },
+              {
+                "value": "keyboard",
+                "label": "Keyboard"
+              },
+              {
+                "value": "guitar",
+                "label": "Guitar"
+              },
+              {
+                "value": "bass",
+                "label": "Bass"
+              },
+              {
+                "value": "drums",
+                "label": "Drums"
+              },
+              {
+                "value": "backing_vocals",
+                "label": "Backing Vocals"
+              },
+              {
+                "value": "vocals",
+                "label": "Vocals"
+              }
+            ],
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
           }
         ]
       },
@@ -2424,7 +3324,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2518,7 +3419,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2541,6 +3448,328 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              },
+              {
+                "value": "extract",
+                "label": "Extract a stem (AI)"
+              },
+              {
+                "value": "lego",
+                "label": "Add a layer"
+              },
+              {
+                "value": "complete",
+                "label": "Complete the band"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "track",
+            "type": "enum",
+            "label": "Track class",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "woodwinds",
+                "label": "Woodwinds"
+              },
+              {
+                "value": "brass",
+                "label": "Brass"
+              },
+              {
+                "value": "fx",
+                "label": "Fx"
+              },
+              {
+                "value": "synth",
+                "label": "Synth"
+              },
+              {
+                "value": "strings",
+                "label": "Strings"
+              },
+              {
+                "value": "percussion",
+                "label": "Percussion"
+              },
+              {
+                "value": "keyboard",
+                "label": "Keyboard"
+              },
+              {
+                "value": "guitar",
+                "label": "Guitar"
+              },
+              {
+                "value": "bass",
+                "label": "Bass"
+              },
+              {
+                "value": "drums",
+                "label": "Drums"
+              },
+              {
+                "value": "backing_vocals",
+                "label": "Backing Vocals"
+              },
+              {
+                "value": "vocals",
+                "label": "Vocals"
+              }
+            ],
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
           }
         ]
       },
@@ -2563,7 +3792,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2657,7 +3887,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2680,6 +3916,244 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
           }
         ]
       },
@@ -2702,7 +4176,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2796,7 +4271,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2819,6 +4300,244 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint"
+              ]
+            }
           }
         ]
       },
@@ -2841,7 +4560,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -2851,7 +4571,7 @@
       "format": "GGUF · XL sft",
       "variant_of": "acestep-base",
       "display_name": "ACE-Step 1.5 XL SFT (GGUF)",
-      "description": "The big supervised-finetuned DiT at full step count, quantized to 8-bit.",
+      "description": "The big supervised-finetuned DiT at full step count, quantized to 8-bit — and the only GGUF entry that takes the XL LoRA pack, which was trained against exactly this checkpoint.",
       "hf_repos": [
         {
           "repo_id": "Serveurperso/ACE-Step-1.5-GGUF",
@@ -2862,9 +4582,25 @@
             "vae-BF16.gguf",
             "acestep-v15-xl-sft-Q8_0.gguf"
           ]
+        },
+        {
+          "repo_id": "rtikw/acestep15xlsft-lora-music",
+          "gated": false
+        },
+        {
+          "repo_id": "rtikw/acestep15xlsft-lora-piano",
+          "gated": false
+        },
+        {
+          "repo_id": "rtikw/acestep15xlsft-lora-guitar",
+          "gated": false
+        },
+        {
+          "repo_id": "rtikw/acestep15xlsft-lora-drums",
+          "gated": false
         }
       ],
-      "size_bytes": 10884718240,
+      "size_bytes": 12405917140,
       "capabilities": {
         "supports_lyrics": true,
         "instrumental_only": false,
@@ -2935,7 +4671,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -2958,12 +4700,377 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              },
+              {
+                "value": "extract",
+                "label": "Extract a stem (AI)"
+              },
+              {
+                "value": "lego",
+                "label": "Add a layer"
+              },
+              {
+                "value": "complete",
+                "label": "Complete the band"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "track",
+            "type": "enum",
+            "label": "Track class",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "woodwinds",
+                "label": "Woodwinds"
+              },
+              {
+                "value": "brass",
+                "label": "Brass"
+              },
+              {
+                "value": "fx",
+                "label": "Fx"
+              },
+              {
+                "value": "synth",
+                "label": "Synth"
+              },
+              {
+                "value": "strings",
+                "label": "Strings"
+              },
+              {
+                "value": "percussion",
+                "label": "Percussion"
+              },
+              {
+                "value": "keyboard",
+                "label": "Keyboard"
+              },
+              {
+                "value": "guitar",
+                "label": "Guitar"
+              },
+              {
+                "value": "bass",
+                "label": "Bass"
+              },
+              {
+                "value": "drums",
+                "label": "Drums"
+              },
+              {
+                "value": "backing_vocals",
+                "label": "Backing Vocals"
+              },
+              {
+                "value": "vocals",
+                "label": "Vocals"
+              }
+            ],
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
+          },
+          {
+            "key": "adapter",
+            "type": "enum",
+            "label": "Style LoRA",
+            "default": "none",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "none",
+                "label": "None"
+              },
+              {
+                "value": "music",
+                "label": "Music"
+              },
+              {
+                "value": "piano",
+                "label": "Piano"
+              },
+              {
+                "value": "guitar",
+                "label": "Guitar"
+              },
+              {
+                "value": "drums",
+                "label": "Drums"
+              }
+            ],
+            "help": "A small trained overlay merged into the model before it renders. Each one pulls the whole model towards one kind of music — the instrument it is named for, played front and centre.",
+            "group": "musical"
+          },
+          {
+            "key": "adapter_scale",
+            "type": "float",
+            "label": "LoRA strength",
+            "default": 1.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How much of the overlay is applied. 1.0 is the strength it was trained at; below that blends back towards the base model, above exaggerates it and can distort.",
+            "group": "musical"
           }
         ]
       },
       "requirements": {
         "min_ram_bytes": 17179869184,
-        "disk_bytes": 10884718240,
+        "disk_bytes": 12405917140,
         "speed_tier": "slow"
       },
       "license": {
@@ -2976,11 +5083,18 @@
       "settings": {
         "lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
         "synth_model": "acestep-v15-xl-sft-Q8_0.gguf",
-        "vae": "vae-BF16.gguf"
+        "vae": "vae-BF16.gguf",
+        "adapters": {
+          "music": "rtikw/acestep15xlsft-lora-music",
+          "piano": "rtikw/acestep15xlsft-lora-piano",
+          "guitar": "rtikw/acestep15xlsft-lora-guitar",
+          "drums": "rtikw/acestep15xlsft-lora-drums"
+        }
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -3074,7 +5188,13 @@
             "default": true,
             "nullable": false,
             "help": "A language model drafts the arrangement — sections, instrumentation, where the vocal sits — before the audio model renders it. Slower, and usually more coherent across a long track.",
-            "group": "sampling"
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
           },
           {
             "key": "bpm",
@@ -3097,6 +5217,328 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "keyscale",
+            "type": "string",
+            "label": "Key",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. F minor",
+            "help": "The key to write in, such as 'F minor' or 'C major'. Left blank the model chooses one to suit the description.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "timesignature",
+            "type": "string",
+            "label": "Time signature",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. 4",
+            "help": "The time signature, such as '4' for four-four or '3' for waltz time. Left blank the model chooses.",
+            "group": "musical",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "vocal_language",
+            "type": "enum",
+            "label": "Vocal language",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "en",
+                "label": "English"
+              },
+              {
+                "value": "de",
+                "label": "German"
+              },
+              {
+                "value": "es",
+                "label": "Spanish"
+              },
+              {
+                "value": "fr",
+                "label": "French"
+              },
+              {
+                "value": "ja",
+                "label": "Japanese"
+              },
+              {
+                "value": "ko",
+                "label": "Korean"
+              },
+              {
+                "value": "zh",
+                "label": "Chinese"
+              }
+            ],
+            "help": "Which language the model should sing in. Write the lyrics in that language too: this tells the model how to pronounce them, it does not translate.",
+            "group": "musical"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Planner negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "e.g. spoken word, applause",
+            "help": "What the composer should steer the PLAN away from — the arrangement it writes, not the sound of the render. It works through the planner's own guidance, below.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_temperature",
+            "type": "float",
+            "label": "Planner variety",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "help": "How adventurous the planner is when it decides the tempo, key and shape of the song. Lower gives you the obvious reading of your description; higher takes more interesting and less predictable decisions.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_cfg_scale",
+            "type": "float",
+            "label": "Planner guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 8.0,
+            "step": 0.5,
+            "help": "How closely the planner sticks to your description when it writes the plan. Higher follows your words more literally; lower lets it fill in more of its own.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "lm_top_p",
+            "type": "float",
+            "label": "Planner nucleus",
+            "default": null,
+            "nullable": true,
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the planner's vocabulary stays in play at each step. Below 1.0 it ignores its least likely choices, which makes the plan safer and more conventional.",
+            "group": "sampling",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music"
+              ]
+            }
+          },
+          {
+            "key": "task_type",
+            "type": "enum",
+            "label": "Task",
+            "default": "text2music",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "text2music",
+                "label": "Generate"
+              },
+              {
+                "value": "cover",
+                "label": "Cover / restyle"
+              },
+              {
+                "value": "repaint",
+                "label": "Repaint a section"
+              },
+              {
+                "value": "extract",
+                "label": "Extract a stem (AI)"
+              },
+              {
+                "value": "lego",
+                "label": "Add a layer"
+              },
+              {
+                "value": "complete",
+                "label": "Complete the band"
+              }
+            ],
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
+            "group": "task"
+          },
+          {
+            "key": "src_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": true,
+            "help": "Required for every task except Generate; output length locks to this file.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Style reference",
+            "default": null,
+            "nullable": true,
+            "help": "Optional style reference for Cover.",
+            "group": "task"
+          },
+          {
+            "key": "audio_cover_strength",
+            "type": "float",
+            "label": "Source strength",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How strongly the source shapes the result — lower (0.2) is closer to pure style transfer. Applies to every task that takes a source, not only Cover.",
+            "group": "task"
+          },
+          {
+            "key": "repainting_start",
+            "type": "float",
+            "label": "Repaint start (s)",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span starts, in seconds from the beginning of the source. Audio outside the span is kept exactly as it was.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "repainting_end",
+            "type": "float",
+            "label": "Repaint end (s)",
+            "default": null,
+            "nullable": true,
+            "min": -1.0,
+            "max": 600.0,
+            "step": 0.1,
+            "help": "Where the regenerated span ends, in seconds. -1 means to the end of the track.",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "repaint",
+                "lego"
+              ]
+            }
+          },
+          {
+            "key": "track",
+            "type": "enum",
+            "label": "Track class",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "woodwinds",
+                "label": "Woodwinds"
+              },
+              {
+                "value": "brass",
+                "label": "Brass"
+              },
+              {
+                "value": "fx",
+                "label": "Fx"
+              },
+              {
+                "value": "synth",
+                "label": "Synth"
+              },
+              {
+                "value": "strings",
+                "label": "Strings"
+              },
+              {
+                "value": "percussion",
+                "label": "Percussion"
+              },
+              {
+                "value": "keyboard",
+                "label": "Keyboard"
+              },
+              {
+                "value": "guitar",
+                "label": "Guitar"
+              },
+              {
+                "value": "bass",
+                "label": "Bass"
+              },
+              {
+                "value": "drums",
+                "label": "Drums"
+              },
+              {
+                "value": "backing_vocals",
+                "label": "Backing Vocals"
+              },
+              {
+                "value": "vocals",
+                "label": "Vocals"
+              }
+            ],
+            "help": "Stem to extract / layer to add (Extract, Add a layer, Complete).",
+            "group": "task",
+            "applies_when": {
+              "param": "task_type",
+              "values": [
+                "extract",
+                "lego",
+                "complete"
+              ]
+            }
           }
         ]
       },
@@ -3119,7 +5561,8 @@
       },
       "homepage": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
       "tags": [
-        "Songs with vocals"
+        "Songs with vocals",
+        "Remix & restyle"
       ]
     },
     {
@@ -3172,6 +5615,18 @@
             "min": 1,
             "max": 30,
             "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
+            "group": "sampling"
+          },
+          {
+            "key": "cfg_scale",
+            "type": "float",
+            "label": "Guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 6.0,
+            "step": 0.1,
+            "help": "How hard the model is pushed towards your description and lyrics. Left blank it uses the value MiniMax tuned the model around (1.7). 1.0 turns guidance off, which renders about twice as fast and much less literally.",
             "group": "sampling"
           },
           {
@@ -3269,6 +5724,18 @@
             "group": "sampling"
           },
           {
+            "key": "cfg_scale",
+            "type": "float",
+            "label": "Guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 6.0,
+            "step": 0.1,
+            "help": "How hard the model is pushed towards your description and lyrics. Left blank it uses the value MiniMax tuned the model around (1.7). 1.0 turns guidance off, which renders about twice as fast and much less literally.",
+            "group": "sampling"
+          },
+          {
             "key": "seed",
             "type": "int",
             "label": "Seed",
@@ -3360,6 +5827,18 @@
             "min": 1,
             "max": 30,
             "help": "How many passes the model makes refining the audio. More steps means more detail and a proportionally longer render, with sharply diminishing returns — most models stop improving well below their maximum.",
+            "group": "sampling"
+          },
+          {
+            "key": "cfg_scale",
+            "type": "float",
+            "label": "Guidance",
+            "default": null,
+            "nullable": true,
+            "min": 1.0,
+            "max": 6.0,
+            "step": 0.1,
+            "help": "How hard the model is pushed towards your description and lyrics. Left blank it uses the value MiniMax tuned the model around (1.7). 1.0 turns guidance off, which renders about twice as fast and much less literally.",
             "group": "sampling"
           },
           {
@@ -3780,6 +6259,15 @@
         ],
         "params": [
           {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
+          {
             "key": "guidance_scale",
             "type": "float",
             "label": "Guidance",
@@ -3841,7 +6329,8 @@
       "notes": null,
       "homepage": "https://huggingface.co/facebook/musicgen-large",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ]
     },
     {
@@ -4123,6 +6612,15 @@
         ],
         "params": [
           {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
+          {
             "key": "guidance_scale",
             "type": "float",
             "label": "Guidance",
@@ -4184,7 +6682,8 @@
       "notes": null,
       "homepage": "https://huggingface.co/facebook/musicgen-stereo-small",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ]
     },
     {
@@ -4229,6 +6728,15 @@
           }
         ],
         "params": [
+          {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
           {
             "key": "guidance_scale",
             "type": "float",
@@ -4291,7 +6799,8 @@
       "notes": null,
       "homepage": "https://huggingface.co/facebook/musicgen-stereo-medium",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ]
     },
     {
@@ -4336,6 +6845,15 @@
           }
         ],
         "params": [
+          {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
           {
             "key": "guidance_scale",
             "type": "float",
@@ -4398,7 +6916,8 @@
       "notes": null,
       "homepage": "https://huggingface.co/facebook/musicgen-stereo-large",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ]
     },
     {
@@ -4680,6 +7199,15 @@
         ],
         "params": [
           {
+            "key": "continue_audio",
+            "type": "audio",
+            "label": "Continue from",
+            "default": null,
+            "nullable": true,
+            "help": "A track to carry on from. The model listens to its last ten seconds and writes what comes next, in the same key, tempo and instrumentation — it is continuing the recording, not imitating it. The result is the new music alone, so it butts straight onto the end of the source.",
+            "group": "task"
+          },
+          {
             "key": "guidance_scale",
             "type": "float",
             "label": "Guidance",
@@ -4741,7 +7269,8 @@
       "notes": "Community model by Aaron Abebe; niche by design.",
       "homepage": "https://huggingface.co/pharoAIsanders420/micro-musicgen-jungle",
       "tags": [
-        "Instrumental & loops"
+        "Instrumental & loops",
+        "Remix & restyle"
       ]
     },
     {
@@ -4807,6 +7336,16 @@
             "max": 15.0,
             "step": 0.5,
             "help": "Classifier-free guidance — how hard the model is pushed towards your prompt, and away from the negative one. Low is loose and natural; high obeys the words and can sound brittle.",
+            "group": "sampling"
+          },
+          {
+            "key": "negative_prompt",
+            "type": "string",
+            "label": "Negative prompt",
+            "default": null,
+            "nullable": true,
+            "placeholder": "low quality, distorted",
+            "help": "What to steer away from — \"distorted, muffled, live recording\". It works through guidance, so it does nothing while guidance is at its lowest setting.",
             "group": "sampling"
           },
           {
@@ -4886,6 +7425,9 @@
         "url": null
       },
       "notes": "Accept the license on huggingface.co and add your token in Settings.",
+      "settings": {
+        "cfg_scale_default": 7.0
+      },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-open-1.0",
       "tags": [
         "Instrumental & loops",
@@ -5961,7 +8503,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -6554,7 +9096,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -7135,7 +9677,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -7656,7 +10198,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -8249,7 +10791,7 @@
                 "label": "Complete the band"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -8819,7 +11361,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -9107,7 +11649,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -9395,7 +11937,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -9683,7 +12225,7 @@
                 "label": "Repaint a section"
               }
             ],
-            "help": "What to do with the source audio (if any).",
+            "help": "What to do with the source audio (if any). Cover and repaint are precise. The three stem tasks are the model re-imagining a part rather than separating one — for a clean split, use a separation model instead.",
             "group": "task"
           },
           {
@@ -9924,6 +12466,73 @@
             "step": 0.5,
             "help": "How hard the stream is held to the style embedding. Higher sticks to the prompt's character; lower drifts more freely.",
             "group": "sampling"
+          },
+          {
+            "key": "melody_midi",
+            "type": "midi",
+            "label": "Notes to play",
+            "default": null,
+            "nullable": true,
+            "help": "A MIDI part the model should actually play. It follows the pitches and where they start; the style prompt still decides what it sounds like. Percussion tracks drive the drum switch below rather than the pitches.",
+            "group": "task"
+          },
+          {
+            "key": "notes_guidance",
+            "type": "float",
+            "label": "Note strength",
+            "default": 3.0,
+            "nullable": false,
+            "min": -1.0,
+            "max": 7.0,
+            "step": 0.5,
+            "help": "How closely the notes are followed. High plays them almost literally; low treats them as a suggestion and keeps more of the style's own phrasing. Does nothing without a MIDI part.",
+            "group": "sampling"
+          },
+          {
+            "key": "drums",
+            "type": "enum",
+            "label": "Drums",
+            "default": "auto",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "auto",
+                "label": "Model decides"
+              },
+              {
+                "value": "play",
+                "label": "Keep drums playing"
+              },
+              {
+                "value": "silent",
+                "label": "No drums"
+              }
+            ],
+            "help": "A switch the model was trained with: whether percussion is playing at all. Left on automatic it follows the MIDI's own drum track if there is one, and is otherwise the model's choice.",
+            "group": "task"
+          },
+          {
+            "key": "drums_guidance",
+            "type": "float",
+            "label": "Drum strength",
+            "default": 3.0,
+            "nullable": false,
+            "min": -1.0,
+            "max": 7.0,
+            "step": 0.5,
+            "help": "How firmly the drum switch is enforced. Does nothing while Drums is on automatic with no MIDI drum track.",
+            "group": "sampling"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
           }
         ]
       },
@@ -10042,6 +12651,73 @@
             "max": 10.0,
             "step": 0.5,
             "help": "How hard the stream is held to the style embedding. Higher sticks to the prompt's character; lower drifts more freely.",
+            "group": "sampling"
+          },
+          {
+            "key": "melody_midi",
+            "type": "midi",
+            "label": "Notes to play",
+            "default": null,
+            "nullable": true,
+            "help": "A MIDI part the model should actually play. It follows the pitches and where they start; the style prompt still decides what it sounds like. Percussion tracks drive the drum switch below rather than the pitches.",
+            "group": "task"
+          },
+          {
+            "key": "notes_guidance",
+            "type": "float",
+            "label": "Note strength",
+            "default": 3.0,
+            "nullable": false,
+            "min": -1.0,
+            "max": 7.0,
+            "step": 0.5,
+            "help": "How closely the notes are followed. High plays them almost literally; low treats them as a suggestion and keeps more of the style's own phrasing. Does nothing without a MIDI part.",
+            "group": "sampling"
+          },
+          {
+            "key": "drums",
+            "type": "enum",
+            "label": "Drums",
+            "default": "auto",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "auto",
+                "label": "Model decides"
+              },
+              {
+                "value": "play",
+                "label": "Keep drums playing"
+              },
+              {
+                "value": "silent",
+                "label": "No drums"
+              }
+            ],
+            "help": "A switch the model was trained with: whether percussion is playing at all. Left on automatic it follows the MIDI's own drum track if there is one, and is otherwise the model's choice.",
+            "group": "task"
+          },
+          {
+            "key": "drums_guidance",
+            "type": "float",
+            "label": "Drum strength",
+            "default": 3.0,
+            "nullable": false,
+            "min": -1.0,
+            "max": 7.0,
+            "step": 0.5,
+            "help": "How firmly the drum switch is enforced. Does nothing while Drums is on automatic with no MIDI drum track.",
+            "group": "sampling"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -10217,7 +12893,7 @@
           "max_s": 210,
           "default_s": 60
         },
-        "sample_rate": 44100,
+        "sample_rate": 48000,
         "outputs_per_job_max": 1,
         "est_seconds_per_audio_second": 11.0,
         "lyrics_tags": [
@@ -10269,6 +12945,17 @@
             "default": true,
             "nullable": false,
             "help": "The model renders mono; on, the file is widened to a centred stereo pair (upstream's default). Off keeps the honest mono at half the size.",
+            "group": "sampling"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
           }
         ]
@@ -10384,6 +13071,17 @@
             "step": 5.0,
             "help": "The imagined end point on that timeline — paired with the start, it frames the section's place in the song.",
             "group": "musical"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
           }
         ]
       },
@@ -10648,11 +13346,40 @@
           },
           {
             "key": "beat_mask",
-            "type": "bool",
-            "label": "Protect the onsets",
-            "default": false,
+            "type": "enum",
+            "label": "Keep in time with",
+            "default": "off",
             "nullable": false,
-            "help": "Keep the tokens around detected note onsets so the rhythmic skeleton survives the vamp intact.",
+            "choices": [
+              {
+                "value": "off",
+                "label": "Nothing — vamp freely"
+              },
+              {
+                "value": "onsets",
+                "label": "Every note attack"
+              },
+              {
+                "value": "beats",
+                "label": "The beat"
+              },
+              {
+                "value": "downbeats",
+                "label": "The downbeat only"
+              }
+            ],
+            "help": "Which moments survive the vamp untouched. Note attacks keep every transient, which holds the rhythm tightly. The beat keeps the pulse and re-imagines everything between it — the groove stays, the playing changes. Downbeats keep only the top of each bar, which is the loosest of the three.",
+            "group": "task"
+          },
+          {
+            "key": "time_stretch",
+            "type": "int",
+            "label": "Stretch",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 4,
+            "help": "Make the result this many times longer than the loop, by writing new material into the gaps rather than by slowing anything down. Pitch and timbre are untouched; the playing is invented. 2 turns a bar into two bars of the same idea.",
             "group": "task"
           },
           {
@@ -10816,11 +13543,40 @@
           },
           {
             "key": "beat_mask",
-            "type": "bool",
-            "label": "Protect the onsets",
-            "default": false,
+            "type": "enum",
+            "label": "Keep in time with",
+            "default": "off",
             "nullable": false,
-            "help": "Keep the tokens around detected note onsets so the rhythmic skeleton survives the vamp intact.",
+            "choices": [
+              {
+                "value": "off",
+                "label": "Nothing — vamp freely"
+              },
+              {
+                "value": "onsets",
+                "label": "Every note attack"
+              },
+              {
+                "value": "beats",
+                "label": "The beat"
+              },
+              {
+                "value": "downbeats",
+                "label": "The downbeat only"
+              }
+            ],
+            "help": "Which moments survive the vamp untouched. Note attacks keep every transient, which holds the rhythm tightly. The beat keeps the pulse and re-imagines everything between it — the groove stays, the playing changes. Downbeats keep only the top of each bar, which is the loosest of the three.",
+            "group": "task"
+          },
+          {
+            "key": "time_stretch",
+            "type": "int",
+            "label": "Stretch",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 4,
+            "help": "Make the result this many times longer than the loop, by writing new material into the gaps rather than by slowing anything down. Pitch and timbre are untouched; the playing is invented. 2 turns a bar into two bars of the same idea.",
             "group": "task"
           },
           {
@@ -10985,11 +13741,40 @@
           },
           {
             "key": "beat_mask",
-            "type": "bool",
-            "label": "Protect the onsets",
-            "default": false,
+            "type": "enum",
+            "label": "Keep in time with",
+            "default": "off",
             "nullable": false,
-            "help": "Keep the tokens around detected note onsets so the rhythmic skeleton survives the vamp intact.",
+            "choices": [
+              {
+                "value": "off",
+                "label": "Nothing — vamp freely"
+              },
+              {
+                "value": "onsets",
+                "label": "Every note attack"
+              },
+              {
+                "value": "beats",
+                "label": "The beat"
+              },
+              {
+                "value": "downbeats",
+                "label": "The downbeat only"
+              }
+            ],
+            "help": "Which moments survive the vamp untouched. Note attacks keep every transient, which holds the rhythm tightly. The beat keeps the pulse and re-imagines everything between it — the groove stays, the playing changes. Downbeats keep only the top of each bar, which is the loosest of the three.",
+            "group": "task"
+          },
+          {
+            "key": "time_stretch",
+            "type": "int",
+            "label": "Stretch",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 4,
+            "help": "Make the result this many times longer than the loop, by writing new material into the gaps rather than by slowing anything down. Pitch and timbre are untouched; the playing is invented. 2 turns a bar into two bars of the same idea.",
             "group": "task"
           },
           {
@@ -11154,11 +13939,40 @@
           },
           {
             "key": "beat_mask",
-            "type": "bool",
-            "label": "Protect the onsets",
-            "default": false,
+            "type": "enum",
+            "label": "Keep in time with",
+            "default": "off",
             "nullable": false,
-            "help": "Keep the tokens around detected note onsets so the rhythmic skeleton survives the vamp intact.",
+            "choices": [
+              {
+                "value": "off",
+                "label": "Nothing — vamp freely"
+              },
+              {
+                "value": "onsets",
+                "label": "Every note attack"
+              },
+              {
+                "value": "beats",
+                "label": "The beat"
+              },
+              {
+                "value": "downbeats",
+                "label": "The downbeat only"
+              }
+            ],
+            "help": "Which moments survive the vamp untouched. Note attacks keep every transient, which holds the rhythm tightly. The beat keeps the pulse and re-imagines everything between it — the groove stays, the playing changes. Downbeats keep only the top of each bar, which is the loosest of the three.",
+            "group": "task"
+          },
+          {
+            "key": "time_stretch",
+            "type": "int",
+            "label": "Stretch",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 4,
+            "help": "Make the result this many times longer than the loop, by writing new material into the gaps rather than by slowing anything down. Pitch and timbre are untouched; the playing is invented. 2 turns a bar into two bars of the same idea.",
             "group": "task"
           },
           {
@@ -11323,11 +14137,40 @@
           },
           {
             "key": "beat_mask",
-            "type": "bool",
-            "label": "Protect the onsets",
-            "default": false,
+            "type": "enum",
+            "label": "Keep in time with",
+            "default": "off",
             "nullable": false,
-            "help": "Keep the tokens around detected note onsets so the rhythmic skeleton survives the vamp intact.",
+            "choices": [
+              {
+                "value": "off",
+                "label": "Nothing — vamp freely"
+              },
+              {
+                "value": "onsets",
+                "label": "Every note attack"
+              },
+              {
+                "value": "beats",
+                "label": "The beat"
+              },
+              {
+                "value": "downbeats",
+                "label": "The downbeat only"
+              }
+            ],
+            "help": "Which moments survive the vamp untouched. Note attacks keep every transient, which holds the rhythm tightly. The beat keeps the pulse and re-imagines everything between it — the groove stays, the playing changes. Downbeats keep only the top of each bar, which is the loosest of the three.",
+            "group": "task"
+          },
+          {
+            "key": "time_stretch",
+            "type": "int",
+            "label": "Stretch",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 4,
+            "help": "Make the result this many times longer than the loop, by writing new material into the gaps rather than by slowing anything down. Pitch and timbre are untouched; the playing is invented. 2 turns a bar into two bars of the same idea.",
             "group": "task"
           },
           {
@@ -11513,6 +14356,29 @@
             ],
             "help": "The ODE solver stepping the flow. Euler is the fast default; midpoint doubles the work per step for a slightly smoother result.",
             "group": "sampling"
+          },
+          {
+            "key": "cfg_coef",
+            "type": "float",
+            "label": "Guidance",
+            "default": null,
+            "nullable": true,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.5,
+            "help": "How hard the model is pushed towards your words. Left blank it uses the checkpoint's own value. On an edit it only steers the pass that travels towards the new description — the pass that reads the source is unguided by design.",
+            "group": "sampling"
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
           }
         ]
       },
@@ -11623,6 +14489,17 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "candidates",
+            "type": "int",
+            "label": "Draw and pick best",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 8,
+            "help": "Draw this many takes in one pass and keep the one that best matches your prompt, judged by the model's own listener. Far cheaper than rendering them one at a time, but memory and time still rise with the number.",
+            "group": "sampling"
           }
         ]
       },
@@ -11729,6 +14606,17 @@
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
             "group": "sampling"
+          },
+          {
+            "key": "candidates",
+            "type": "int",
+            "label": "Draw and pick best",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 8,
+            "help": "Draw this many takes in one pass and keep the one that best matches your prompt, judged by the model's own listener. Far cheaper than rendering them one at a time, but memory and time still rise with the number.",
+            "group": "sampling"
           }
         ]
       },
@@ -11834,6 +14722,17 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "candidates",
+            "type": "int",
+            "label": "Draw and pick best",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 8,
+            "help": "Draw this many takes in one pass and keep the one that best matches your prompt, judged by the model's own listener. Far cheaper than rendering them one at a time, but memory and time still rise with the number.",
             "group": "sampling"
           }
         ]
@@ -12152,6 +15051,17 @@
             "min": 0,
             "max": 4294967295,
             "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run.",
+            "group": "sampling"
+          },
+          {
+            "key": "candidates",
+            "type": "int",
+            "label": "Draw and pick best",
+            "default": 1,
+            "nullable": false,
+            "min": 1,
+            "max": 8,
+            "help": "Draw this many takes in one pass and keep the one that best matches your prompt, judged by the model's own listener. Far cheaper than rendering them one at a time, but memory and time still rise with the number.",
             "group": "sampling"
           }
         ]
@@ -12673,6 +15583,24 @@
             "default": null,
             "nullable": false,
             "help": "The recording to clean up."
+          },
+          {
+            "key": "aggression",
+            "type": "int",
+            "label": "Aggression",
+            "default": 5,
+            "nullable": false,
+            "min": -20,
+            "max": 40,
+            "help": "How hard to pull the target out. 5 is the value the community settled on; raise it when the problem survives the pass, lower it when the result sounds hollowed out. Negative values pull the other way."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Run the separation again on a transformed copy and average the two, which cancels some of the artefacts a single pass leaves. Roughly doubles the time."
           }
         ],
         "est_realtime_factor": 1.3
@@ -12730,6 +15658,24 @@
             "default": null,
             "nullable": false,
             "help": "The recording to dry out."
+          },
+          {
+            "key": "aggression",
+            "type": "int",
+            "label": "Aggression",
+            "default": 5,
+            "nullable": false,
+            "min": -20,
+            "max": 40,
+            "help": "How hard to pull the target out. 5 is the value the community settled on; raise it when the problem survives the pass, lower it when the result sounds hollowed out. Negative values pull the other way."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Run the separation again on a transformed copy and average the two, which cancels some of the artefacts a single pass leaves. Roughly doubles the time."
           }
         ],
         "est_realtime_factor": 10.0
@@ -12927,6 +15873,108 @@
       ]
     },
     {
+      "id": "separation-ensemble",
+      "family": "separation",
+      "featured": false,
+      "format": "ensemble · 2–3 models",
+      "variant_of": "separation-melband-vocals",
+      "display_name": "Ensemble separation (UVR)",
+      "description": "Runs several separators over the same track and combines their stems — consistently cleaner than any single model, and several times slower. Each preset picks both the models and how their answers are combined: 'clean' keeps only what they all agreed on, 'full' keeps anything any of them found. Models fetch on first run.",
+      "hf_repos": [],
+      "size_bytes": 400000000,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "separate"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The song to separate."
+          },
+          {
+            "key": "ensemble_preset",
+            "type": "enum",
+            "label": "Preset",
+            "default": "vocal_balanced",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "vocal_balanced",
+                "label": "Vocals — balanced"
+              },
+              {
+                "value": "vocal_clean",
+                "label": "Vocals — clean (fewest artefacts)"
+              },
+              {
+                "value": "vocal_full",
+                "label": "Vocals — full (keeps every breath)"
+              },
+              {
+                "value": "vocal_rvc",
+                "label": "Vocals — for voice cloning"
+              },
+              {
+                "value": "instrumental_balanced",
+                "label": "Instrumental — balanced"
+              },
+              {
+                "value": "instrumental_clean",
+                "label": "Instrumental — clean"
+              },
+              {
+                "value": "instrumental_full",
+                "label": "Instrumental — full"
+              },
+              {
+                "value": "instrumental_low_resource",
+                "label": "Instrumental — light on memory"
+              },
+              {
+                "value": "karaoke",
+                "label": "Karaoke (three models, keeps backing vocals)"
+              }
+            ],
+            "help": "Which models run and how their stems are combined. 'Clean' presets keep only what the models agreed on, so bleed is rare and quiet detail can go missing; 'full' presets keep anything any model found, so nothing is lost and a little bleed survives."
+          }
+        ],
+        "est_realtime_factor": 6.0
+      },
+      "requirements": {
+        "min_ram_bytes": 12884901888,
+        "disk_bytes": 400000000,
+        "speed_tier": "slow"
+      },
+      "license": {
+        "name": "UVR community (no formal license)",
+        "commercial_use": false,
+        "requires_hf_token": false,
+        "url": "https://github.com/nomadkaraoke/python-audio-separator"
+      },
+      "notes": "Every preset downloads two or three separators the first time it runs, so the first render of a preset is slow and the figure above is an estimate. Credit: Ultimate Vocal Remover (Anjok07 & aufr33) for the models, python-audio-separator for the ensembling.",
+      "settings": {
+        "engine": "roformer"
+      },
+      "homepage": "https://github.com/nomadkaraoke/python-audio-separator",
+      "tags": [
+        "Stem separation"
+      ]
+    },
+    {
       "id": "separation-bsrnn",
       "family": "msst",
       "featured": false,
@@ -13050,6 +16098,14 @@
             "default": null,
             "nullable": false,
             "help": "The song to split into stems."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Test-time augmentation: separate the track again with its polarity and channels inverted and average the results. Upstream's own summary is that it triples the runtime, reduces noise and slightly improves the split."
           }
         ],
         "est_realtime_factor": 2.5
@@ -13110,6 +16166,22 @@
             "default": null,
             "nullable": false,
             "help": "The song to split into vocals + instrumental."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Test-time augmentation: separate the track again with its polarity and channels inverted and average the results. Upstream's own summary is that it triples the runtime, reduces noise and slightly improves the split."
+          },
+          {
+            "key": "extract_instrumental",
+            "type": "bool",
+            "label": "Also return the instrumental",
+            "default": false,
+            "nullable": false,
+            "help": "Subtract the vocal from the mix to get the backing track. Free — no second pass, no second model — and exact, because what is removed is exactly what was found."
           }
         ],
         "est_realtime_factor": 7.0
@@ -13170,6 +16242,14 @@
             "default": null,
             "nullable": false,
             "help": "The song to split into stems."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Test-time augmentation: separate the track again with its polarity and channels inverted and average the results. Upstream's own summary is that it triples the runtime, reduces noise and slightly improves the split."
           }
         ],
         "est_realtime_factor": 5.0
@@ -13230,6 +16310,14 @@
             "default": null,
             "nullable": false,
             "help": "A drum stem — run a 4-stem split first and feed the drums in."
+          },
+          {
+            "key": "tta",
+            "type": "bool",
+            "label": "Extra-quality pass",
+            "default": false,
+            "nullable": false,
+            "help": "Test-time augmentation: separate the track again with its polarity and channels inverted and average the results. Upstream's own summary is that it triples the runtime, reduces noise and slightly improves the split."
           }
         ],
         "est_realtime_factor": 7.0
@@ -13512,6 +16600,14 @@
             "default": null,
             "nullable": false,
             "help": "The audio to score."
+          },
+          {
+            "key": "reference_audio",
+            "type": "audio",
+            "label": "Reference recording",
+            "default": null,
+            "nullable": true,
+            "help": "Optional. A recording you consider good — it does not have to be the same music, only the same kind of thing recorded well. Adding one unlocks a predicted listening score (MOS, 1–5) alongside the technical numbers, and fetches a second 360 MB model the first time you use it."
           }
         ],
         "est_realtime_factor": 0.3
@@ -14176,6 +17272,25 @@
             "default": null,
             "nullable": false,
             "help": "The captured rig to play through. Choose one you have already downloaded, search TONE3000 for a new one, or add a .nam file of your own — including a capture you made yourself with NAM's trainer."
+          },
+          {
+            "key": "mix",
+            "type": "float",
+            "label": "Amp mix",
+            "default": 1.0,
+            "nullable": false,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "help": "How much of the amp you hear against the untouched track. 1 is the amp alone; blending some dry signal back in is how a heavily distorted guitar or a parallel bass channel keeps its attack and its low end."
+          },
+          {
+            "key": "loudness_match",
+            "type": "bool",
+            "label": "Match capture loudness",
+            "default": false,
+            "nullable": false,
+            "help": "Level the result to the same reference every capture is measured against, so two rigs can be compared on tone instead of on how hot they happened to be recorded. Uses the loudness the capture's own author stored in the file; a capture that carries none is left alone."
           }
         ],
         "est_realtime_factor": 0.05
@@ -14287,6 +17402,16 @@
             "max": 1.0,
             "step": 0.05,
             "help": "How hard the conversion is pushed toward the reference voice — higher is a closer imitation, lower keeps more of the source delivery."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
           }
         ],
         "est_realtime_factor": 4.5
@@ -14360,12 +17485,30 @@
             "help": "Diffusion passes. 30 is the upstream default; more refines the timbre and takes proportionally longer."
           },
           {
+            "key": "mode",
+            "type": "enum",
+            "label": "What to convert",
+            "default": "full",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "full",
+                "label": "Voice and delivery"
+              },
+              {
+                "value": "timbre",
+                "label": "Voice only (keep the timing)"
+              }
+            ],
+            "help": "'Voice and delivery' re-speaks the line in the target voice and may re-phrase it. 'Voice only' skips that stage entirely: the timing, phrasing and expression of your recording are kept exactly, and only the timbre changes. Faster, and the right choice for anything that has to stay in time."
+          },
+          {
             "key": "convert_style",
             "type": "bool",
             "label": "Copy style",
             "default": false,
             "nullable": false,
-            "help": "Also carry the reference's emotion, accent and delivery — not just the timbre."
+            "help": "Also carry the reference's emotion, accent and delivery — not just the timbre. Part of the stage 'Voice only' skips, so it does nothing there."
           },
           {
             "key": "anonymize",
@@ -14373,7 +17516,7 @@
             "label": "Anonymize only",
             "default": false,
             "nullable": false,
-            "help": "Strip the speaker's identity instead of imitating the reference — the output is a neutral voice."
+            "help": "Strip the speaker's identity instead of imitating the reference — the output is a neutral voice. Part of the stage 'Voice only' skips, so it does nothing there."
           },
           {
             "key": "similarity_cfg_rate",
@@ -14395,7 +17538,7 @@
             "min": 0.0,
             "max": 1.0,
             "step": 0.05,
-            "help": "How hard the words are held onto — raise it if the conversion mumbles, lower it for a looser read."
+            "help": "How hard the words are held onto — raise it if the conversion mumbles, lower it for a looser read. Part of the stage 'Voice only' skips, so it does nothing there."
           },
           {
             "key": "length_adjust",
@@ -14407,6 +17550,16 @@
             "max": 2.0,
             "step": 0.05,
             "help": "Stretch factor of the converted performance — below 1 speeds the delivery up, above 1 slows it down."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
           }
         ],
         "est_realtime_factor": 6.0
@@ -14618,6 +17771,15 @@
             "min": 1,
             "max": 15,
             "help": "How many labels to keep for each of genre, mood and instrumentation."
+          },
+          {
+            "key": "labels",
+            "type": "string",
+            "label": "Your own labels",
+            "default": null,
+            "nullable": true,
+            "placeholder": "comma separated, e.g. bagpipes, recorded in a garage, 1970s",
+            "help": "Score labels you write instead of the built-in genre, mood and instrument lists. Anything can be a label — an instrument, a decade, a production style — and every one comes back with its score, best first. Phrases beat single words."
           }
         ],
         "est_realtime_factor": 0.05
@@ -14701,6 +17863,95 @@
         "url": "https://essentia.upf.edu/models.html"
       },
       "notes": "Non-commercial: MTG licenses the models CC BY-NC-SA and offers commercial terms on request. The 400-style genre vocabulary is Discogs's own taxonomy — expect precise electronic-music subgenres in particular.",
+      "settings": {
+        "heads": [
+          "genre",
+          "mood_happy",
+          "mood_sad",
+          "mood_party",
+          "mood_aggressive",
+          "mood_relaxed",
+          "danceability",
+          "voice_instrumental",
+          "mood_acoustic",
+          "mood_electronic",
+          "timbre",
+          "tonal_atonal",
+          "approachability",
+          "engagement"
+        ]
+      },
+      "homepage": "https://essentia.upf.edu/models.html",
+      "tags": [
+        "Hears & describes"
+      ]
+    },
+    {
+      "id": "tag-essentia-jamendo",
+      "family": "essentia",
+      "featured": false,
+      "format": "Jamendo taxonomy",
+      "variant_of": "tag-essentia-discogs",
+      "display_name": "Mood, theme & instrument tags (Jamendo)",
+      "description": "The same one-pass embedding read by MTG's Jamendo heads instead of the Discogs one — a library's vocabulary rather than a record shop's. 56 moods and themes (melancholic, epic, film, documentary), 40 instruments heard in the mix, 87 genres and Jamendo's own top-50 tags. Multi-label: a track is allowed to be several things at once. Weights (~25 MB) fetch from UPF on first run.",
+      "hf_repos": [],
+      "size_bytes": 22000000,
+      "capabilities": {
+        "supports_lyrics": false,
+        "instrumental_only": true,
+        "duration": {
+          "min_s": 1,
+          "max_s": 1,
+          "default_s": 1
+        },
+        "sample_rate": 44100,
+        "outputs_per_job_max": 1,
+        "est_seconds_per_audio_second": 0,
+        "tasks": [
+          "tag"
+        ],
+        "params": [
+          {
+            "key": "source_audio",
+            "type": "audio",
+            "label": "Source audio",
+            "default": null,
+            "nullable": false,
+            "help": "The audio to tag."
+          },
+          {
+            "key": "top_n",
+            "type": "int",
+            "label": "Tags per set",
+            "default": 5,
+            "nullable": false,
+            "min": 1,
+            "max": 15,
+            "help": "How many labels to keep from each of the four sets, best first. Anything the model is less than 10% confident of is dropped whatever this is set to."
+          }
+        ],
+        "est_realtime_factor": 0.15
+      },
+      "requirements": {
+        "min_ram_bytes": 4294967296,
+        "disk_bytes": 22000000,
+        "speed_tier": "fast"
+      },
+      "license": {
+        "name": "CC BY-NC-SA 4.0 (MTG/UPF)",
+        "commercial_use": false,
+        "requires_hf_token": false,
+        "url": "https://essentia.upf.edu/models.html"
+      },
+      "notes": "Shares the Discogs-EffNet embedding with the card above, and the embedding cache with it — tagging a track both ways costs one pass over the audio, not two. Same non-commercial MTG licence.",
+      "settings": {
+        "heads": [
+          "jamendo_moodtheme",
+          "jamendo_instrument",
+          "jamendo_genre",
+          "jamendo_top50"
+        ]
+      },
       "homepage": "https://essentia.upf.edu/models.html",
       "tags": [
         "Hears & describes"
@@ -14767,6 +18018,40 @@
             "nullable": true,
             "placeholder": "auto",
             "help": "Two-letter code (en, fr, ja). Left blank the model detects it, which is usually right and occasionally confident and wrong."
+          },
+          {
+            "key": "expected_words",
+            "type": "string",
+            "label": "Expected words",
+            "default": null,
+            "nullable": true,
+            "placeholder": "paste the lyrics you expect to hear",
+            "help": "Words you already believe are in the audio — the lyrics you generated the song from, say. The model is nudged towards them, which sharply improves invented words and proper nouns. It is a nudge, not a rule: text that is not in the audio makes the transcript worse."
+          },
+          {
+            "key": "hotwords",
+            "type": "string",
+            "label": "Names & odd words",
+            "default": null,
+            "nullable": true,
+            "placeholder": "comma separated",
+            "help": "A short list of names, places or made-up words to listen for. The same nudge as Expected words, in list form; use either or both."
+          },
+          {
+            "key": "translate",
+            "type": "bool",
+            "label": "Translate to English",
+            "default": false,
+            "nullable": false,
+            "help": "Write the words down in English rather than in the language they are sung in. The detected language is still reported, so you can tell a translation from a transcript."
+          },
+          {
+            "key": "word_timestamps",
+            "type": "bool",
+            "label": "Time every word",
+            "default": false,
+            "nullable": false,
+            "help": "Put a start and end on each individual word, not just on each line — what karaoke-style alignment needs. Costs a second pass over the audio."
           }
         ],
         "est_realtime_factor": 0.08
@@ -14852,6 +18137,40 @@
             "nullable": true,
             "placeholder": "auto",
             "help": "Two-letter code (en, fr, ja); blank to detect."
+          },
+          {
+            "key": "expected_words",
+            "type": "string",
+            "label": "Expected words",
+            "default": null,
+            "nullable": true,
+            "placeholder": "paste the lyrics you expect to hear",
+            "help": "Words you already believe are in the audio — the lyrics you generated the song from, say. The model is nudged towards them, which sharply improves invented words and proper nouns. It is a nudge, not a rule: text that is not in the audio makes the transcript worse."
+          },
+          {
+            "key": "hotwords",
+            "type": "string",
+            "label": "Names & odd words",
+            "default": null,
+            "nullable": true,
+            "placeholder": "comma separated",
+            "help": "A short list of names, places or made-up words to listen for. The same nudge as Expected words, in list form; use either or both."
+          },
+          {
+            "key": "translate",
+            "type": "bool",
+            "label": "Translate to English",
+            "default": false,
+            "nullable": false,
+            "help": "Write the words down in English rather than in the language they are sung in. The detected language is still reported, so you can tell a translation from a transcript."
+          },
+          {
+            "key": "word_timestamps",
+            "type": "bool",
+            "label": "Time every word",
+            "default": false,
+            "nullable": false,
+            "help": "Put a start and end on each individual word, not just on each line — what karaoke-style alignment needs. Costs a second pass over the audio."
           }
         ],
         "est_realtime_factor": 0.12
@@ -15251,7 +18570,7 @@
             "key": "max_new_tokens",
             "type": "int",
             "label": "Max tokens",
-            "default": 3072,
+            "default": 6144,
             "nullable": false,
             "min": 256,
             "max": 8192,
@@ -15329,7 +18648,7 @@
             "key": "max_new_tokens",
             "type": "int",
             "label": "Max tokens",
-            "default": 3072,
+            "default": 6144,
             "nullable": false,
             "min": 256,
             "max": 8192,
@@ -15407,7 +18726,7 @@
             "key": "max_new_tokens",
             "type": "int",
             "label": "Max tokens",
-            "default": 3072,
+            "default": 6144,
             "nullable": false,
             "min": 256,
             "max": 8192,
@@ -15568,7 +18887,33 @@
             "default": null,
             "nullable": true,
             "placeholder": "X:1\nT:My tune\nM:4/4\nK:D\n…",
-            "help": "Paste ABC notation to continue in its style, or describe the piece you want."
+            "help": "Paste ABC notation to continue in its style, describe the piece you want, or ask a question about music."
+          },
+          {
+            "key": "mode",
+            "type": "enum",
+            "label": "What to do",
+            "default": "auto",
+            "nullable": false,
+            "choices": [
+              {
+                "value": "auto",
+                "label": "Work it out from what I typed"
+              },
+              {
+                "value": "compose",
+                "label": "Write a tune from a description"
+              },
+              {
+                "value": "continue",
+                "label": "Write another like this one"
+              },
+              {
+                "value": "ask",
+                "label": "Answer a question about music"
+              }
+            ],
+            "help": "Left on automatic, notation you paste is continued and anything else is read as a description. Ask-a-question is the model's other half: music theory, harmony, form, and analysis of a tune you paste under the question. It answers in words and returns no notes."
           },
           {
             "key": "max_tokens",
@@ -15578,7 +18923,7 @@
             "nullable": false,
             "min": 64,
             "max": 2048,
-            "help": "How long the notation may run before it is cut off."
+            "help": "How long the reply may run before it is cut off."
           },
           {
             "key": "temperature",
@@ -15672,9 +19017,13 @@
               {
                 "value": "infill",
                 "label": "Fill a gap"
+              },
+              {
+                "value": "accompany",
+                "label": "Play along with it"
               }
             ],
-            "help": "Continue picks up where the MIDI part stops; fill-a-gap rewrites only the window below, keeping the notes on both sides. Both need a MIDI file; the result always includes the input notes."
+            "help": "Continue picks up where the MIDI part stops; fill-a-gap rewrites only the window below, keeping the notes on both sides; play-along writes a second part underneath the whole melody, hearing it as it goes. All three need a MIDI file; the result always includes the input notes."
           },
           {
             "key": "melody_midi",
@@ -15682,7 +19031,7 @@
             "label": "Notes to extend",
             "default": null,
             "nullable": true,
-            "help": "The MIDI part to continue or fill — a transcription or an earlier composition both work."
+            "help": "The MIDI part to continue, fill or play along with — a transcription or an earlier composition both work."
           },
           {
             "key": "gap_start_s",
@@ -15715,7 +19064,7 @@
             "min": 5.0,
             "max": 60.0,
             "step": 5.0,
-            "help": "How many seconds of music to compose (from-nothing and continue). Time is musical output length, not render time."
+            "help": "How many seconds of music to compose (from-nothing and continue). Play-along takes its length from the melody instead. Time is musical output length, not render time."
           },
           {
             "key": "top_p",
@@ -15727,6 +19076,16 @@
             "max": 1.0,
             "step": 0.01,
             "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
           }
         ],
         "est_realtime_factor": 15.0
@@ -15796,9 +19155,13 @@
               {
                 "value": "infill",
                 "label": "Fill a gap"
+              },
+              {
+                "value": "accompany",
+                "label": "Play along with it"
               }
             ],
-            "help": "Continue picks up where the MIDI part stops; fill-a-gap rewrites only the window below, keeping the notes on both sides. Both need a MIDI file; the result always includes the input notes."
+            "help": "Continue picks up where the MIDI part stops; fill-a-gap rewrites only the window below, keeping the notes on both sides; play-along writes a second part underneath the whole melody, hearing it as it goes. All three need a MIDI file; the result always includes the input notes."
           },
           {
             "key": "melody_midi",
@@ -15806,7 +19169,7 @@
             "label": "Notes to extend",
             "default": null,
             "nullable": true,
-            "help": "The MIDI part to continue or fill — a transcription or an earlier composition both work."
+            "help": "The MIDI part to continue, fill or play along with — a transcription or an earlier composition both work."
           },
           {
             "key": "gap_start_s",
@@ -15839,7 +19202,7 @@
             "min": 5.0,
             "max": 60.0,
             "step": 5.0,
-            "help": "How many seconds of music to compose (from-nothing and continue). Time is musical output length, not render time."
+            "help": "How many seconds of music to compose (from-nothing and continue). Play-along takes its length from the melody instead. Time is musical output length, not render time."
           },
           {
             "key": "top_p",
@@ -15851,6 +19214,16 @@
             "max": 1.0,
             "step": 0.01,
             "help": "At each step the model considers only its likeliest options, up to this share of the total probability — 0.9 keeps the top 90%. A softer Top-K: how many options stay in play rises and falls with how certain the model is."
+          },
+          {
+            "key": "seed",
+            "type": "int",
+            "label": "Seed",
+            "default": null,
+            "nullable": true,
+            "min": 0,
+            "max": 4294967295,
+            "help": "The random starting point. The same seed with the same prompt and settings reproduces a take exactly, which is how you change one setting and hear only that change. Leave it on Random for something different every run."
           }
         ],
         "est_realtime_factor": 40.0
@@ -16412,6 +19785,28 @@
             "help": "Names the resulting notes part."
           },
           {
+            "key": "onset_threshold",
+            "type": "float",
+            "label": "Note sensitivity",
+            "default": 0.5,
+            "nullable": false,
+            "min": 0.05,
+            "max": 0.95,
+            "step": 0.05,
+            "help": "How sure the model must be that a note STARTED. Lower it to catch quiet or legato playing it is missing; raise it when the transcript is full of notes nobody played."
+          },
+          {
+            "key": "frame_threshold",
+            "type": "float",
+            "label": "Note sustain",
+            "default": 0.3,
+            "nullable": false,
+            "min": 0.05,
+            "max": 0.95,
+            "step": 0.05,
+            "help": "How sure it must be that a note is still SOUNDING. Lower gives longer, more joined-up notes and can smear fast passages; higher gives shorter, cleaner ones and can chop a held note into several."
+          },
+          {
             "key": "emit_abc",
             "type": "bool",
             "label": "Also write ABC",
@@ -16682,6 +20077,28 @@
             "help": "Monophonic audio — a vocals stem or a single-instrument line."
           },
           {
+            "key": "confidence",
+            "type": "float",
+            "label": "Pitch confidence",
+            "default": 0.9,
+            "nullable": false,
+            "min": 0.1,
+            "max": 0.99,
+            "step": 0.05,
+            "help": "How certain the tracker must be before it calls something a pitch. High ignores breath, room and bleed — and quiet singing with them; lower it when a soft or breathy line is coming back empty."
+          },
+          {
+            "key": "min_note_s",
+            "type": "float",
+            "label": "Shortest note (s)",
+            "default": 0.05,
+            "nullable": false,
+            "min": 0.02,
+            "max": 0.5,
+            "step": 0.01,
+            "help": "Anything shorter than this is not a note. Raise it to drop the flickers a slide or a vibrato leaves behind; lower it for fast, deliberately short phrasing."
+          },
+          {
             "key": "emit_abc",
             "type": "bool",
             "label": "Also write ABC",
@@ -16746,6 +20163,136 @@
             "help": "The MIDI part to render."
           },
           {
+            "key": "instrument",
+            "type": "enum",
+            "label": "Instrument",
+            "default": null,
+            "nullable": true,
+            "choices": [
+              {
+                "value": "grand_piano",
+                "label": "Grand piano"
+              },
+              {
+                "value": "electric_piano",
+                "label": "Electric piano"
+              },
+              {
+                "value": "harpsichord",
+                "label": "Harpsichord"
+              },
+              {
+                "value": "music_box",
+                "label": "Music box"
+              },
+              {
+                "value": "vibraphone",
+                "label": "Vibraphone"
+              },
+              {
+                "value": "marimba",
+                "label": "Marimba"
+              },
+              {
+                "value": "drawbar_organ",
+                "label": "Organ (drawbar)"
+              },
+              {
+                "value": "church_organ",
+                "label": "Organ (church)"
+              },
+              {
+                "value": "accordion",
+                "label": "Accordion"
+              },
+              {
+                "value": "nylon_guitar",
+                "label": "Nylon guitar"
+              },
+              {
+                "value": "steel_guitar",
+                "label": "Steel guitar"
+              },
+              {
+                "value": "jazz_guitar",
+                "label": "Jazz guitar"
+              },
+              {
+                "value": "clean_electric_guitar",
+                "label": "Electric guitar (clean)"
+              },
+              {
+                "value": "overdriven_guitar",
+                "label": "Electric guitar (overdriven)"
+              },
+              {
+                "value": "acoustic_bass",
+                "label": "Upright bass"
+              },
+              {
+                "value": "electric_bass",
+                "label": "Electric bass"
+              },
+              {
+                "value": "synth_bass",
+                "label": "Synth bass"
+              },
+              {
+                "value": "violin",
+                "label": "Violin"
+              },
+              {
+                "value": "cello",
+                "label": "Cello"
+              },
+              {
+                "value": "string_ensemble",
+                "label": "String section"
+              },
+              {
+                "value": "choir",
+                "label": "Choir"
+              },
+              {
+                "value": "trumpet",
+                "label": "Trumpet"
+              },
+              {
+                "value": "trombone",
+                "label": "Trombone"
+              },
+              {
+                "value": "alto_sax",
+                "label": "Saxophone"
+              },
+              {
+                "value": "flute",
+                "label": "Flute"
+              },
+              {
+                "value": "square_lead",
+                "label": "Synth lead (square)"
+              },
+              {
+                "value": "saw_lead",
+                "label": "Synth lead (saw)"
+              },
+              {
+                "value": "warm_pad",
+                "label": "Synth pad"
+              },
+              {
+                "value": "sitar",
+                "label": "Sitar"
+              },
+              {
+                "value": "steel_drums",
+                "label": "Steel drums"
+              }
+            ],
+            "help": "Play every part with this instrument instead of whatever the file asks for. Left blank the file plays as written — which for anything the app transcribed means a piano. Drum tracks are never substituted."
+          },
+          {
             "key": "gain_db",
             "type": "float",
             "label": "Gain",
@@ -16754,7 +20301,7 @@
             "min": -12.0,
             "max": 12.0,
             "step": 0.5,
-            "help": "Volume applied to the rendered audio, in decibels. 0 leaves it exactly as the SoundFont produced it; every 6 dB is roughly a doubling."
+            "help": "Volume of the finished render, in decibels. Every render is levelled to the same peak first, so 0 is that level; turning up leans into a soft limiter — louder, with the peaks gently rounded rather than clipped."
           },
           {
             "key": "sample_rate",

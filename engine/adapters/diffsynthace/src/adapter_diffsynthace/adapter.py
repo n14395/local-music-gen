@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import glob
 import os
+import secrets
 
 import numpy as np
 import soundfile as sf
@@ -126,8 +127,11 @@ class DiffSynthAceAdapter(ModelAdapter):
         assert self.pipe is not None
         duration = int(float(params.get("duration_s") or 30))
         steps = max(1, min(50, int(params.get("steps") or 12)))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        seed = int(seed) if seed is not None else None
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
 
         kwargs: dict = {
             "prompt": prompt,

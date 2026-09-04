@@ -31,6 +31,28 @@ from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
 NAM_SR = 48000
 CHUNK_S = 30.0
 
+# What "matched loudness" means, in dB. Not a number chosen here: the Neural
+# Amp Modeler plugin normalises every model's output to -18 dB against the same
+# reference signal the trainer measures `metadata.loudness` with, so a capture
+# levelled to this figure sits where its author's plugin would have put it.
+TARGET_LOUDNESS_DB = -18.0
+
+
+def _capture_loudness_db(payload: dict) -> float | None:
+    """How loud this capture runs, per its own metadata, or None.
+
+    Written by the NAM trainer as the RMS of the model's response to a fixed
+    reference signal, which is exactly what makes it comparable between
+    captures — and why nothing here measures it again. Absent in hand-edited
+    and very old files, so the caller must handle None rather than assume a
+    default that would misplace the level by however far it was wrong.
+    """
+    loudness = (payload.get("metadata") or {}).get("loudness")
+    try:
+        return float(loudness)
+    except (TypeError, ValueError):
+        return None
+
 
 def _build_model(payload: dict):
     """A nam 0.10 model from a parsed .nam file, either architecture."""
@@ -87,6 +109,9 @@ class NamAdapter(ModelAdapter):
             raise RuntimeError("nam_file missing — pick a .nam capture "
                                "(tone3000.com has thousands, free)")
 
+        mix = min(1.0, max(0.0, float(params.get("mix", 1.0))))
+        loudness_match = bool(params.get("loudness_match"))
+
         key = (nam_path, os.path.getmtime(nam_path))
         cached = self._cache.get(key)
         if cached is None:
@@ -103,9 +128,9 @@ class NamAdapter(ModelAdapter):
                 cap_sr = int(payload.get("sample_rate") or NAM_SR)
             except (TypeError, ValueError):
                 cap_sr = NAM_SR
-            cached = (model, cap_sr)
+            cached = (model, cap_sr, _capture_loudness_db(payload))
             self._cache = {key: cached}   # one at a time; they are tiny
-        model, cap_sr = cached
+        model, cap_sr, loudness_db = cached
 
         progress_cb(0.1, "reading the audio")
         data, sr = sf.read(src, dtype="float32", always_2d=True)
@@ -137,6 +162,20 @@ class NamAdapter(ModelAdapter):
 
         progress_cb(0.92, "saving")
         out = np.concatenate(pieces)
+
+        # Level, then blend — in that order, because a blend between an
+        # un-levelled amp and the dry track is a blend at whatever level this
+        # particular capture happened to be recorded at.
+        applied_db = None
+        if loudness_match and loudness_db is not None:
+            applied_db = TARGET_LOUDNESS_DB - loudness_db
+            out = out * (10.0 ** (applied_db / 20.0))
+        if mix < 1.0:
+            # Sample-aligned by construction: each chunk's output is taken from
+            # its end (`arr[-span:]`), so out[i] is the amp's answer to
+            # work[i]. No delay compensation is needed or wanted.
+            out = mix * out + (1.0 - mix) * work[:len(out)]
+
         if sr != cap_sr:
             out = soxr.resample(out, cap_sr, sr)
         # Hot captures can push past full scale, which PCM16 would hard-clip
@@ -148,12 +187,22 @@ class NamAdapter(ModelAdapter):
         tmp = final + ".part"
         sf.write(tmp, out, sr, format="WAV", subtype="PCM_16")
         os.replace(tmp, final)
+        meta = {"engine": "nam", "capture": os.path.basename(nam_path)}
+        if mix < 1.0:
+            meta["mix"] = round(mix, 3)
+        if loudness_match:
+            # Report what happened, including "nothing": a capture with no
+            # loudness in its metadata cannot be matched, and silently doing
+            # nothing would read as the control being broken.
+            meta["loudness_db"] = (None if loudness_db is None
+                                   else round(loudness_db, 2))
+            meta["loudness_trim_db"] = (None if applied_db is None
+                                        else round(applied_db, 2))
         return TaskResult(
             artifacts=[Artifact(kind="stem", label="reamped", path=final,
                                 format="wav", sample_rate=int(sr),
                                 duration_s=round(len(out) / sr, 3))],
-            meta={"engine": "nam",
-                  "capture": os.path.basename(nam_path)})
+            meta=meta)
 
     def unload(self) -> None:
         self._cache = {}

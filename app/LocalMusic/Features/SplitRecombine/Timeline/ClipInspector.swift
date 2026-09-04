@@ -53,6 +53,20 @@ struct ClipInspector: View {
             }
             .frame(width: 224)
 
+            HStack(spacing: 9) {
+                Text("Pan")
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textQuaternary)
+                BenchSlider(value: $clip.pan, range: -1...1, tint: stem,
+                            knobSize: Bench.Metrics.Slider.knobSmall,
+                            onEditingBegan: onBeforeEdit)
+                Text(Bench.panLabel(clip.pan))
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .frame(width: 190)
+
             WorkbenchToggleBadge(kind: .mute, isOn: $clip.muted,
                                  onBeforeEdit: onBeforeEdit)
 

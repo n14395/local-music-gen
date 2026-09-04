@@ -77,6 +77,7 @@ enum WorkbenchRestore {
             clip.isMissing = materials[partId] == nil
             if clip.isMissing { missing += 1 }
             clip.gainDb = item.submission.gainDb
+            clip.pan = item.submission.pan ?? 0
             clip.muted = item.submission.muted
             clip.startBeats =
                 TimelineMath.clampStart(item.submission.offsetBeats)

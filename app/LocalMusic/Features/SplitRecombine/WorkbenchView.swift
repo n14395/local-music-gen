@@ -597,12 +597,15 @@ struct WorkbenchScreen: View {
                                                       clips: model.clips)
         let gainMap = WorkbenchModel.effectiveGainDb(lanes: model.lanes,
                                                      clips: model.clips)
+        let panMap = WorkbenchModel.effectivePan(lanes: model.lanes,
+                                                 clips: model.clips)
         let bpm = model.effectiveTargetBpm ?? 120
         return model.clips.map { clip in
             MultiPartPlayer.Item(
                 id: clip.id, url: clip.material.fileURL,
                 offsetS: clip.startBeats * 60.0 / bpm,
                 gainDb: gainMap[clip.id] ?? clip.gainDb,
+                pan: panMap[clip.id] ?? clip.pan,
                 muted: muteMap[clip.id] ?? clip.muted,
                 sourceStartS: clip.sectionStartS ?? 0,
                 sourceEndS: clip.sectionEndS)
@@ -1217,6 +1220,19 @@ private struct WorkbenchLaneCard: View {
                     .frame(width: 52, alignment: .trailing)
             }
             .frame(width: 244)
+
+            HStack(spacing: 9) {
+                Text("Pan")
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textQuaternary)
+                BenchSlider(value: $lane.pan, range: -1...1, tint: stem,
+                            knobSize: Bench.Metrics.Slider.knobSmall)
+                Text(Bench.panLabel(lane.pan))
+                    .font(Bench.Typo.mono(11, .semibold))
+                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .frame(width: 200)
 
             if let clip = single {
                 HStack(spacing: 8) {

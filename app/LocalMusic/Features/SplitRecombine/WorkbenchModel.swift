@@ -32,14 +32,18 @@ final class WorkbenchModel {
         let id: String
         var name: String
         var gainDb: Double = 0
+        /// -1 hard left … +1 hard right, the desk's other channel control.
+        var pan: Double = 0
         var muted = false
         var solo = false
 
         init(id: String = UUID().uuidString.lowercased(), name: String,
-             gainDb: Double = 0, muted: Bool = false, solo: Bool = false) {
+             gainDb: Double = 0, pan: Double = 0, muted: Bool = false,
+             solo: Bool = false) {
             self.id = id
             self.name = name
             self.gainDb = gainDb
+            self.pan = pan
             self.muted = muted
             self.solo = solo
         }
@@ -56,6 +60,8 @@ final class WorkbenchModel {
         /// reopened mix still shows where it sat, excluded from the render.
         var isMissing = false
         var gainDb: Double = 0
+        /// -1 hard left … +1 hard right, added to the lane's own pan.
+        var pan: Double = 0
         var muted = false
         /// Start on the TARGET grid. Fractional because the wire always was
         /// (`IngredientSubmission.offsetBeats` is a Double) and the engine now
@@ -188,6 +194,17 @@ final class WorkbenchModel {
         })
     }
 
+    /// Clip pan on top of lane pan, exactly as the two gain faders stack —
+    /// and clamped, because unlike gain the range has a hard end: past hard
+    /// left there is nowhere further to go.
+    nonisolated static func effectivePan(lanes: [Lane],
+                                         clips: [Clip]) -> [String: Double] {
+        let byId = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0) })
+        return Dictionary(uniqueKeysWithValues: clips.map {
+            ($0.id, max(-1, min(1, $0.pan + (byId[$0.laneId]?.pan ?? 0))))
+        })
+    }
+
     /// Lane order, then time. Deterministic ordering keeps `mix_spec.tracks`,
     /// provenance rows and keep_tracks stem names stable between renders.
     nonisolated static func ordered(lanes: [Lane], clips: [Clip]) -> [Clip] {
@@ -234,6 +251,7 @@ final class WorkbenchModel {
     func ingredients() -> [IngredientSubmission] {
         let mute = Self.effectivelyMuted(lanes: lanes, clips: clips)
         let gain = Self.effectiveGainDb(lanes: lanes, clips: clips)
+        let pan = Self.effectivePan(lanes: lanes, clips: clips)
         let slots = Self.slotIds(lanes: lanes, clips: clips)
         // Missing clips are dropped, and the UI blocks Create Mix while any
         // exist — quietly rendering without a track the user can see would be
@@ -250,7 +268,8 @@ final class WorkbenchModel {
                     sectionStartS: clip.sectionStartS,
                     sectionEndS: clip.sectionEndS,
                     fadeInS: clip.fadeInS > 0 ? clip.fadeInS : nil,
-                    fadeOutS: clip.fadeOutS > 0 ? clip.fadeOutS : nil)
+                    fadeOutS: clip.fadeOutS > 0 ? clip.fadeOutS : nil,
+                    pan: (pan[clip.id] ?? 0) != 0 ? pan[clip.id] : nil)
             }
     }
 
@@ -360,6 +379,7 @@ final class WorkbenchModel {
         for section in source.sections {
             var clip = Clip(laneId: source.laneId, material: source.material)
             clip.gainDb = source.gainDb
+            clip.pan = source.pan
             clip.muted = source.muted
             clip.summary = source.summary
             clip.sections = source.sections

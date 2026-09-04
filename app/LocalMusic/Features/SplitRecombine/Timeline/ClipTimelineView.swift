@@ -708,11 +708,20 @@ struct LaneHeaderRow: View {
                             knobSize: Bench.Metrics.Slider.knobSmall)
                     .padding(.leading, 4)
                     .help("Lane gain")
+                // Beside the gain rather than on a fourth row: the header is
+                // 100 pt for three rows and the lane it heads is 100 pt tall.
+                BenchSlider(value: $lane.pan, range: -1...1,
+                            tint: Bench.Palette.stem(kind),
+                            knobSize: Bench.Metrics.Slider.knobSmall)
+                    .help("Lane pan")
             }
             HStack(spacing: 8) {
                 Text(clipCount == 1 ? "1 CLIP" : "\(clipCount) CLIPS")
                     .metaLine()
                 Spacer(minLength: 0)
+                Text(Bench.panLabel(lane.pan))
+                    .font(Bench.Typo.mono(10, .semibold))
+                    .foregroundStyle(Bench.Palette.textTertiary)
                 Text(String(format: "%+.1f dB", lane.gainDb))
                     .font(Bench.Typo.mono(10, .semibold))
                     .foregroundStyle(Bench.Palette.textSecondary)

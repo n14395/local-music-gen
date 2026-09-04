@@ -517,11 +517,6 @@ struct SettingsView: View {
                     + "re-roll the words, not the dice. A seed you typed is "
                     + "always yours.",
                 isOn: settings.holdSeed)
-            // "Live preview while rendering" is hidden, not removed: the
-            // engine side works, but nothing in the app draws the frames yet
-            // (audit H3) — so the toggle sold decode cost with no visible
-            // return. Restore this row when the preview card lands, or
-            // delete the plumbing if the feature is dropped.
         }
     }
 

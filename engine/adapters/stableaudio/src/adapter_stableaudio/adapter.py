@@ -21,6 +21,7 @@ import gc
 import inspect
 import json
 import os
+import secrets
 import sys
 
 import numpy as np
@@ -82,9 +83,20 @@ class StableAudioAdapter(ModelAdapter):
         assert self.model is not None
         duration_s = float(params.get("duration_s", 5.0))
         steps = int(params.get("steps", 8))
-        cfg_scale = float(params.get("cfg_scale", 1.0))
+        # The fallback comes from the entry, not from a constant: this
+        # family's checkpoints disagree about it (Open Small is tuned at
+        # 1.0, Open 1.0 at 7.0), and a hardcoded 1.0 quietly contradicted
+        # what Open 1.0's catalog entry advertises. It only bites a caller
+        # that omits the param — the app always sends it — but that caller
+        # got guidance switched OFF, which also silently disabled the
+        # negative prompt (found 2026-09-04 while validating exactly that).
+        cfg_scale = float(params.get(
+            "cfg_scale", self.settings.get("cfg_scale_default", 1.0)))
+        # Drawn here rather than handed to the library as -1: upstream
+        # draws its own and never tells us which, so the take could not be
+        # reproduced. Seeding it ourselves makes `seed_used` true.
         seed = params.get("seed")
-        seed = int(seed) if seed is not None else -1
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
 
         sample_rate = int(self.config["sample_rate"])
         sample_size = int(self.config["sample_size"])
@@ -106,6 +118,26 @@ class StableAudioAdapter(ModelAdapter):
         kwargs = dict(model=self.model, steps=steps, cfg_scale=cfg_scale,
                       conditioning=conditioning, sample_size=sample_size,
                       seed=seed, device=self.device)
+
+        # The other half of classifier-free guidance. Without it the negative
+        # branch is the empty prompt; with it, it is whatever the user named,
+        # and the guidance scale pushes away from that instead. Same shape as
+        # the positive conditioning because it goes through the same
+        # conditioner — including `seconds_total`, which Open 1.0 requires of
+        # every batch it is handed.
+        #
+        # Only meaningful above cfg_scale 1.0: the DiT skips the guided branch
+        # entirely at 1.0 (`dit.py`), so on Open Small — which defaults there —
+        # this is inert until guidance is raised. The catalog says so.
+        negative = str(params.get("negative_prompt") or "").strip()
+        if negative:
+            kwargs["negative_conditioning"] = [
+                self._conditioning(negative, duration_s)]
+            # Said out loud because it is otherwise invisible: the negative
+            # branch changes the audio and nothing in the progress stream
+            # would show that it was applied.
+            print(f"negative prompt applied: {negative!r}", file=sys.stderr,
+                  flush=True)
 
         # generate_diffusion_cond pops sampler_type with a hard "euler"
         # default, overriding the library's own per-objective choice — the
@@ -172,7 +204,7 @@ class StableAudioAdapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=seed if seed >= 0 else None)
+                              seed_used=seed)
 
     def _conditioning(self, prompt: str, duration_s: float) -> dict:
         """What the model is told about the take it is about to make.

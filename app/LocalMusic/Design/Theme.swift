@@ -15,6 +15,22 @@ import SwiftUI
 ///   * stem identity is a colour carried everywhere (`Palette.stem(_:)`).
 enum Bench {}
 
+// MARK: - Value formatting
+
+extension Bench {
+    /// A pan position as a desk would print it: `C`, `L42`, `R100`.
+    ///
+    /// Not "-0.42": the number a pan control shows is a side and a distance,
+    /// and every mixer the reader has used says it that way. The dead band
+    /// keeps a slider a hair off centre from reading as panned.
+    static func panLabel(_ pan: Double) -> String {
+        let clamped = max(-1, min(1, pan))
+        if abs(clamped) < 0.005 { return "C" }
+        let amount = Int((abs(clamped) * 100).rounded())
+        return (clamped < 0 ? "L" : "R") + String(amount)
+    }
+}
+
 // MARK: - Palette
 
 extension Bench {

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gc
 import os
+import secrets
 
 import numpy as np
 import soundfile as sf
@@ -65,10 +66,12 @@ class MiniMaxAdapter(ModelAdapter):
         if cfg is not None and guider is not None \
                 and hasattr(guider, "guidance_scale"):
             guider.guidance_scale = float(cfg)
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        generator = torch.Generator("cpu")
-        if seed is not None:
-            generator = generator.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        generator = torch.Generator("cpu").manual_seed(seed)
 
         if cancel.cancelled:
             raise CancelledError()
@@ -92,7 +95,7 @@ class MiniMaxAdapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=int(seed) if seed is not None else None)
+                              seed_used=seed)
 
     def _run_pipeline(self, prompt: str, lyrics: str | None, duration_s: float,
                       steps: int, generator: torch.Generator,

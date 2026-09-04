@@ -192,8 +192,6 @@ enum SettingsCatalog {
             default: 1, keywords: "count takes"),
         .of("holdSeed", .generation, "Hold the seed", \.holdSeed,
             default: false, keywords: "seed random reroll"),
-        // livePreview is hidden with its Settings row (audit H3): the app
-        // draws none of the frames yet, so search must not surface it.
         .of("autoAnalyze", .generation, "Analyze new audio automatically",
             \.autoAnalyze, default: true, keywords: "tempo key sections"),
         .of("analyzerModelId", .generation, "Analyzer", \.analyzerModelId,

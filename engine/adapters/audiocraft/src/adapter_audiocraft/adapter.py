@@ -28,11 +28,18 @@ audiocraft counts them through the same callback.
 from __future__ import annotations
 
 import os
+import secrets
+import random
 import sys
 
 # Must precede any audiocraft import (its transformer module imports xformers
 # at module scope; there are no macOS wheels).
 _STUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_stub")
+
+# How much of the source a continuation listens to. MusicGen's attention window
+# is 30 s and the prompt lives inside it, so this is bought directly out of how
+# much new music fits — 10 s is upstream's own demo figure.
+CONTINUE_PROMPT_S = 10.0
 if _STUB not in sys.path:
     sys.path.insert(0, _STUB)
 
@@ -137,6 +144,22 @@ def _fix_mps_elu() -> None:
             self, input if input.is_contiguous() else input.contiguous())
 
     nn.ELU.forward = contiguous_elu
+
+
+def _tail_clip(path: str, seconds: float):
+    """The last `seconds` of a file as a (channels, samples) tensor + its rate.
+
+    No resampling: `generate_continuation` is told the rate and converts the
+    clip itself (`convert_audio` to the model's rate and channel count), so
+    doing it here would be the same work done twice and slightly worse.
+    """
+    import torch
+
+    wav, sr = sf.read(path, dtype="float32", always_2d=True)
+    keep = int(seconds * sr)
+    if len(wav) > keep:
+        wav = wav[-keep:]
+    return torch.from_numpy(np.ascontiguousarray(wav.T)), int(sr)
 
 
 def _pad_to_excerpt(wav: "torch.Tensor", sample_rate: int,
@@ -274,9 +297,21 @@ class AudiocraftAdapter(ModelAdapter):
                  cancel: CancelToken) -> GenerateResult:
         assert self.model is not None
         duration_s = float(params.get("duration_s", 10.0))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            torch.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
+        # …and Python's own RNG, which is the one that matters for the
+        # style model: the style conditioner crops its excerpt with
+        # `random.randint` (conditioners.py:837), outside torch entirely.
+        # Measured 2026-09-03: with only torch seeded, two same-seed
+        # musicgen-style renders in ONE process correlated 0.07 (plain
+        # musicgen, which draws nothing from `random`, was already 1.0),
+        # so the declared seed could not reproduce a style take at all.
+        random.seed(seed)
+        np.random.seed(seed % (2 ** 32))
 
         if self.kind == "magnet":
             # MAGNeT's span pattern fixes the clip length per checkpoint.
@@ -308,10 +343,19 @@ class AudiocraftAdapter(ModelAdapter):
             expected = (int(duration_s
                             * float(getattr(self.model, "frame_rate", 50.0)))
                         if self.kind == "musicgen" else 0)
+            # Deliberately NOT adjusted for a continuation's prompt: the
+            # callback's own `total` already counts the new tokens alone.
+            # Checked 2026-09-04 on an 8 s continuation off a 10 s excerpt —
+            # the last event is `403/400 tokens` at fraction 1.0, not 900.
             total_all = max(1, total, expected)
             progress_cb(min(1.0, done / total_all),
                         f"{done}/{total_all} tokens",
                         phase="lm_decode", step=done, steps=total_all)
+
+        # Set inside the continuation branch below, where the prompt's own
+        # length is known; nonzero means the take opens with the excerpt and
+        # has to be trimmed back to what was actually asked for.
+        continued_s = 0.0
 
         # MusicGen-Style's excerpt conditioner has its own knobs, and they are
         # set per generation rather than at load.
@@ -332,6 +376,7 @@ class AudiocraftAdapter(ModelAdapter):
             ref_path = params.get("melody_audio") or params.get("style_audio")
             is_style = bool(self.settings.get("style")
                             and params.get("style_audio"))
+            continue_path = params.get("continue_audio")
             if ref_path and (self.settings.get("melody") or is_style):
                 wav, sr = sf.read(str(ref_path), dtype="float32",
                                   always_2d=True)
@@ -340,6 +385,33 @@ class AudiocraftAdapter(ModelAdapter):
                     melody = _pad_to_excerpt(melody, sr, excerpt_s or 3.0)
                 audio = self.model.generate_with_chroma(
                     [prompt], melody[None], sr, progress=True)
+            elif continue_path and os.path.isfile(str(continue_path)):
+                # The trained continuation path, and the only one in this
+                # catalog: the excerpt is encoded to EnCodec tokens and becomes
+                # the decoder's actual prefix, so the model carries on from
+                # inside the music rather than being told about it.
+                #
+                # The excerpt is the source's TAIL — a continuation continues
+                # an ending — and short, because prompt and continuation share
+                # one 30 s attention window: every second handed over is a
+                # second that cannot be written.
+                clip, clip_rate = _tail_clip(str(continue_path),
+                                             CONTINUE_PROMPT_S)
+                continued_s = clip.shape[-1] / clip_rate
+                progress_cb(None,
+                            f"listening to the last {continued_s:.0f}s",
+                            phase="prompt_encode")
+                # `duration` counts prompt + continuation here (unlike the
+                # transformers path, where it counts new tokens only), so ask
+                # for the sum and cut the prompt back off below.
+                self.model.set_generation_params(
+                    duration=min(30.0, duration_s + continued_s),
+                    use_sampling=True,
+                    top_k=int(params.get("top_k", 250)),
+                    temperature=float(params.get("temperature", 1.0)),
+                    cfg_coef=float(params.get("guidance_scale", 3.0)))
+                audio = self.model.generate_continuation(
+                    clip[None], clip_rate, [prompt], progress=True)
             else:
                 audio = self.model.generate([prompt], progress=True)
         finally:
@@ -354,6 +426,12 @@ class AudiocraftAdapter(ModelAdapter):
         wav = audio[0].detach().float().cpu().numpy().T  # (T, C)
         if wav.ndim == 2 and wav.shape[1] == 1:
             wav = wav[:, 0]
+        if continued_s:
+            # `generate_continuation` returns prompt-then-continuation. The
+            # length asked for was a length of NEW music, so the excerpt comes
+            # back off — otherwise every continuation would open by replaying
+            # audio the user already has.
+            wav = wav[int(continued_s * sample_rate):]
         wav = np.clip(wav, -1.0, 1.0)
         tmp = out_path + ".part"
         sf.write(tmp, wav, sample_rate, format="WAV", subtype="PCM_16")
@@ -361,7 +439,7 @@ class AudiocraftAdapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=int(seed) if seed is not None else None)
+                              seed_used=seed)
 
     def unload(self) -> None:
         self.model = None

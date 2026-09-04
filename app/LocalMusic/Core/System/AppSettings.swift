@@ -173,14 +173,6 @@ final class AppSettings {
         didSet { defaults.set(holdSeed, forKey: "settings.generation.holdSeed") }
     }
 
-    /// Ask the engine for partial-audio previews during a render. Off by
-    /// default: only some families can decode mid-render, so the render card
-    /// reads differently per model with it on — see the note in
-    /// `StudioView.submit`.
-    var livePreview: Bool {
-        didSet { defaults.set(livePreview, forKey: "settings.generation.livePreview") }
-    }
-
     /// Run tempo/key analysis on every new song the moment it appears.
     var autoAnalyze: Bool {
         didSet { defaults.set(autoAnalyze, forKey: "settings.generation.autoAnalyze") }
@@ -511,7 +503,6 @@ final class AppSettings {
         defaultTakes = defaults.object(forKey: "settings.generation.defaultTakes")
             as? Int ?? 1
         holdSeed = defaults.bool(forKey: "settings.generation.holdSeed")
-        livePreview = defaults.bool(forKey: "settings.generation.livePreview")
         autoAnalyze = Self.flag(defaults, "settings.generation.autoAnalyze",
                                 default: true)
         analyzerModelId = defaults
@@ -645,7 +636,6 @@ final class AppSettings {
         defaultDurationS = 10
         defaultTakes = 1
         holdSeed = false
-        livePreview = false
         autoAnalyze = true
         analyzerModelId = nil
         autoDescribe = false

@@ -22,6 +22,7 @@ to CPU on both routes — the checkpoints are CUDA-pickled.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import urllib.request
 
@@ -135,6 +136,46 @@ def _define_missing_torch_flag() -> None:
         logits_processors.is_torch_greater_or_equal_than_2_4 = release >= (2, 4)
 
 
+def _teach_processor_float32() -> None:
+    """Let a reference voice be separated on the GPU.
+
+    The processor's vocal-separation branch builds its demucs input with
+    `torch.tensor(wav[None], device=self.device).to(torch.float32)` — but the
+    cast happens *after* construction, and `wav` arrives from soundfile as
+    float64, so on MPS the tensor is rejected before the cast can help
+    ("Cannot convert a MPS Tensor to float64 dtype"). Upstream only ever ran
+    this on CUDA, where float64 is legal. Caught 2026-09-03 the first time a
+    ref_voice job ran on this machine.
+
+    Patch the pinned copy in the venv (the msst/acestep idiom): cast in numpy,
+    before the tensor exists. Idempotent, re-applied on every load."""
+    import importlib.util
+    import os
+
+    spec = importlib.util.find_spec("songgen")
+    if spec is None or not spec.submodule_search_locations:
+        raise RuntimeError("the songgen package is not importable")
+    path = os.path.join(spec.submodule_search_locations[0],
+                        "processing_songgen.py")
+    with open(path) as f:
+        src = f.read()
+    if "LOCALMUSIC-FLOAT32" in src:
+        return
+    old = ("                    torch.tensor(wav[None], device=self.device)"
+           ".to(torch.float32), \n")
+    if old not in src:
+        raise RuntimeError("processing_songgen.py no longer carries the "
+                           "expected demucs input line — refusing to guess")
+    new = ("                    # LOCALMUSIC-FLOAT32: cast in numpy, because "
+           "MPS refuses to\n"
+           "                    # build the float64 tensor this used to make "
+           "first.\n"
+           "                    torch.tensor(wav[None].astype('float32'), "
+           "device=self.device),\n")
+    with open(path, "w") as f:
+        f.write(src.replace(old, new, 1))
+
+
 class SongGenAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -161,6 +202,7 @@ class SongGenAdapter(ModelAdapter):
 
         _stage_package_data(progress_cb)
         _stage_xcodec(self._snapshot("xcodec"))
+        _teach_processor_float32()
 
         progress_cb(None, "loading SongGen (5 GB)")
         from songgen import (SongGenMixedForConditionalGeneration,
@@ -184,9 +226,12 @@ class SongGenAdapter(ModelAdapter):
         assert self.model is not None and self.processor is not None
         duration_s = float(params.get("duration_s") or 15.0)
         max_tokens = int(min(duration_s, 120) * TOKENS_PER_S)
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            torch.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
 
         ref = params.get("ref_voice")
         ref = ref if ref and os.path.isfile(ref) else None
@@ -244,7 +289,7 @@ class SongGenAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(len(audio) / sample_rate, 3),
             sample_rate=sample_rate,
-            seed_used=int(seed) if seed is not None else None)
+            seed_used=seed)
 
     def unload(self) -> None:
         self.model = None

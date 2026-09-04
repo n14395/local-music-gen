@@ -15,6 +15,10 @@ final class MultiPartPlayer {
         var url: URL
         var offsetS: Double
         var gainDb: Double
+        /// -1 hard left … +1 hard right, matching mix_spec's `pan`. The
+        /// preview pans with AVAudioPlayerNode's own constant-power law,
+        /// which is the same law the mix job applies.
+        var pan: Double = 0
         var muted: Bool
         /// Source trim, matching mix_spec's `section`. Without it the preview
         /// plays whole files while the mix plays the trimmed ones.
@@ -181,6 +185,7 @@ final class MultiPartPlayer {
         for item in items {
             nodes[item.id]?.volume = item.muted
                 ? 0 : Float(pow(10.0, item.gainDb / 20.0))
+            nodes[item.id]?.pan = Float(max(-1, min(1, item.pan)))
         }
     }
 
@@ -267,6 +272,7 @@ final class MultiPartPlayer {
         // the gain it was given last time.
         for item in prepared {
             nodes[item.id]?.volume = Float(pow(10.0, item.gainDb / 20.0))
+            nodes[item.id]?.pan = Float(max(-1, min(1, item.pan)))
         }
         // Summing N clips with no normalisation clips the mixer; the mix job
         // normalises and limits, the preview does neither.

@@ -25,7 +25,10 @@ EMBED_PB = "discogs-effnet-bs64-1.pb"
 EMBED_URL = f"{BASE}/feature-extractors/discogs-effnet/{EMBED_PB}"
 
 # name -> (path spec, group, kind). "binary" heads emit their positive class
-# above threshold; "multi" heads their top classes; "winner" the argmax.
+# above threshold; "multi" heads their top classes; "winner" the argmax;
+# "multilabel" heads are sigmoid rather than softmax, so their scores are
+# independent probabilities that do not sum to anything and need a threshold
+# of their own rather than a share-of-one floor.
 # The path spec is "subdir" when the file stem matches it, "subdir/stem"
 # when it does not (approachability ships 2c/3c/regression variants in one
 # directory — the 2c one is the taggable yes/no).
@@ -45,7 +48,22 @@ HEADS = {
     "approachability": ("approachability/approachability_2c", "mood",
                         "binary"),
     "engagement": ("engagement/engagement_2c", "mood", "binary"),
+    # The MTG-Jamendo heads: a second, larger vocabulary over the same
+    # embedding. Where the Discogs head answers "what genre is this?" in
+    # record-shop terms, these answer "what is it for, what is playing, what
+    # does it feel like" in the words a music library uses — and they are
+    # multi-label, so a track is allowed to be several things at once.
+    "jamendo_moodtheme": ("mtg_jamendo_moodtheme", "theme", "multilabel"),
+    "jamendo_genre": ("mtg_jamendo_genre", "genre", "multilabel"),
+    "jamendo_instrument": ("mtg_jamendo_instrument", "instrument",
+                           "multilabel"),
+    "jamendo_top50": ("mtg_jamendo_top50tags", "tag", "multilabel"),
 }
+
+# Above this a sigmoid head is saying "yes". MTG's own demos read their
+# multi-label heads at about this level; below it the tail is long and mostly
+# noise.
+MULTILABEL_FLOOR = 0.1
 
 # The binary heads name their negative class "non_happy" / "not_danceable" /
 # "not approachable"; only the positive one is ever worth a tag.
@@ -60,14 +78,31 @@ def _head_files(name: str) -> tuple[str, str, str]:
             f"{stem}.pb", f"{stem}.json")
 
 
-def _head_nodes(name: str) -> tuple[str, str]:
-    """Input/output node names differ by how UPF exported each graph:
-    genre_discogs400 is a TF2 saved-model export (serving_default /
-    PartitionedCall), every other classification head is a TF1 frozen
-    graph (model/Placeholder → model/Softmax). Configuring a TF1 head
-    with the TF2 names is the 'not a valid node name' crash."""
+def _head_nodes(name: str, meta: dict) -> tuple[str, str]:
+    """Input/output node names, read from the head's own metadata.
+
+    They differ by how UPF exported each graph — genre_discogs400 is a TF2
+    saved-model export (serving_default / PartitionedCall), the softmax heads
+    are TF1 frozen graphs (model/Placeholder → model/Softmax), and the
+    multi-label MTG-Jamendo heads are TF1 graphs ending in model/Sigmoid.
+    Configuring a head with another one's names is the "not a valid node
+    name" crash, so the names come from the JSON that ships beside each graph
+    rather than from a rule about which family it belongs to. Every head
+    marks exactly one output `predictions`; the others are logits and the
+    penultimate layer.
+
+    The hardcoded pairs remain as a fallback for a metadata file too old to
+    carry a schema."""
+    schema = meta.get("schema") or {}
+    inputs = [i.get("name") for i in schema.get("inputs") or [] if i.get("name")]
+    outputs = [o.get("name") for o in schema.get("outputs") or []
+               if o.get("output_purpose") == "predictions" and o.get("name")]
+    if inputs and outputs:
+        return inputs[0], outputs[0]
     if HEADS[name][0].startswith("genre_discogs400"):
         return ("serving_default_model_Placeholder", "PartitionedCall:0")
+    if HEADS[name][2] == "multilabel":
+        return ("model/Placeholder", "model/Sigmoid")
     return ("model/Placeholder", "model/Softmax")
 
 
@@ -115,13 +150,13 @@ class EssentiaAdapter(ModelAdapter):
             output="PartitionedCall:1")
         for name in self._wanted_heads():
             _url, pb_name, meta_name = _head_files(name)
-            node_in, node_out = _head_nodes(name)
+            with open(os.path.join(cache, meta_name)) as f:
+                meta = json.load(f)
+            node_in, node_out = _head_nodes(name, meta)
             head = es.TensorflowPredict2D(
                 graphFilename=os.path.join(cache, pb_name),
                 input=node_in, output=node_out)
-            with open(os.path.join(cache, meta_name)) as f:
-                classes = json.load(f)["classes"]
-            self.heads[name] = (head, classes)
+            self.heads[name] = (head, meta["classes"])
         progress_cb(None, "tagger ready")
 
     def generate(self, prompt, lyrics, params, out_path, progress_cb,
@@ -181,6 +216,16 @@ class EssentiaAdapter(ModelAdapter):
                 for idx in np.argsort(preds)[::-1][:top_n]:
                     score = float(preds[idx])
                     if score < 0.05:
+                        break
+                    tags.append({"label": classes[idx],
+                                 "score": round(score, 3), "group": group})
+            elif kind == "multilabel":
+                # Sigmoid, so the scores are independent: a track can be
+                # "melancholy" and "film" and "guitar" at 0.6 each, and the
+                # floor is an absolute confidence rather than a share of one.
+                for idx in np.argsort(preds)[::-1][:top_n]:
+                    score = float(preds[idx])
+                    if score < MULTILABEL_FLOOR:
                         break
                     tags.append({"label": classes[idx],
                                  "score": round(score, 3), "group": group})

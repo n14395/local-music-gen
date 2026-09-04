@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
@@ -59,11 +60,18 @@ class AnticipationAdapter(ModelAdapter):
         if task != "compose":
             return super().run_task(task, params, out_dir, progress_cb, cancel)
         assert self.model is not None
+        import torch
         from anticipation.convert import events_to_midi
         from anticipation.sample import generate as amt_generate
 
         span_s = max(5.0, min(60.0, float(params.get("span_s") or 15.0)))
         top_p = float(params.get("top_p") or 0.98)
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. Reported back in `meta`.
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
 
         # The model's actual specialty (it is the Anticipatory Music
         # Transformer): events before start_time are history, events after
@@ -72,12 +80,13 @@ class AnticipationAdapter(ModelAdapter):
         # includes the input, making the part playable standalone.
         mode = str(params.get("compose_mode") or "generate").strip()
         inputs: list[int] = []
-        if mode in ("continue", "infill"):
+        controls: list[int] = []
+        if mode in ("continue", "infill", "accompany"):
             midi_in = params.get("melody_midi")
             if not midi_in or not os.path.isfile(midi_in):
                 raise RuntimeError(
-                    "melody_midi missing — continue and infill need the "
-                    "notes to work from")
+                    "melody_midi missing — continue, infill and accompany "
+                    "need the notes to work from")
             from anticipation.convert import midi_to_events
 
             inputs = midi_to_events(midi_in)
@@ -122,10 +131,39 @@ class AnticipationAdapter(ModelAdapter):
             inputs = ops.sort(
                 ops.clip(inputs, 0, start, clip_duration=False)
                 + ops.clip(inputs, end, span_end, clip_duration=False))
+        elif mode == "accompany":
+            # The model's namesake mode, and the one the app could not reach.
+            #
+            # Continue and infill hand the melody over as *history* — notes
+            # already played, which the model writes after or between. This
+            # hands it over as **controls**: notes it can see coming but has
+            # not written, so it plays a second voice alongside them for the
+            # whole span. That is what "anticipatory" means in Anticipatory
+            # Music Transformer, and it is the difference between a model that
+            # finishes your idea and one that accompanies it.
+            #
+            # Controls carry their own offset in this vocabulary (the model
+            # has to tell "a note I am hearing" from "a note I am writing"),
+            # which the caller applies — `generate` only offsets the events it
+            # derives from `inputs` itself.
+            from anticipation import ops
+
+            melody = inputs
+            inputs = []
+            controls = [ops.CONTROL_OFFSET + token for token in melody]
+            start = 0.0
+            # Same 100 s time-vocabulary wall as the other two modes: play
+            # along with as much as fits rather than feeding out-of-vocab
+            # times, and say so in the meta below.
+            end = min(95.0, float(ops.max_time(melody, seconds=True)))
+            if end <= 0.0:
+                raise RuntimeError("the MIDI file has no notes to play along "
+                                   "with")
         else:
             start, end = 0.0, span_s
 
-        verb = {"continue": "continuing", "infill": "filling the gap in"}
+        verb = {"continue": "continuing", "infill": "filling the gap in",
+                "accompany": "playing along with"}
         progress_cb(None, f"{verb.get(mode, 'composing')} "
                           f"{end - start:.0f} s of music "
                           f"({'MPS' if self.device == 'mps' else 'CPU — slow'})")
@@ -153,13 +191,21 @@ class AnticipationAdapter(ModelAdapter):
         _tqdm.tqdm.update = patched_update
         try:
             events = amt_generate(self.model, start_time=start, end_time=end,
-                                  inputs=inputs or None, top_p=top_p)
+                                  inputs=inputs or None,
+                                  controls=controls or None, top_p=top_p)
         finally:
             _tqdm.tqdm.update = orig_update
         if cancel.cancelled:
             raise CancelledError()
         if not events:
             raise RuntimeError("the model produced no events")
+        if controls:
+            # `generate` returns only what it wrote — the anticipated notes are
+            # stripped back out. Put the melody back so the part is playable on
+            # its own, which is what every other mode of this card returns.
+            from anticipation import ops
+
+            events = ops.combine(events, controls)
 
         progress_cb(0.9, "writing the MIDI")
         mid = events_to_midi(events)
@@ -168,7 +214,8 @@ class AnticipationAdapter(ModelAdapter):
         os.replace(midi_path + ".part", midi_path)
         artifacts = [Artifact(kind="midi", label="composition",
                               path=midi_path, format="mid")]
-        meta: dict = {"engine": "anticipation", "notes": len(events) // 3}
+        meta: dict = {"engine": "anticipation", "notes": len(events) // 3,
+                      "seed_used": seed}
 
         abc = self._to_abc(midi_path)
         if abc:

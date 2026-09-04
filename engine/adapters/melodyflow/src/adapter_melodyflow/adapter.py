@@ -19,6 +19,7 @@ here at the first attention call.
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 import types
 
@@ -85,6 +86,14 @@ class MelodyFlowAdapter(ModelAdapter):
         assert self.model is not None
         duration = min(MAX_DURATION_S, float(params.get("duration_s") or 10.0))
         steps = max(1, min(125, int(params.get("steps") or 10)))
+
+        # Draw a seed when none was given rather than leaving the take
+        # unreproducible: the initial latent is a torch normal draw, so
+        # seeding torch is all it takes, and reporting it back is what lets a
+        # take you liked be reproduced after changing one other setting.
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
         solver = str(params.get("solver") or "euler")
         if solver not in ("euler", "midpoint"):
             solver = "euler"
@@ -102,6 +111,17 @@ class MelodyFlowAdapter(ModelAdapter):
         self.model.set_custom_progress_callback(on_step)
         self.model.set_generation_params(solver=solver, steps=steps,
                                          duration=duration)
+
+        # Guidance is an attribute of the flow model rather than a generation
+        # parameter — `FlowMatchingModel.generate` takes no cfg argument and
+        # reads `self.cfg_coef` at the step (`flow.py`), which is why this is
+        # a field assignment and not a kwarg. None leaves the checkpoint's own
+        # value alone. On an edit it applies to the pass that travels towards
+        # the new description; the inversion pass runs unguided by
+        # construction, upstream forces cfg to 0 there to stop it diverging.
+        cfg = params.get("cfg_coef")
+        if cfg is not None and getattr(self.model, "lm", None) is not None:
+            self.model.lm.cfg_coef = float(cfg)
 
         src = params.get("src_audio")
         with torch.no_grad():
@@ -127,7 +147,7 @@ class MelodyFlowAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(out.shape[0] / sample_rate, 3),
             sample_rate=sample_rate,
-            seed_used=None)
+            seed_used=seed)
 
     def _edit(self, src: str, prompt: str, params: dict, steps: int,
               progress_cb: ProgressCb):

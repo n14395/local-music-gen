@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import secrets
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
 # to CPU instead of aborting the render. Harmless on the CPU route.
@@ -31,6 +32,20 @@ from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb)
 
 MAX_INPUT_S = 20.0   # coarse context is ~10 s; 20 s runs two windows
+
+# What `beat_mask` may say. It was a bool meaning "protect the onsets" before
+# the beat tracker was wired up, and old presets still carry that bool — so
+# True keeps meaning exactly what it used to.
+SYNC_MODES = ("off", "onsets", "beats", "downbeats")
+
+
+def _sync_mode(value) -> str:
+    if value is True:
+        return "onsets"
+    if not value:
+        return "off"
+    mode = str(value).strip().lower()
+    return mode if mode in SYNC_MODES else "off"
 
 
 def _ensure_repo_marker() -> None:
@@ -163,9 +178,12 @@ class VampNetAdapter(ModelAdapter):
         upper_mask = max(0, min(14, 3 if um is None else int(um)))
         temperature = float(params.get("temperature") or 1.0)
         steps = max(2, min(36, int(params.get("steps") or 8)))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            torch.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
 
         duration = min(MAX_INPUT_S, float(params.get("duration_s") or 10.0))
         progress_cb(0.05, "encoding the source", phase="prompt_encode")
@@ -184,11 +202,31 @@ class VampNetAdapter(ModelAdapter):
                                  params.get("prefix_s") or 0.0)),
                              "suffix_s": max(0.0, float(
                                  params.get("suffix_s") or 0.0))}
-        if params.get("beat_mask"):
-            # Keep tokens around detected onsets so the downbeats survive
-            # the vamp. ±5 tokens ≈ ±90 ms at the codec's hop.
+        sync = _sync_mode(params.get("beat_mask"))
+        if sync == "onsets":
+            # Keep tokens around detected onsets so attacks survive the vamp.
+            # ±5 tokens ≈ ±90 ms at the codec's hop. This is librosa's
+            # spectral onset detector inside build_mask — every transient,
+            # with no idea where the bar is.
             mask_kwargs["onset_mask_width"] = 5
         mask = self.interface.build_mask(z, signal, **mask_kwargs)
+        if sync in ("beats", "downbeats"):
+            mask = self._beat_sync(mask, signal, downbeats_only=(
+                sync == "downbeats"), progress_cb=progress_cb)
+
+        stretch = max(1, min(4, int(params.get("time_stretch") or 1)))
+        if stretch > 1:
+            # Upstream's own token-level stretch (`Interface.vamp`): insert
+            # `stretch - 1` empty slots after every source token and mark them
+            # for generation, so the model writes what happens in between.
+            # The loop gets longer without anything being resampled — pitch
+            # and timbre are untouched, the playing is what is invented.
+            z = z.repeat_interleave(stretch, dim=-1)
+            mask = mask.repeat_interleave(stretch, dim=-1)
+            added = torch.ones_like(mask)
+            added[:, :, ::stretch] = 0
+            mask = (mask.bool() | added.bool()).long()
+
         zv, _mask = self.interface.coarse_vamp(
             z, mask=mask, _sampling_steps=steps, temperature=temperature,
             return_mask=True)
@@ -213,7 +251,59 @@ class VampNetAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(float(out.duration), 3),
             sample_rate=sample_rate,
-            seed_used=int(seed) if seed is not None else None)
+            seed_used=seed)
+
+    def _beat_sync(self, mask, signal, *, downbeats_only: bool, progress_cb):
+        """Narrow `mask` so the tracked beats survive the vamp.
+
+        This is what the wavebeat checkpoint every entry downloads is FOR — it
+        was fetched and never called until now. Onset masking (above) protects
+        every transient it can hear; this protects the pulse, which is a
+        different and usually better thing to keep: the groove stays put while
+        everything between the beats is re-imagined.
+
+        `make_beat_mask(invert=True)` marks the beat neighbourhoods as
+        keep-me, and `mask_and` means a token is only regenerated where both
+        masks agree it should be.
+
+        Never fatal: a track the tracker finds no pulse in should vamp
+        normally rather than fail, so a failure here degrades to the mask that
+        was already built.
+        """
+        import torch
+        from vampnet.mask import mask_and
+
+        try:
+            progress_cb(0.15, "finding the beat", phase="prompt_encode")
+            beat_mask = self.interface.make_beat_mask(
+                signal,
+                before_beat_s=0.0,
+                # ~70 ms after each beat: enough to hold the transient and its
+                # attack, short enough that the model still rewrites the space
+                # between beats rather than copying it.
+                after_beat_s=0.07,
+                mask_upbeats=not downbeats_only,
+                mask_downbeats=True,
+                invert=True)
+            # The beat mask is built from the signal's duration and the
+            # codes from the encoder, and the two round to token counts
+            # independently. Line them up rather than letting a one-token
+            # disagreement raise from inside the library.
+            width = mask.shape[-1]
+            if beat_mask.shape[-1] < width:
+                pad = torch.ones(
+                    beat_mask.shape[0], beat_mask.shape[1],
+                    width - beat_mask.shape[-1],
+                    dtype=beat_mask.dtype, device=beat_mask.device)
+                beat_mask = torch.cat([beat_mask, pad], dim=-1)
+            beat_mask = beat_mask[:, :mask.shape[1], :width]
+            return mask_and(mask, beat_mask)
+        except Exception as e:  # noqa: BLE001 — no pulse found is not a failure
+            import sys
+
+            print(f"beat tracking found nothing usable ({e}); "
+                  f"vamping without it", file=sys.stderr)
+            return mask
 
     def unload(self) -> None:
         self.interface = None

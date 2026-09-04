@@ -51,11 +51,55 @@ class YuEAdapter(ModelAdapter):
         xcodec_link = os.path.join(self.repo_dir, "inference", "xcodec_mini_infer")
         xcodec_snapshot = self.model_paths.get(XCODEC_REPO)
         if xcodec_snapshot:
+            # The clone leaves an EMPTY directory here — xcodec_mini_infer is a
+            # submodule and nothing initialises it — and an `exists` check reads
+            # that placeholder as "already linked", so the symlink was never
+            # made and `infer.py` died on `No module named 'models'` before the
+            # first token. This entry could not have rendered once. (Found
+            # 2026-09-03, the first time YuE was actually run.)
             if os.path.islink(xcodec_link):
                 os.unlink(xcodec_link)
+            elif os.path.isdir(xcodec_link) and not os.path.exists(
+                    os.path.join(xcodec_link, "models")):
+                try:
+                    os.rmdir(xcodec_link)          # only ever the empty husk
+                except OSError as e:
+                    raise RuntimeError(
+                        f"{xcodec_link} exists but carries no `models/` and "
+                        f"could not be removed ({e}) — delete it and retry"
+                    ) from None
             if not os.path.exists(xcodec_link):
                 os.symlink(xcodec_snapshot, xcodec_link)
+        self._teach_infer_sdpa()
         progress_cb(None, "YuE ready (expect hours per song on Apple Silicon)")
+
+    def _teach_infer_sdpa(self) -> None:
+        """Both model loads in infer.py hardcode `flash_attention_2`.
+
+        There is no flash-attn wheel for macOS, so transformers raises
+        ImportError at the first `from_pretrained` — before a single token.
+        Together with the empty submodule directory above, this is why the YuE
+        entry had never produced audio on this machine. `sdpa` is torch's own
+        fused attention and the correct substitute here.
+
+        Patched in the cloned checkout, idempotent, re-applied on every load
+        (a re-clone would otherwise silently restore the blocker)."""
+        path = os.path.join(self.repo_dir, "inference", "infer.py")
+        if not os.path.exists(path):
+            return
+        with open(path) as f:
+            src = f.read()
+        if "LOCALMUSIC-SDPA" in src:
+            return
+        needle = 'attn_implementation="flash_attention_2"'
+        if needle not in src:
+            raise RuntimeError("YuE's infer.py no longer carries the expected "
+                               "attention line — refusing to guess")
+        src = src.replace(
+            needle,
+            'attn_implementation="sdpa"  # LOCALMUSIC-SDPA: no flash-attn on macOS')
+        with open(path, "w") as f:
+            f.write(src)
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
@@ -90,6 +134,30 @@ class YuEAdapter(ModelAdapter):
                "--output_dir", run_dir,
                "--seed", str(seed),
                "--max_new_tokens", "3000"]
+
+        # In-context learning: a reference recording the model listens to
+        # before it writes. This is YuE's own style-transfer route — the same
+        # shape as SongBloom's style_audio — and it is what its paper means by
+        # ICL: the excerpt is tokenised into the same codebook the model
+        # generates in, so the reference is *prior context*, not a separate
+        # conditioning channel.
+        #
+        # The window matters and is not cosmetic: upstream's own guidance is a
+        # 30-second excerpt, and the excerpt should be a musically
+        # representative passage — a chorus, not an intro that has not started
+        # yet.
+        prompt_audio = params.get("style_audio")
+        if prompt_audio and os.path.isfile(prompt_audio):
+            start = max(0.0, float(params.get("prompt_start_s") or 0.0))
+            end = float(params.get("prompt_end_s") or (start + 30.0))
+            if end <= start:
+                raise RuntimeError(
+                    "the reference window ends before it starts — set the "
+                    "end later than the start")
+            cmd += ["--use_audio_prompt",
+                    "--audio_prompt_path", prompt_audio,
+                    "--prompt_start_time", f"{start:g}",
+                    "--prompt_end_time", f"{end:g}"]
         # mps_flush/sitecustomize.py is auto-imported by the subprocess at startup;
         # it wraps transformers generate() to flush the MPS allocator every 25
         # tokens — without it the KV-cache concat pattern grows the footprint

@@ -28,6 +28,7 @@ lyrics_hint). The style prompt is 10 s of any reference audio.
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 
 import numpy as np
@@ -149,9 +150,12 @@ class SongBloomAdapter(ModelAdapter):
         # own rate (max_duration * 25 upstream); set_generation_params
         # update()s, so the yaml's other sampling params survive.
         self.model.set_generation_params(max_frames=int(duration_s * 25))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            torch.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
 
         progress_cb(None, "reading the style clip")
         audio, sr = sf.read(style_path, dtype="float32", always_2d=True)
@@ -214,7 +218,7 @@ class SongBloomAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(out.shape[0] / target_sr, 3),
             sample_rate=target_sr,
-            seed_used=int(seed) if seed is not None else None)
+            seed_used=seed)
 
     def unload(self) -> None:
         self.model = None

@@ -25,7 +25,6 @@ final class AppSettingsTests: XCTestCase {
 
     func testACleanSlateReadsTheDocumentedDefaults() {
         let settings = AppSettings(defaults: defaults)
-        XCTAssertFalse(settings.livePreview)
         XCTAssertTrue(settings.autoAnalyze)
         XCTAssertTrue(settings.deleteToTrash)
         XCTAssertEqual(settings.libraryDefaultSort, .newest)
@@ -107,7 +106,6 @@ final class AppSettingsTests: XCTestCase {
 
     func testResetAllPreferencesRestoresDefaultsAndDropsFeatureKeys() {
         let settings = AppSettings(defaults: defaults)
-        settings.livePreview = true
         settings.queueAutoClear = .afterMinute
         defaults.set(3, forKey: "onboarding.completedVersion")
         defaults.set(true, forKey: "queue.pinned")
@@ -115,7 +113,6 @@ final class AppSettingsTests: XCTestCase {
 
         settings.resetAllPreferences()
 
-        XCTAssertFalse(settings.livePreview)
         XCTAssertEqual(settings.queueAutoClear, .never)
         XCTAssertNil(defaults.object(forKey: "onboarding.completedVersion"))
         XCTAssertNil(defaults.object(forKey: "queue.pinned"))

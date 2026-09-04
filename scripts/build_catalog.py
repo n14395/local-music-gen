@@ -140,6 +140,97 @@ def source_audio_param(help_=None):
             "help": help_ or "The song to process"}
 
 
+def vr_cleanup_params():
+    """The VR architecture's own controls, for the two `.pth` cleanup cards.
+
+    `aggression` is how hard the model pulls the target out of the mix, as a
+    percentage handed straight to the separator (`vr_separator.py`:
+    `aggression/100`). The other architectures in this family ignore the
+    block, which is why only these two cards offer it.
+    """
+    return [
+        {"key": "aggression", "type": "int", "label": "Aggression",
+         "default": 5, "nullable": False, "min": -20, "max": 40,
+         "help": "How hard to pull the target out. 5 is the value the "
+                 "community settled on; raise it when the problem survives "
+                 "the pass, lower it when the result sounds hollowed out. "
+                 "Negative values pull the other way."},
+        {"key": "tta", "type": "bool", "label": "Extra-quality pass",
+         "default": False, "nullable": False,
+         "help": "Run the separation again on a transformed copy and average "
+                 "the two, which cancels some of the artefacts a single pass "
+                 "leaves. Roughly doubles the time."},
+    ]
+
+
+def msst_params(extract_instrumental=False):
+    """MSST's two inference flags.
+
+    `extract_instrumental` is offered only where it means something: the CLI
+    computes it as the mix minus the *vocals* stem (falling back to whichever
+    stem is listed first), so on a four-stem model it would return the mix
+    minus the bass and call it an instrumental.
+    """
+    params = [
+        {"key": "tta", "type": "bool", "label": "Extra-quality pass",
+         "default": False, "nullable": False,
+         "help": "Test-time augmentation: separate the track again with its "
+                 "polarity and channels inverted and average the results. "
+                 "Upstream's own summary is that it triples the runtime, "
+                 "reduces noise and slightly improves the split."},
+    ]
+    if extract_instrumental:
+        params.append(
+            {"key": "extract_instrumental", "type": "bool",
+             "label": "Also return the instrumental", "default": False,
+             "nullable": False,
+             "help": "Subtract the vocal from the mix to get the backing "
+                     "track. Free — no second pass, no second model — and "
+                     "exact, because what is removed is exactly what was "
+                     "found."})
+    return params
+
+
+def whisper_params():
+    """The rest of what Whisper can be told, beyond the language.
+
+    All four ride the decoder's own hooks: `initial_prompt` and `hotwords` bias
+    which words it reaches for, `task="translate"` swaps the decoding target,
+    and `word_timestamps` runs the extra cross-attention pass that puts a time
+    on every word rather than on every line.
+
+    The first is the one worth having in this app: a song the app generated
+    already has its lyrics written down, and handing them back to the
+    transcriber turns "what did it sing?" from a guess into a check.
+    """
+    return [
+        {"key": "expected_words", "type": "string", "label": "Expected words",
+         "default": None, "nullable": True,
+         "placeholder": "paste the lyrics you expect to hear",
+         "help": "Words you already believe are in the audio — the lyrics you "
+                 "generated the song from, say. The model is nudged towards "
+                 "them, which sharply improves invented words and proper "
+                 "nouns. It is a nudge, not a rule: text that is not in the "
+                 "audio makes the transcript worse."},
+        {"key": "hotwords", "type": "string", "label": "Names & odd words",
+         "default": None, "nullable": True,
+         "placeholder": "comma separated",
+         "help": "A short list of names, places or made-up words to listen "
+                 "for. The same nudge as Expected words, in list form; use "
+                 "either or both."},
+        {"key": "translate", "type": "bool", "label": "Translate to English",
+         "default": False, "nullable": False,
+         "help": "Write the words down in English rather than in the language "
+                 "they are sung in. The detected language is still reported, "
+                 "so you can tell a translation from a transcript."},
+        {"key": "word_timestamps", "type": "bool", "label": "Time every word",
+         "default": False, "nullable": False,
+         "help": "Put a start and end on each individual word, not just on "
+                 "each line — what karaoke-style alignment needs. Costs a "
+                 "second pass over the audio."},
+    ]
+
+
 def init_audio_params():
     """Audio-to-audio for diffusion models: start from a noised reference
     clip instead of pure noise (the "Reimagine a Loop" recipe)."""
@@ -186,7 +277,7 @@ TAG_VOICE = "Voice & singing"
 # this set, and a melody model missing from it was simply unreachable there.
 _REMIX_PARAMS = {"src_audio", "init_audio", "reference_audio", "extend_audio",
                  "inpaint_audio", "task_type", "melody_audio", "style_audio",
-                 "accompany_audio"}
+                 "accompany_audio", "continue_audio"}
 
 
 def derive_tags(entry: dict) -> list[str]:
@@ -304,6 +395,7 @@ SOURCE_HOMEPAGES = {
     "separation-mdx23c-vocals": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
     "separation-scnet-xl": "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases",
     "separation-drumsep": "https://huggingface.co/Sucial/MSST-WebUI",
+    "separation-ensemble": "https://github.com/nomadkaraoke/python-audio-separator",
     "analysis-squim": "https://pytorch.org/audio/stable/pipelines.html",
     "timbre-rave-percussion": "https://acids-ircam.github.io/rave_models_download",
     "timbre-rave-vintage": "https://acids-ircam.github.io/rave_models_download",
@@ -317,6 +409,7 @@ SOURCE_HOMEPAGES = {
     "convert-voice-seedvc": "https://huggingface.co/Plachtaa/seed-vc",
     "convert-voice-seedvc-v2": "https://huggingface.co/Plachtaa/seed-vc",
     "tag-essentia-discogs": "https://essentia.upf.edu/models.html",
+    "tag-essentia-jamendo": "https://essentia.upf.edu/models.html",
     "dsp-mixdown": "https://github.com/spotify/pedalboard",
     "transcribe-basicpitch": "https://github.com/spotify/basic-pitch",
     "transcribe-transkun": "https://github.com/Yujia-Yan/Skipping-The-Frame-Level",
@@ -408,6 +501,9 @@ PARAM_GROUPS = {
     "top_k": SAMPLING,
     "top_p": SAMPLING,
     "seed": SAMPLING,
+    # How many takes the model draws internally before one is chosen — a
+    # property of the draw, not of the music.
+    "candidates": SAMPLING,
     # the negative prompt *is* the classifier-free-guidance branch, so it sits
     # next to the scale that weights it rather than next to the prompt
     "negative_prompt": SAMPLING,
@@ -444,22 +540,38 @@ PARAM_GROUPS = {
     "keyscale": MUSICAL,
     "timesignature": MUSICAL,
     "vocal_language": MUSICAL,
+    # The window YuE's in-context style reference listens to.
+    "prompt_start_s": TASK,
+    "prompt_end_s": TASK,
     "task_type": TASK,
+    # A LoRA merged into the weights before rendering: it changes what the
+    # model IS, which is a property of the music rather than of the sampler.
+    "adapter": MUSICAL,
+    "adapter_scale": MUSICAL,
     "accompany_audio": TASK,
     "template_scale": TASK,
     "edit_strength": TASK,
     "edit_source_caption": TASK,
     "solver": SAMPLING,
+    "cfg_coef": SAMPLING,
     "sampler_type": SAMPLING,
     "periodic_prompt": TASK,
     "upper_codebook_mask": TASK,
     "beat_mask": TASK,
+    "time_stretch": TASK,
     "prefix_s": TASK,
     "suffix_s": TASK,
     "ref_voice": TASK,
     "src_audio": TASK,
     "reference_audio": TASK,
     "melody_audio": TASK,
+    "continue_audio": TASK,
+    # A MIDI part the model plays, and the two guidance scales that weight it.
+    # The notes are the material; how hard they are followed is a draw setting.
+    "melody_midi": TASK,
+    "notes_guidance": SAMPLING,
+    "drums": TASK,
+    "drums_guidance": SAMPLING,
     "init_audio": TASK,
     "init_noise_level": TASK,
     "extend_audio": TASK,
@@ -609,9 +721,10 @@ PARAM_HELP = {
     "target_lufs": "How loud the result is normalised to, in LUFS — perceived "
                    "loudness averaged across the whole track, not peak level. "
                    "Streaming services land around -14.",
-    "gain_db": "Volume applied to the rendered audio, in decibels. 0 leaves it "
-               "exactly as the SoundFont produced it; every 6 dB is roughly a "
-               "doubling.",
+    "gain_db": "Volume of the finished render, in decibels. Every render is "
+               "levelled to the same peak first, so 0 is that level; turning "
+               "up leans into a soft limiter — louder, with the peaks gently "
+               "rounded rather than clipped.",
     "sample_rate": "Samples per second in the rendered file. 44.1 kHz is CD "
                    "rate and 48 kHz is the video standard; neither adds detail "
                    "the SoundFont does not already have.",
@@ -710,6 +823,12 @@ ACE_TASK_SCOPE = {
     "track": ("extract", "lego", "complete"),
     "flow_edit_morph": ("text2music", "cover"),
     "flow_edit_source_caption": ("text2music", "cover"),
+    # acestep.cpp's composer LM only runs for text2music, exactly as the
+    # Python family's does — so its negative prompt is scoped with the rest of
+    # the planner's controls. Harmless on every other family: the scope is
+    # intersected with the task values an entry actually offers, and a model
+    # with no `task_type` offers none.
+    "negative_prompt": ("text2music",),
 }
 
 
@@ -809,7 +928,28 @@ def style_params():
     ]
 
 
-def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
+def continue_param():
+    """Trained continuation: the excerpt becomes the decoder's own prefix.
+
+    This family and audiocraft are the only ones in the catalog with a trained
+    audio-prompt path — everything else that "continues" is either diffusion
+    inpainting past the end (Stable Audio 3) or a windowed re-decode. Offered
+    only where the audio slot means continuation: on the melody checkpoints of
+    the *transformers* backend, audio through the processor means chroma
+    conditioning instead, which is a different mechanism wearing the same
+    shape.
+    """
+    return {"key": "continue_audio", "type": "audio",
+            "label": "Continue from", "default": None, "nullable": True,
+            "help": "A track to carry on from. The model listens to its last "
+                    "ten seconds and writes what comes next, in the same key, "
+                    "tempo and instrumentation — it is continuing the "
+                    "recording, not imitating it. The result is the new music "
+                    "alone, so it butts straight onto the end of the source."}
+
+
+def musicgen_caps(max_s=30, est=4.0, melody=False, style=False,
+                  continuation=False):
     params = [
         {"key": "guidance_scale", "type": "float", "label": "Guidance",
          "default": 3.0, "nullable": False, "min": 1.0, "max": 15.0, "step": 0.5},
@@ -819,6 +959,8 @@ def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
          "nullable": False, "min": 10, "max": 1000},
         seed_param(),
     ]
+    if continuation:
+        params.insert(0, continue_param())
     if melody:
         params.insert(0, melody_param())
     if style:
@@ -834,24 +976,38 @@ def musicgen_caps(max_s=30, est=4.0, melody=False, style=False):
     }
 
 
-def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0):
+def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0,
+                   best_of=False):
+    """`best_of` is not a preference — it is whether this checkpoint's text
+    encoder has an audio tower to rank with. AudioLDM 2 and MusicLDM carry a
+    full CLAP; AudioLDM 1 carries only its text half, so drawing several takes
+    there would be drawing several takes and then keeping the first."""
+    params = [
+        {"key": "steps", "type": "int", "label": "Steps",
+         "default": steps_default, "nullable": False, "min": 5, "max": 300},
+        {"key": "guidance_scale", "type": "float", "label": "Guidance",
+         "default": guidance_default, "nullable": False, "min": 1.0,
+         "max": 15.0, "step": 0.5},
+        {"key": "negative_prompt", "type": "string", "label": "Negative prompt",
+         "default": "low quality, average quality", "nullable": False,
+         "placeholder": "low quality"},
+        seed_param(),
+    ]
+    if best_of:
+        params.append(
+            {"key": "candidates", "type": "int", "label": "Draw and pick best",
+             "default": 1, "nullable": False, "min": 1, "max": 8,
+             "help": "Draw this many takes in one pass and keep the one that "
+                     "best matches your prompt, judged by the model's own "
+                     "listener. Far cheaper than rendering them one at a "
+                     "time, but memory and time still rise with the number."})
     return {
         "supports_lyrics": False, "instrumental_only": True,
         "duration": {"min_s": 1, "max_s": max_s, "default_s": default_s,
                      "unlocked_max_s": UNLOCKED_MAX_S},
         "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
         "est_seconds_per_audio_second": est,
-        "params": [
-            {"key": "steps", "type": "int", "label": "Steps",
-             "default": steps_default, "nullable": False, "min": 5, "max": 300},
-            {"key": "guidance_scale", "type": "float", "label": "Guidance",
-             "default": guidance_default, "nullable": False, "min": 1.0,
-             "max": 15.0, "step": 0.5},
-            {"key": "negative_prompt", "type": "string", "label": "Negative prompt",
-             "default": "low quality, average quality", "nullable": False,
-             "placeholder": "low quality"},
-            seed_param(),
-        ],
+        "params": params,
     }
 
 
@@ -936,6 +1092,18 @@ def minimax_mlx_entry(id_, repo, name, fmt, min_ram_gib, est, desc, notes):
         "params": [
             {"key": "steps", "type": "int", "label": "Steps", "default": 30,
              "nullable": False, "min": 1, "max": 30},
+            # Nullable and null by default: upstream hard-codes 1.7 at the
+            # `denoise_chunk` call site, and leaving this blank keeps exactly
+            # that. Set it and the adapter intercepts the call. 1.0 disables
+            # the guidance branch entirely, which also halves the DiT stage's
+            # work — the one setting here that changes the render time.
+            {"key": "cfg_scale", "type": "float", "label": "Guidance",
+             "default": None, "nullable": True, "min": 1.0, "max": 6.0,
+             "step": 0.1,
+             "help": "How hard the model is pushed towards your description "
+                     "and lyrics. Left blank it uses the value MiniMax tuned "
+                     "the model around (1.7). 1.0 turns guidance off, which "
+                     "renders about twice as fast and much less literally."},
             seed_param(),
         ],
         "lyrics_tags": ["[intro]", "[verse]", "[pre-chorus]", "[chorus]",
@@ -1096,10 +1264,14 @@ def ace_plan_task_params():
     ]
 
 
-def ace_task_params(full):
+def ace_task_params(full, flow_edit=True):
     """SR3 task-mode params. full=True (base/sft DiTs) adds extract/lego/
     complete + the track class; turbo DiTs support text2music/cover/repaint
-    only (enforced again in the adapter)."""
+    only (enforced again in the adapter).
+
+    `flow_edit=False` for the acestep.cpp runtime: FlowEdit is a feature of the
+    Python pipeline's sampler and has no field in the C++ request schema, so
+    offering it there would be a control with nowhere to go."""
     choices = [
         {"value": "text2music", "label": "Generate"},
         {"value": "cover", "label": "Cover / restyle"},
@@ -1114,7 +1286,15 @@ def ace_task_params(full):
     params = [
         {"key": "task_type", "type": "enum", "label": "Task",
          "default": "text2music", "nullable": False, "choices": choices,
-         "help": "What to do with the source audio (if any)"},
+         # The stem-task caveat is measured, not hedging. On a clip of piano
+         # then drums (2026-09-04, XL SFT): asking for the keyboard track
+         # dropped the drums-only half by 5.3 dB while keeping the piano half —
+         # it responds to the track class — but nothing came back isolated.
+         # Cover and repaint, on the same plumbing, are exact.
+         "help": "What to do with the source audio (if any). Cover and "
+                 "repaint are precise. The three stem tasks are the model "
+                 "re-imagining a part rather than separating one — for a "
+                 "clean split, use a separation model instead"},
         {"key": "src_audio", "type": "audio", "label": "Source audio",
          "default": None, "nullable": True,
          "help": "Required for every task except Generate; output length "
@@ -1138,17 +1318,6 @@ def ace_task_params(full):
          "help": "How strongly the source shapes the result — lower (0.2) is "
                  "closer to pure style transfer. Applies to every task that "
                  "takes a source, not only Cover"},
-        {"key": "flow_edit_morph", "type": "bool", "label": "Morph",
-         "default": False, "nullable": False,
-         "help": "Rewrite the source from one description into another "
-                 "(FlowEdit). Needs a source audio file; works on the Turbo "
-                 "DiT, unlike extract/layer/complete"},
-        {"key": "flow_edit_source_caption", "type": "string",
-         "label": "Source description", "default": None, "nullable": True,
-         "placeholder": "e.g. upbeat electropop with a female vocal",
-         "help": "What the source is now — a morph travels from this "
-                 "description to the prompt. Left empty it morphs away from "
-                 "nothing in particular, which blurs the result"},
         {"key": "repainting_start", "type": "float",
          "label": "Repaint start (s)", "default": None, "nullable": True,
          "min": 0.0, "max": 600.0, "step": 0.1},
@@ -1156,6 +1325,23 @@ def ace_task_params(full):
          "default": None, "nullable": True, "min": -1.0, "max": 600.0,
          "step": 0.1},
     ]
+    if flow_edit:
+        # Back where they were before the flag existed: after the source
+        # strength, before the repaint window.
+        params[4:4] = [
+            {"key": "flow_edit_morph", "type": "bool", "label": "Morph",
+             "default": False, "nullable": False,
+             "help": "Rewrite the source from one description into another "
+                     "(FlowEdit). Needs a source audio file; works on the "
+                     "Turbo DiT, unlike extract/layer/complete"},
+            {"key": "flow_edit_source_caption", "type": "string",
+             "label": "Source description", "default": None,
+             "nullable": True,
+             "placeholder": "e.g. upbeat electropop with a female vocal",
+             "help": "What the source is now — a morph travels from this "
+                     "description to the prompt. Left empty it morphs away "
+                     "from nothing in particular, which blurs the result"},
+        ]
     if full:
         params.append(
             {"key": "track", "type": "enum", "label": "Track class",
@@ -1240,8 +1426,66 @@ ACESTEP_CPP_CORE = [
 ]
 
 
+# The XL-SFT LoRA pack, mirrored per-file from the DiffSynth release. Offered
+# on the acestep.cpp XL-SFT entry alone: these were trained against the XL SFT
+# checkpoint, and the runtime merges them straight into its quantised weights
+# (`adapter-merge.h` names Q8_0 and the K-quants). The same four repos feed the
+# diffsynthace family, so a user who has both pays for them once.
+ACESTEP_CPP_LORAS = {
+    "music": "rtikw/acestep15xlsft-lora-music",
+    "piano": "rtikw/acestep15xlsft-lora-piano",
+    "guitar": "rtikw/acestep15xlsft-lora-guitar",
+    "drums": "rtikw/acestep15xlsft-lora-drums",
+}
+
+
+def acestep_cpp_plan_params():
+    """The composer LM's own surface, which this runtime had all along.
+
+    Every one of these is a field of the C++ `AceRequest` struct
+    (`src/request.h`) that the adapter never filled: the facts the planner
+    would otherwise invent, its sampler, and the negative prompt that steers
+    the PLAN rather than the render. Scoped to text2music by ACE_TASK_SCOPE,
+    because the source-audio tasks skip the LM entirely.
+    """
+    return [
+        {"key": "keyscale", "type": "string", "label": "Key",
+         "default": None, "nullable": True, "placeholder": "e.g. F minor"},
+        {"key": "timesignature", "type": "string", "label": "Time signature",
+         "default": None, "nullable": True, "placeholder": "e.g. 4"},
+        {"key": "vocal_language", "type": "enum", "label": "Vocal language",
+         "default": None, "nullable": True,
+         "choices": [{"value": "en", "label": "English"},
+                     {"value": "de", "label": "German"},
+                     {"value": "es", "label": "Spanish"},
+                     {"value": "fr", "label": "French"},
+                     {"value": "ja", "label": "Japanese"},
+                     {"value": "ko", "label": "Korean"},
+                     {"value": "zh", "label": "Chinese"}]},
+        {"key": "negative_prompt", "type": "string",
+         "label": "Planner negative prompt", "default": None,
+         "nullable": True, "placeholder": "e.g. spoken word, applause",
+         "help": "What the composer should steer the PLAN away from — the "
+                 "arrangement it writes, not the sound of the render. It "
+                 "works through the planner's own guidance, below."},
+        {"key": "lm_temperature", "type": "float", "label": "Planner variety",
+         "default": None, "nullable": True, "min": 0.0, "max": 2.0,
+         "step": 0.05},
+        {"key": "lm_cfg_scale", "type": "float", "label": "Planner guidance",
+         "default": None, "nullable": True, "min": 1.0, "max": 8.0,
+         "step": 0.5},
+        {"key": "lm_top_p", "type": "float", "label": "Planner nucleus",
+         "default": None, "nullable": True, "min": 0.1, "max": 1.0,
+         "step": 0.05},
+    ]
+
+
 def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
-                      desc, notes=None):
+                      desc, notes=None, loras=False):
+    # Same rule the Python family follows, from the same place: the three stem
+    # tasks need a base or SFT DiT, and the turbo distillations cannot run
+    # them.
+    full_tasks = "turbo" not in dit_file
     caps = {
         "supports_lyrics": True, "instrumental_only": False,
         # The C++ runtime clamps duration to 600 itself (metadata-fsm.h:
@@ -1268,20 +1512,44 @@ def acestep_cpp_entry(id_, dit_file, name, fmt, steps, est, min_ram_gib, tier,
             {"key": "bpm", "type": "int", "label": "BPM", "default": None,
              "nullable": True, "min": 40, "max": 220},
             seed_param(),
+            *acestep_cpp_plan_params(),
+            *ace_task_params(full=full_tasks, flow_edit=False),
         ],
     }
+    repos = [{"repo_id": "Serveurperso/ACE-Step-1.5-GGUF", "gated": False,
+              "allow_patterns": ACESTEP_CPP_CORE + [dit_file]}]
+    settings = {"lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
+                "synth_model": dit_file,
+                "vae": "vae-BF16.gguf"}
+    if loras:
+        caps["params"] += [
+            {"key": "adapter", "type": "enum", "label": "Style LoRA",
+             "default": "none", "nullable": False,
+             "choices": ([{"value": "none", "label": "None"}]
+                         + [{"value": k, "label": k.title()}
+                            for k in ACESTEP_CPP_LORAS]),
+             "help": "A small trained overlay merged into the model before "
+                     "it renders. Each one pulls the whole model towards one "
+                     "kind of music — the instrument it is named for, played "
+                     "front and centre."},
+            {"key": "adapter_scale", "type": "float", "label": "LoRA strength",
+             "default": 1.0, "nullable": False, "min": 0.0, "max": 2.0,
+             "step": 0.05,
+             "help": "How much of the overlay is applied. 1.0 is the strength "
+                     "it was trained at; below that blends back towards the "
+                     "base model, above exaggerates it and can distort."},
+        ]
+        repos += [{"repo_id": repo, "gated": False}
+                  for repo in ACESTEP_CPP_LORAS.values()]
+        settings["adapters"] = dict(ACESTEP_CPP_LORAS)
     return entry(
-        id_, "acestepcpp",
-        [{"repo_id": "Serveurperso/ACE-Step-1.5-GGUF", "gated": False,
-          "allow_patterns": ACESTEP_CPP_CORE + [dit_file]}],
+        id_, "acestepcpp", repos,
         name, desc, caps, min_ram_gib, tier, ACE_MIT,
         notes=notes or ("Runs via acestep.cpp (GGML). The text encoder, "
                         "composer LM and VAE are shared between all GGUF "
                         "variants — only the DiT differs."),
         variant_of="acestep-base", format_=fmt,
-        settings={"lm_model": "acestep-5Hz-lm-4B-Q8_0.gguf",
-                  "synth_model": dit_file,
-                  "vae": "vae-BF16.gguf"})
+        settings=settings)
 
 
 # audiocraft's T5 conditioner loads t5-base by name; listing it as a
@@ -1343,7 +1611,11 @@ def magnet_entry(id_, repo, name, seconds, min_ram_gib, tier, est, desc,
 def audiocraft_musicgen_entry(id_, repo, name, min_ram_gib, tier, est, desc,
                               melody=False, style=False, notes=None,
                               license_=None):
-    caps = musicgen_caps(est=est, melody=melody, style=style)
+    # Continuation everywhere in this family: audiocraft's own
+    # `generate_continuation` lives on the base class, and melody/style ride a
+    # different conditioning slot, so a checkpoint can offer both.
+    caps = musicgen_caps(est=est, melody=melody, style=style,
+                         continuation=True)
     settings = {"kind": "musicgen"}
     if melody:
         settings["melody"] = True
@@ -1449,7 +1721,9 @@ NEW_ENTRIES = [
         "acestep-cpp-xl-sft", "acestep-v15-xl-sft-Q8_0.gguf",
         "ACE-Step 1.5 XL SFT (GGUF)", "GGUF · XL sft", 50, 5.0, 16, "slow",
         "The big supervised-finetuned DiT at full step count, quantized to "
-        "8-bit."),
+        "8-bit — and the only GGUF entry that takes the XL LoRA pack, which "
+        "was trained against exactly this checkpoint.",
+        loras=True),
     acestep_cpp_entry(
         "acestep-cpp-xl-base", "acestep-v15-xl-base-Q8_0.gguf",
         "ACE-Step 1.5 XL Base (GGUF)", "GGUF · XL base", 50, 5.0, 16, "slow",
@@ -1501,7 +1775,8 @@ NEW_ENTRIES = [
     # ---- MusicGen roster --------------------------------------------------
     entry("musicgen-large", "musicgen", ["facebook/musicgen-large"],
           "MusicGen Large", "Meta's biggest instrumental model — best quality, slowest.",
-          musicgen_caps(est=8.0), 24, "slow", CC_NC, format_="mono"),
+          musicgen_caps(est=8.0, continuation=True), 24, "slow", CC_NC,
+          format_="mono"),
     entry("musicgen-melody", "musicgen", ["facebook/musicgen-melody"],
           "MusicGen Melody",
           "Melody-conditioned MusicGen; also generates from text alone.",
@@ -1512,15 +1787,15 @@ NEW_ENTRIES = [
           musicgen_caps(est=8.0, melody=True), 32, "slow", CC_NC, format_="mono"),
     entry("musicgen-stereo-small", "musicgen", ["facebook/musicgen-stereo-small"],
           "MusicGen Small (stereo)", "Stereo decoder variant of MusicGen Small.",
-          musicgen_caps(est=2.0), 8, "fast", CC_NC,
+          musicgen_caps(est=2.0, continuation=True), 8, "fast", CC_NC,
           variant_of="musicgen-small", format_="stereo"),
     entry("musicgen-stereo-medium", "musicgen", ["facebook/musicgen-stereo-medium"],
           "MusicGen Medium (stereo)", "Stereo decoder variant of MusicGen Medium.",
-          musicgen_caps(est=4.5), 16, "medium", CC_NC,
+          musicgen_caps(est=4.5, continuation=True), 16, "medium", CC_NC,
           variant_of="musicgen-medium", format_="stereo"),
     entry("musicgen-stereo-large", "musicgen", ["facebook/musicgen-stereo-large"],
           "MusicGen Large (stereo)", "Stereo decoder variant of MusicGen Large.",
-          musicgen_caps(est=8.5), 24, "slow", CC_NC,
+          musicgen_caps(est=8.5, continuation=True), 24, "slow", CC_NC,
           variant_of="musicgen-large", format_="stereo"),
     entry("musicgen-stereo-melody", "musicgen", ["facebook/musicgen-stereo-melody"],
           "MusicGen Melody (stereo)", "Stereo variant of MusicGen Melody.",
@@ -1536,7 +1811,7 @@ NEW_ENTRIES = [
           ["pharoAIsanders420/micro-musicgen-jungle"],
           "Micro MusicGen Jungle",
           "Tiny community model for weird fast jungle textures — seconds per clip.",
-          musicgen_caps(est=0.8), 4, "fast", MIT,
+          musicgen_caps(est=0.8, continuation=True), 4, "fast", MIT,
           notes="Community model by Aaron Abebe; niche by design."),
     # ---- Stable Audio -----------------------------------------------------
     entry("stableaudio-open-10", "stableaudio",
@@ -1558,6 +1833,13 @@ NEW_ENTRIES = [
                   {"key": "cfg_scale", "type": "float", "label": "CFG scale",
                    "default": 7.0, "nullable": False, "min": 0.5, "max": 15.0,
                    "step": 0.5},
+                  # Worth having on this entry in particular: it is the one
+                  # Stable Audio that defaults to a guidance scale above 1, so
+                  # the negative branch is actually running here. On Open Small
+                  # (cfg 1.0) the DiT skips it entirely.
+                  {"key": "negative_prompt", "type": "string",
+                   "label": "Negative prompt", "default": None,
+                   "nullable": True, "placeholder": "low quality, distorted"},
                   # Null keeps the tool's default (v-DDIM here — acceptable
                   # per the 2026-09 audit); the choices are the v-objective
                   # samplers the pinned tool implements.
@@ -1576,8 +1858,22 @@ NEW_ENTRIES = [
               ],
           },
           16, "medium", STABILITY, gated=True,
+          # The adapter's own fallback for a caller that omits `cfg_scale`.
+          # Without it that caller got 1.0 — where this DiT skips guidance
+          # entirely, taking the negative prompt with it — while the entry
+          # above advertises 7.0.
+          settings={"cfg_scale_default": 7.0},
           notes="Accept the license on huggingface.co and add your token in Settings."),
     # ---- Stable Audio 3 ---------------------------------------------------
+    # Decision recorded 2026-09-03 (audit §7): the fifth sibling checkpoint,
+    # `stabilityai/stable-audio-3-optimized`, stays out of the catalog. It is
+    # not a new model — it is the same four DiTs re-exported for other runtimes
+    # (MLX f16 .npz, CPU-AMX .so, ONNX/TFLite), and the pinned stable-audio-3
+    # library has no loader for any of them (zero .npz/mlx references in the
+    # installed package). Adding it means writing a second inference path, not
+    # a catalog entry, and its pitch is speed on hardware we already serve.
+    # Worth revisiting only as a deliberate MLX port of the SA3 DiT — track it
+    # there, not here.
     entry("stableaudio3-small-music", "stableaudio3",
           ["stabilityai/stable-audio-3-small-music"],
           "Stable Audio 3 Small (Music)",
@@ -2032,6 +2328,42 @@ NEW_ENTRIES = [
                    "help": "How hard the stream is held to the style "
                            "embedding. Higher sticks to the prompt's "
                            "character; lower drifts more freely"},
+                  # The exported graph takes three conditioning channels and
+                  # only the style one was ever driven. These are the other
+                  # two — and the reason this model pairs with the MIDI half
+                  # of the app: hand it a part and it plays that part.
+                  {"key": "melody_midi", "type": "midi",
+                   "label": "Notes to play", "default": None,
+                   "nullable": True,
+                   "help": "A MIDI part the model should actually play. It "
+                           "follows the pitches and where they start; the "
+                           "style prompt still decides what it sounds like. "
+                           "Percussion tracks drive the drum switch below "
+                           "rather than the pitches."},
+                  {"key": "notes_guidance", "type": "float",
+                   "label": "Note strength", "default": 3.0,
+                   "nullable": False, "min": -1.0, "max": 7.0, "step": 0.5,
+                   "help": "How closely the notes are followed. High plays "
+                           "them almost literally; low treats them as a "
+                           "suggestion and keeps more of the style's own "
+                           "phrasing. Does nothing without a MIDI part."},
+                  {"key": "drums", "type": "enum", "label": "Drums",
+                   "default": "auto", "nullable": False,
+                   "choices": [
+                       {"value": "auto", "label": "Model decides"},
+                       {"value": "play", "label": "Keep drums playing"},
+                       {"value": "silent", "label": "No drums"}],
+                   "help": "A switch the model was trained with: whether "
+                           "percussion is playing at all. Left on automatic "
+                           "it follows the MIDI's own drum track if there is "
+                           "one, and is otherwise the model's choice."},
+                  {"key": "drums_guidance", "type": "float",
+                   "label": "Drum strength", "default": 3.0,
+                   "nullable": False, "min": -1.0, "max": 7.0, "step": 0.5,
+                   "help": "How firmly the drum switch is enforced. Does "
+                           "nothing while Drums is on automatic with no MIDI "
+                           "drum track."},
+                  seed_param(),
               ],
           },
           8, "fast",
@@ -2091,6 +2423,42 @@ NEW_ENTRIES = [
                    "help": "How hard the stream is held to the style "
                            "embedding. Higher sticks to the prompt's "
                            "character; lower drifts more freely"},
+                  # The exported graph takes three conditioning channels and
+                  # only the style one was ever driven. These are the other
+                  # two — and the reason this model pairs with the MIDI half
+                  # of the app: hand it a part and it plays that part.
+                  {"key": "melody_midi", "type": "midi",
+                   "label": "Notes to play", "default": None,
+                   "nullable": True,
+                   "help": "A MIDI part the model should actually play. It "
+                           "follows the pitches and where they start; the "
+                           "style prompt still decides what it sounds like. "
+                           "Percussion tracks drive the drum switch below "
+                           "rather than the pitches."},
+                  {"key": "notes_guidance", "type": "float",
+                   "label": "Note strength", "default": 3.0,
+                   "nullable": False, "min": -1.0, "max": 7.0, "step": 0.5,
+                   "help": "How closely the notes are followed. High plays "
+                           "them almost literally; low treats them as a "
+                           "suggestion and keeps more of the style's own "
+                           "phrasing. Does nothing without a MIDI part."},
+                  {"key": "drums", "type": "enum", "label": "Drums",
+                   "default": "auto", "nullable": False,
+                   "choices": [
+                       {"value": "auto", "label": "Model decides"},
+                       {"value": "play", "label": "Keep drums playing"},
+                       {"value": "silent", "label": "No drums"}],
+                   "help": "A switch the model was trained with: whether "
+                           "percussion is playing at all. Left on automatic "
+                           "it follows the MIDI's own drum track if there is "
+                           "one, and is otherwise the model's choice."},
+                  {"key": "drums_guidance", "type": "float",
+                   "label": "Drum strength", "default": 3.0,
+                   "nullable": False, "min": -1.0, "max": 7.0, "step": 0.5,
+                   "help": "How firmly the drum switch is enforced. Does "
+                           "nothing while Drums is on automatic with no MIDI "
+                           "drum track."},
+                  seed_param(),
               ],
           },
           12, "medium",
@@ -2105,6 +2473,20 @@ NEW_ENTRIES = [
           settings={"size": "mrt2_base"},
           size_hint_bytes=3_700_000_000),
     # ---- The song-generation spikes (CPU-honest estimates) ---------------
+    #
+    # Decision recorded 2026-09-03 (audit §7): SongGen's reference-CODE
+    # conditioning (melody / drum / vocal / acc token prompts) stays out, and
+    # not as a preference — it does not exist at inference at this pin. The
+    # processor really does build it: `processing_songgen.py` takes
+    # `refaudio_path` + `refaudio_type`, encodes the clip, applies the
+    # codebook delay and returns `model_inputs['ref_audio_ids']`. Nothing then
+    # reads it. Grepping the whole package, `ref_audio_ids` appears in exactly
+    # one file — the processor — and in `training/`; neither
+    # `modeling_songgen_mixed.py` nor `modeling_songgen_dual_track.py`
+    # mentions it, so the tensor would be built at real cost and dropped on
+    # the floor of `generate(**kwargs)`. It is a training-time label, exposed
+    # by a processor shared with the trainer. Revisit only if upstream wires
+    # it into the model's forward pass.
     entry("songgen-mixed-pro", "songgen",
           ["LiuZH-19/SongGen_mixed_pro",
            {"repo_id": "ZhenYe234/xcodec", "gated": False,
@@ -2160,7 +2542,9 @@ NEW_ENTRIES = [
           {
               "supports_lyrics": True, "instrumental_only": False,
               "duration": {"min_s": 10, "max_s": 210, "default_s": 60},
-              "sample_rate": 44100, "outputs_per_job_max": 1,
+              # 48 kHz is what the pinned inference actually writes — caught
+              # by the 2026-09 revalidation's file-vs-catalog assert.
+              "sample_rate": 48000, "outputs_per_job_max": 1,
               "est_seconds_per_audio_second": 11.0,
               # No [mm:ss.xx] timestamps: the model never parses them —
               # timestamped lines go through the phonemizer verbatim and
@@ -2192,6 +2576,7 @@ NEW_ENTRIES = [
                            "widened to a centred stereo pair (upstream's "
                            "default). Off keeps the honest mono at half "
                            "the size"},
+                  seed_param(),
               ],
           },
           16, "slow", APACHE,
@@ -2202,6 +2587,12 @@ NEW_ENTRIES = [
                 "2026-08-26 MPS port is unmeasured — the est still carries "
                 "the CPU baseline (11 s per song-second), so treat the "
                 "estimate as worst-case until a render lands."),
+    # Decision recorded 2026-09-03 (audit §7): InspireMusic's `instruct` flag
+    # stays unexposed permanently. It is a DEAD PARAMETER upstream — accepted
+    # by inference() (cli/inference.py:108) and never read anywhere in the
+    # pinned tree. There is nothing behind the knob, so this is not a "someday"
+    # item; do not re-litigate. (Quality mode / 48 kHz flow-matching remains a
+    # separate, still-open hold — that one is real, just unmeasured.)
     entry("inspiremusic-15b-long", "inspiremusic",
           ["rtikw/InspireMusic-1.5B-Long"],
           "InspireMusic 1.5B Long",
@@ -2245,6 +2636,7 @@ NEW_ENTRIES = [
                    "help": "The imagined end point on that timeline — "
                            "paired with the start, it frames the section's "
                            "place in the song"},
+                  seed_param(),
               ],
           },
           16, "medium", APACHE,
@@ -2376,11 +2768,32 @@ NEW_ENTRIES = [
                   {"key": "upper_codebook_mask", "type": "int",
                    "label": "Pinned codebooks", "default": 3,
                    "nullable": False, "min": 0, "max": 14},
-                  {"key": "beat_mask", "type": "bool",
-                   "label": "Protect the onsets", "default": False,
+                  # Was a bool meaning "onsets"; the adapter still accepts
+                  # that value, so presets written before the beat tracker
+                  # was wired up keep doing what they did.
+                  {"key": "beat_mask", "type": "enum",
+                   "label": "Keep in time with", "default": "off",
                    "nullable": False,
-                   "help": "Keep the tokens around detected note onsets so "
-                           "the rhythmic skeleton survives the vamp intact"},
+                   "choices": [
+                       {"value": "off", "label": "Nothing — vamp freely"},
+                       {"value": "onsets", "label": "Every note attack"},
+                       {"value": "beats", "label": "The beat"},
+                       {"value": "downbeats", "label": "The downbeat only"}],
+                   "help": "Which moments survive the vamp untouched. Note "
+                           "attacks keep every transient, which holds the "
+                           "rhythm tightly. The beat keeps the pulse and "
+                           "re-imagines everything between it — the groove "
+                           "stays, the playing changes. Downbeats keep only "
+                           "the top of each bar, which is the loosest of the "
+                           "three."},
+                  {"key": "time_stretch", "type": "int",
+                   "label": "Stretch", "default": 1, "nullable": False,
+                   "min": 1, "max": 4,
+                   "help": "Make the result this many times longer than the "
+                           "loop, by writing new material into the gaps "
+                           "rather than by slowing anything down. Pitch and "
+                           "timbre are untouched; the playing is invented. "
+                           "2 turns a bar into two bars of the same idea."},
                   {"key": "prefix_s", "type": "float",
                    "label": "Keep the start (s)", "default": 0.0,
                    "nullable": False, "min": 0.0, "max": 10.0, "step": 0.5,
@@ -2438,11 +2851,32 @@ NEW_ENTRIES = [
                   {"key": "upper_codebook_mask", "type": "int",
                    "label": "Pinned codebooks", "default": 3,
                    "nullable": False, "min": 0, "max": 14},
-                  {"key": "beat_mask", "type": "bool",
-                   "label": "Protect the onsets", "default": False,
+                  # Was a bool meaning "onsets"; the adapter still accepts
+                  # that value, so presets written before the beat tracker
+                  # was wired up keep doing what they did.
+                  {"key": "beat_mask", "type": "enum",
+                   "label": "Keep in time with", "default": "off",
                    "nullable": False,
-                   "help": "Keep the tokens around detected note onsets so "
-                           "the rhythmic skeleton survives the vamp intact"},
+                   "choices": [
+                       {"value": "off", "label": "Nothing — vamp freely"},
+                       {"value": "onsets", "label": "Every note attack"},
+                       {"value": "beats", "label": "The beat"},
+                       {"value": "downbeats", "label": "The downbeat only"}],
+                   "help": "Which moments survive the vamp untouched. Note "
+                           "attacks keep every transient, which holds the "
+                           "rhythm tightly. The beat keeps the pulse and "
+                           "re-imagines everything between it — the groove "
+                           "stays, the playing changes. Downbeats keep only "
+                           "the top of each bar, which is the loosest of the "
+                           "three."},
+                  {"key": "time_stretch", "type": "int",
+                   "label": "Stretch", "default": 1, "nullable": False,
+                   "min": 1, "max": 4,
+                   "help": "Make the result this many times longer than the "
+                           "loop, by writing new material into the gaps "
+                           "rather than by slowing anything down. Pitch and "
+                           "timbre are untouched; the playing is invented. "
+                           "2 turns a bar into two bars of the same idea."},
                   # Same in-fill controls as the base entry: the adapter
                   # serves them for every voice, and omitting them here made
                   # in-fill unreachable on the finetunes only (audit §2).
@@ -2528,6 +2962,18 @@ NEW_ENTRIES = [
                    "default": "euler", "nullable": False,
                    "choices": [{"value": "euler", "label": "Euler (fast)"},
                                {"value": "midpoint", "label": "Midpoint"}]},
+                  # Guidance lives on the flow model as a field rather than a
+                  # generation parameter, which is why it was never reachable.
+                  # Null keeps whatever the checkpoint was released with.
+                  {"key": "cfg_coef", "type": "float", "label": "Guidance",
+                   "default": None, "nullable": True, "min": 0.0, "max": 10.0,
+                   "step": 0.5,
+                   "help": "How hard the model is pushed towards your words. "
+                           "Left blank it uses the checkpoint's own value. On "
+                           "an edit it only steers the pass that travels "
+                           "towards the new description — the pass that "
+                           "reads the source is unguided by design."},
+                  seed_param(),
               ],
           },
           8, "fast", CC_NC,
@@ -2542,13 +2988,16 @@ NEW_ENTRIES = [
     entry("audioldm2-music", "diffusers", ["cvssp/audioldm2-music"],
           "AudioLDM 2 Music",
           "Music-specialised AudioLDM 2 — text-to-music at 16 kHz.",
-          diffusers_caps(30, 10, 100, 3.5), 12, "medium", CC_NC_SA),
+          diffusers_caps(30, 10, 100, 3.5, best_of=True), 12, "medium",
+          CC_NC_SA),
     entry("audioldm2", "diffusers", ["cvssp/audioldm2"],
           "AudioLDM 2", "General text-to-audio; handles musical prompts.",
-          diffusers_caps(30, 10, 100, 3.5), 12, "medium", CC_NC_SA),
+          diffusers_caps(30, 10, 100, 3.5, best_of=True), 12, "medium",
+          CC_NC_SA),
     entry("audioldm2-large", "diffusers", ["cvssp/audioldm2-large"],
           "AudioLDM 2 Large", "Larger AudioLDM 2 — better quality, slower.",
-          diffusers_caps(30, 10, 100, 3.5, est=5.0), 16, "slow", CC_NC_SA),
+          diffusers_caps(30, 10, 100, 3.5, est=5.0, best_of=True), 16, "slow",
+          CC_NC_SA),
     entry("audioldm-s", "diffusers", ["cvssp/audioldm-s-full-v2"],
           "AudioLDM Small", "The original AudioLDM, small and quick.",
           diffusers_caps(20, 10, 50, 2.5, est=1.5), 8, "fast", CC_NC_SA),
@@ -2557,7 +3006,8 @@ NEW_ENTRIES = [
           diffusers_caps(20, 10, 50, 2.5, est=2.0), 8, "fast", CC_NC_SA),
     entry("musicldm", "diffusers", ["ucsd-reach/musicldm"],
           "MusicLDM", "AudioLDM retrained on music (beat-synchronous mixup).",
-          diffusers_caps(20, 10, 100, 2.0, est=2.5), 8, "medium", CC_NC_SA),
+          diffusers_caps(20, 10, 100, 2.0, est=2.5, best_of=True), 8, "medium",
+          CC_NC_SA),
     # ---- Split & Recombine: stem separation ------------------------------
     task_entry(
         "separation-htdemucs", "separation", [],
@@ -2681,6 +3131,7 @@ NEW_ENTRIES = [
         "Weights (~127 MB) fetch on first run.",
         task_caps(["separate"], [
             source_audio_param("The recording to clean up"),
+            *vr_cleanup_params(),
         ], est_realtime_factor=1.3),
         8, "medium",
         {"name": "UVR community (no formal license)", "commercial_use": False,
@@ -2698,6 +3149,7 @@ NEW_ENTRIES = [
         "Weights (~224 MB) fetch on first run.",
         task_caps(["separate"], [
             source_audio_param("The recording to dry out"),
+            *vr_cleanup_params(),
         ], est_realtime_factor=10.0),
         8, "slow",
         {"name": "UVR community (no formal license)", "commercial_use": False,
@@ -2762,6 +3214,65 @@ NEW_ENTRIES = [
         notes="Credit: Ultimate Vocal Remover (Anjok07 & aufr33).",
         settings={"engine": "roformer",
                   "checkpoint": "UVR_MDXNET_KARA_2.onnx"}),
+    # ---- Split & Recombine: ensembles -------------------------------------
+    #
+    # The biggest quality lever in separation, and the one thing every serious
+    # UVR workflow does that this app could not: run several models over the
+    # same track and combine their stems. audio-separator ships the presets
+    # (models + combining algorithm, chosen together — `min_fft` keeps only
+    # what every model agreed on, `max_spec` keeps anything any of them
+    # found), so the card is a chooser rather than a pile of knobs.
+    #
+    # One card rather than nine: they share a runtime and differ only in which
+    # models run, which is what a parameter is for. The models download on
+    # first use, as everything else in this family does.
+    task_entry(
+        "separation-ensemble", "separation", [],
+        "Ensemble separation (UVR)",
+        "Runs several separators over the same track and combines their "
+        "stems — consistently cleaner than any single model, and several "
+        "times slower. Each preset picks both the models and how their "
+        "answers are combined: 'clean' keeps only what they all agreed on, "
+        "'full' keeps anything any of them found. Models fetch on first run.",
+        task_caps(["separate"], [
+            source_audio_param("The song to separate"),
+            {"key": "ensemble_preset", "type": "enum", "label": "Preset",
+             "default": "vocal_balanced", "nullable": False,
+             "choices": [
+                 {"value": "vocal_balanced", "label": "Vocals — balanced"},
+                 {"value": "vocal_clean",
+                  "label": "Vocals — clean (fewest artefacts)"},
+                 {"value": "vocal_full",
+                  "label": "Vocals — full (keeps every breath)"},
+                 {"value": "vocal_rvc", "label": "Vocals — for voice cloning"},
+                 {"value": "instrumental_balanced",
+                  "label": "Instrumental — balanced"},
+                 {"value": "instrumental_clean",
+                  "label": "Instrumental — clean"},
+                 {"value": "instrumental_full",
+                  "label": "Instrumental — full"},
+                 {"value": "instrumental_low_resource",
+                  "label": "Instrumental — light on memory"},
+                 {"value": "karaoke",
+                  "label": "Karaoke (three models, keeps backing vocals)"}],
+             "help": "Which models run and how their stems are combined. "
+                     "'Clean' presets keep only what the models agreed on, "
+                     "so bleed is rare and quiet detail can go missing; "
+                     "'full' presets keep anything any model found, so "
+                     "nothing is lost and a little bleed survives."},
+        ], est_realtime_factor=6.0),
+        12, "slow",
+        {"name": "UVR community (no formal license)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://github.com/nomadkaraoke/python-audio-separator"},
+        size_hint_bytes=400_000_000,
+        variant_of="separation-melband-vocals", format_="ensemble · 2–3 models",
+        notes="Every preset downloads two or three separators the first time "
+              "it runs, so the first render of a preset is slow and the "
+              "figure above is an estimate. Credit: Ultimate Vocal Remover "
+              "(Anjok07 & aufr33) for the models, python-audio-separator for "
+              "the ensembling.",
+        settings={"engine": "roformer"}),
     # ---- Split & Recombine: research separation (msst family) ------------
     task_entry(
         "separation-bsrnn", "msst", ["rtikw/bsrnn-large"],
@@ -2799,6 +3310,7 @@ NEW_ENTRIES = [
         "commercial release. Weights fetch from GitHub on first run.",
         task_caps(["separate"], [
             source_audio_param("The song to split into stems"),
+            *msst_params(),
         ], est_realtime_factor=2.5),
         8, "slow",
         {"name": "MIT (code) / MUSDB18-trained weights",
@@ -2825,6 +3337,7 @@ NEW_ENTRIES = [
         task_caps(["separate"], [
             source_audio_param("The song to split into "
                                "vocals + instrumental"),
+            *msst_params(extract_instrumental=True),
         ], est_realtime_factor=7.0),
         8, "slow",
         {"name": "MIT (code); checkpoint license unstated",
@@ -2851,6 +3364,7 @@ NEW_ENTRIES = [
         "fetch from GitHub on first run.",
         task_caps(["separate"], [
             source_audio_param("The song to split into stems"),
+            *msst_params(),
         ], est_realtime_factor=5.0),
         12, "slow",
         {"name": "MIT (code) / MUSDB18-trained weights",
@@ -2878,6 +3392,7 @@ NEW_ENTRIES = [
         task_caps(["separate"], [
             source_audio_param("A drum stem — run a 4-stem split first "
                                "and feed the drums in"),
+            *msst_params(),
         ], est_realtime_factor=7.0),
         8, "slow",
         {"name": "MIT (code); community checkpoint (aufr33 + jarredou)",
@@ -2971,6 +3486,20 @@ NEW_ENTRIES = [
         "grades. Weights (~30 MB) fetch on first run.",
         task_caps(["analyze"], [
             source_audio_param("The audio to score"),
+            # SQUIM's subjective half predicts a listening-test score, and it
+            # cannot do it from the audio alone: the model was trained to
+            # compare against a *non-matching* reference — any clean recording
+            # of the same broad kind, not the same performance. No reference,
+            # no MOS, which is why this is nullable and why the card still
+            # works untouched.
+            {"key": "reference_audio", "type": "audio",
+             "label": "Reference recording", "default": None, "nullable": True,
+             "help": "Optional. A recording you consider good — it does not "
+                     "have to be the same music, only the same kind of thing "
+                     "recorded well. Adding one unlocks a predicted listening "
+                     "score (MOS, 1–5) alongside the technical numbers, and "
+                     "fetches a second 360 MB model the first time you use "
+                     "it."},
         ], est_realtime_factor=0.3),
         4, "fast",
         {"name": "BSD-2-Clause (torchaudio)", "commercial_use": True,
@@ -3064,6 +3593,22 @@ NEW_ENTRIES = [
                      "already downloaded, search TONE3000 for a new one, or "
                      "add a .nam file of your own — including a capture you "
                      "made yourself with NAM's trainer"},
+            # The two controls every re-amp rig has and this one did not.
+            {"key": "mix", "type": "float", "label": "Amp mix",
+             "default": 1.0, "nullable": False, "min": 0.0, "max": 1.0,
+             "step": 0.05,
+             "help": "How much of the amp you hear against the untouched "
+                     "track. 1 is the amp alone; blending some dry signal "
+                     "back in is how a heavily distorted guitar or a parallel "
+                     "bass channel keeps its attack and its low end."},
+            {"key": "loudness_match", "type": "bool",
+             "label": "Match capture loudness", "default": False,
+             "nullable": False,
+             "help": "Level the result to the same reference every capture is "
+                     "measured against, so two rigs can be compared on tone "
+                     "instead of on how hot they happened to be recorded. "
+                     "Uses the loudness the capture's own author stored in "
+                     "the file; a capture that carries none is left alone."},
         ], est_realtime_factor=0.05),
         4, "fast", MIT, size_hint_bytes=5_000_000,
         notes="The NAM runtime is MIT; each capture carries its own terms on "
@@ -3112,6 +3657,7 @@ NEW_ENTRIES = [
              "help": "How hard the conversion is pushed toward the "
                      "reference voice — higher is a closer imitation, "
                      "lower keeps more of the source delivery"},
+            seed_param(),
         ], est_realtime_factor=4.5),
         8, "slow",
         {"name": "GPL-3.0 (code); weights via Hugging Face",
@@ -3142,14 +3688,29 @@ NEW_ENTRIES = [
              "default": 30, "nullable": False, "min": 4, "max": 100,
              "help": "Diffusion passes. 30 is the upstream default; more "
                      "refines the timbre and takes proportionally longer"},
+            # The wrapper has two conversion paths and only one was wired up.
+            {"key": "mode", "type": "enum", "label": "What to convert",
+             "default": "full", "nullable": False,
+             "choices": [
+                 {"value": "full", "label": "Voice and delivery"},
+                 {"value": "timbre", "label": "Voice only (keep the timing)"}],
+             "help": "'Voice and delivery' re-speaks the line in the target "
+                     "voice and may re-phrase it. 'Voice only' skips that "
+                     "stage entirely: the timing, phrasing and expression of "
+                     "your recording are kept exactly, and only the timbre "
+                     "changes. Faster, and the right choice for anything "
+                     "that has to stay in time."},
             {"key": "convert_style", "type": "bool", "label": "Copy style",
              "default": False, "nullable": False,
              "help": "Also carry the reference's emotion, accent and "
-                     "delivery — not just the timbre"},
+                     "delivery — not just the timbre. Part of the stage "
+                     "'Voice only' skips, so it does nothing there"},
             {"key": "anonymize", "type": "bool", "label": "Anonymize only",
              "default": False, "nullable": False,
              "help": "Strip the speaker's identity instead of imitating "
-                     "the reference — the output is a neutral voice"},
+                     "the reference — the output is a neutral voice. Part of "
+                     "the stage 'Voice only' skips, so it does nothing "
+                     "there"},
             {"key": "similarity_cfg_rate", "type": "float",
              "label": "Voice similarity", "default": 0.7, "nullable": False,
              "min": 0.0, "max": 1.0, "step": 0.05,
@@ -3159,12 +3720,15 @@ NEW_ENTRIES = [
              "label": "Clarity", "default": 0.7, "nullable": False,
              "min": 0.0, "max": 1.0, "step": 0.05,
              "help": "How hard the words are held onto — raise it if the "
-                     "conversion mumbles, lower it for a looser read"},
+                     "conversion mumbles, lower it for a looser read. Part of "
+                     "the stage 'Voice only' skips, so it does nothing "
+                     "there"},
             {"key": "length_adjust", "type": "float",
              "label": "Length stretch", "default": 1.0, "nullable": False,
              "min": 0.5, "max": 2.0, "step": 0.05,
              "help": "Stretch factor of the converted performance — below "
                      "1 speeds the delivery up, above 1 slows it down"},
+            seed_param(),
         ], est_realtime_factor=6.0),
         8, "slow",
         {"name": "GPL-3.0 (code); weights via Hugging Face",
@@ -3264,6 +3828,18 @@ NEW_ENTRIES = [
              "default": 5, "nullable": False, "min": 1, "max": 15,
              "help": "How many labels to keep for each of genre, mood and "
                      "instrumentation"},
+            # The model has no vocabulary of its own — every tag it returns is
+            # a cosine against a sentence — so the three curated lists are a
+            # default, not a limit. This is the way out of them.
+            {"key": "labels", "type": "string", "label": "Your own labels",
+             "default": None, "nullable": True,
+             "placeholder": "comma separated, e.g. bagpipes, recorded in a "
+                            "garage, 1970s",
+             "help": "Score labels you write instead of the built-in genre, "
+                     "mood and instrument lists. Anything can be a label — an "
+                     "instrument, a decade, a production style — and every one "
+                     "comes back with its score, best first. Phrases beat "
+                     "single words."},
         ], est_realtime_factor=0.05),
         4, "fast", APACHE, featured=True,
         settings={"embed": "clap", "tagger": "zeroshot"},
@@ -3296,7 +3872,45 @@ NEW_ENTRIES = [
         notes="Non-commercial: MTG licenses the models CC BY-NC-SA and "
               "offers commercial terms on request. The 400-style genre "
               "vocabulary is Discogs's own taxonomy — expect precise "
-              "electronic-music subgenres in particular."),
+              "electronic-music subgenres in particular.",
+        # Named explicitly since the Jamendo heads joined the adapter's table:
+        # an entry with no list loads every head there is, and this card is
+        # the Discogs one.
+        settings={"heads": ["genre", "mood_happy", "mood_sad", "mood_party",
+                            "mood_aggressive", "mood_relaxed", "danceability",
+                            "voice_instrumental", "mood_acoustic",
+                            "mood_electronic", "timbre", "tonal_atonal",
+                            "approachability", "engagement"]}),
+    task_entry(
+        "tag-essentia-jamendo", "essentia", [],
+        "Mood, theme & instrument tags (Jamendo)",
+        "The same one-pass embedding read by MTG's Jamendo heads instead of "
+        "the Discogs one — a library's vocabulary rather than a record "
+        "shop's. 56 moods and themes (melancholic, epic, film, "
+        "documentary), 40 instruments heard in the mix, 87 genres and "
+        "Jamendo's own top-50 tags. Multi-label: a track is allowed to be "
+        "several things at once. Weights (~25 MB) fetch from UPF on first "
+        "run.",
+        task_caps(["tag"], [
+            source_audio_param("The audio to tag"),
+            {"key": "top_n", "type": "int", "label": "Tags per set",
+             "default": 5, "nullable": False, "min": 1, "max": 15,
+             "help": "How many labels to keep from each of the four sets, "
+                     "best first. Anything the model is less than 10% "
+                     "confident of is dropped whatever this is set to"},
+        ], est_realtime_factor=0.15),
+        4, "fast",
+        {"name": "CC BY-NC-SA 4.0 (MTG/UPF)", "commercial_use": False,
+         "requires_hf_token": False,
+         "url": "https://essentia.upf.edu/models.html"},
+        size_hint_bytes=22_000_000,
+        variant_of="tag-essentia-discogs", format_="Jamendo taxonomy",
+        notes="Shares the Discogs-EffNet embedding with the card above, and "
+              "the embedding cache with it — tagging a track both ways costs "
+              "one pass over the audio, not two. Same non-commercial MTG "
+              "licence.",
+        settings={"heads": ["jamendo_moodtheme", "jamendo_instrument",
+                            "jamendo_genre", "jamendo_top50"]}),
     # ---- Music to words: the listeners (MLX) -----------------------------
     #
     # Whisper for the sung words, Qwen2-Audio for everything you would ask a
@@ -3327,6 +3941,7 @@ NEW_ENTRIES = [
              "help": "Two-letter code (en, fr, ja). Left blank the model "
                      "detects it, which is usually right and occasionally "
                      "confident and wrong"},
+            *whisper_params(),
         ], est_realtime_factor=0.08),
         4, "fast", WHISPER_MIT, featured=True,
         settings={"engine": "whisper"},
@@ -3356,6 +3971,7 @@ NEW_ENTRIES = [
             {"key": "language", "type": "string", "label": "Language",
              "default": None, "nullable": True, "placeholder": "auto",
              "help": "Two-letter code (en, fr, ja); blank to detect"},
+            *whisper_params(),
         ], est_realtime_factor=0.12),
         6, "fast", WHISPER_MIT,
         variant_of="lyrics-whisper-turbo", format_="fp16",
@@ -3509,7 +4125,7 @@ NEW_ENTRIES = [
                      "writes a full analysis: genre, instrumentation, "
                      "tempo, key, structure"},
             {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
-             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "default": 6144, "nullable": False, "min": 256, "max": 8192,
              "help": "Token budget for reasoning plus answer. A Thinking "
                      "model spends most of it reasoning — raise this if "
                      "the answer arrives cut off"},
@@ -3538,7 +4154,7 @@ NEW_ENTRIES = [
                      "writes a full analysis: genre, instrumentation, "
                      "tempo, key, structure"},
             {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
-             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "default": 6144, "nullable": False, "min": 256, "max": 8192,
              "help": "Token budget for reasoning plus answer. A Thinking "
                      "model spends most of it reasoning — raise this if "
                      "the answer arrives cut off"},
@@ -3567,7 +4183,7 @@ NEW_ENTRIES = [
                      "writes a full analysis: genre, instrumentation, "
                      "tempo, key, structure"},
             {"key": "max_new_tokens", "type": "int", "label": "Max tokens",
-             "default": 3072, "nullable": False, "min": 256, "max": 8192,
+             "default": 6144, "nullable": False, "min": 256, "max": 8192,
              "help": "Token budget for the answer (this edition answers "
                      "directly, without a visible reasoning pass)"},
         ], est_realtime_factor=1.0),
@@ -3631,11 +4247,29 @@ NEW_ENTRIES = [
             {"key": "prompt", "type": "string", "label": "Description or ABC",
              "default": None, "nullable": True,
              "placeholder": "X:1\nT:My tune\nM:4/4\nK:D\n…",
-             "help": "Paste ABC notation to continue in its style, or "
-                     "describe the piece you want"},
+             "help": "Paste ABC notation to continue in its style, describe "
+                     "the piece you want, or ask a question about music"},
+            # This checkpoint is a music-THEORY model as well as a notation
+            # one, and both of the adapter's prompt templates ended with
+            # "reply with ABC notation only" — so the half of it that answers
+            # questions was suppressed and then discarded by the ABC cleaner.
+            # `auto` keeps the old guess-from-the-prompt behaviour.
+            {"key": "mode", "type": "enum", "label": "What to do",
+             "default": "auto", "nullable": False,
+             "choices": [
+                 {"value": "auto", "label": "Work it out from what I typed"},
+                 {"value": "compose", "label": "Write a tune from a "
+                                               "description"},
+                 {"value": "continue", "label": "Write another like this one"},
+                 {"value": "ask", "label": "Answer a question about music"}],
+             "help": "Left on automatic, notation you paste is continued and "
+                     "anything else is read as a description. Ask-a-question "
+                     "is the model's other half: music theory, harmony, form, "
+                     "and analysis of a tune you paste under the question. It "
+                     "answers in words and returns no notes."},
             {"key": "max_tokens", "type": "int", "label": "Length limit",
              "default": 1024, "nullable": False, "min": 64, "max": 2048,
-             "help": "How long the notation may run before it is cut off"},
+             "help": "How long the reply may run before it is cut off"},
             {"key": "temperature", "type": "float", "label": "Variety",
              "default": 0.7, "nullable": False, "min": 0.0, "max": 1.5,
              "step": 0.05,
@@ -3662,15 +4296,18 @@ NEW_ENTRIES = [
              "default": "generate", "nullable": False,
              "choices": [{"value": "generate", "label": "From nothing"},
                          {"value": "continue", "label": "Continue the notes"},
-                         {"value": "infill", "label": "Fill a gap"}],
+                         {"value": "infill", "label": "Fill a gap"},
+                         {"value": "accompany", "label": "Play along with it"}],
              "help": "Continue picks up where the MIDI part stops; "
                      "fill-a-gap rewrites only the window below, keeping "
-                     "the notes on both sides. Both need a MIDI file; "
-                     "the result always includes the input notes"},
+                     "the notes on both sides; play-along writes a second "
+                     "part underneath the whole melody, hearing it as it "
+                     "goes. All three need a MIDI file; the result always "
+                     "includes the input notes"},
             {"key": "melody_midi", "type": "midi", "label": "Notes to extend",
              "default": None, "nullable": True,
-             "help": "The MIDI part to continue or fill — a transcription "
-                     "or an earlier composition both work"},
+             "help": "The MIDI part to continue, fill or play along with — a "
+                     "transcription or an earlier composition both work"},
             {"key": "gap_start_s", "type": "float", "label": "Gap start (s)",
              "default": None, "nullable": True, "min": 0.0, "max": 600.0,
              "step": 0.5,
@@ -3684,11 +4321,13 @@ NEW_ENTRIES = [
              "default": 15.0, "nullable": False, "min": 5.0, "max": 60.0,
              "step": 5.0,
              "help": "How many seconds of music to compose (from-nothing "
-                     "and continue). Time is musical output length, not "
+                     "and continue). Play-along takes its length from the "
+                     "melody instead. Time is musical output length, not "
                      "render time"},
             {"key": "top_p", "type": "float", "label": "Top-P",
              "default": 0.98, "nullable": False, "min": 0.8, "max": 1.0,
              "step": 0.01},
+            seed_param(),
         ], est_realtime_factor=15.0),
         8, "slow", APACHE,
         variant_of="compose-text2music", format_="MIDI events · AMT",
@@ -3707,15 +4346,18 @@ NEW_ENTRIES = [
              "default": "generate", "nullable": False,
              "choices": [{"value": "generate", "label": "From nothing"},
                          {"value": "continue", "label": "Continue the notes"},
-                         {"value": "infill", "label": "Fill a gap"}],
+                         {"value": "infill", "label": "Fill a gap"},
+                         {"value": "accompany", "label": "Play along with it"}],
              "help": "Continue picks up where the MIDI part stops; "
                      "fill-a-gap rewrites only the window below, keeping "
-                     "the notes on both sides. Both need a MIDI file; "
-                     "the result always includes the input notes"},
+                     "the notes on both sides; play-along writes a second "
+                     "part underneath the whole melody, hearing it as it "
+                     "goes. All three need a MIDI file; the result always "
+                     "includes the input notes"},
             {"key": "melody_midi", "type": "midi", "label": "Notes to extend",
              "default": None, "nullable": True,
-             "help": "The MIDI part to continue or fill — a transcription "
-                     "or an earlier composition both work"},
+             "help": "The MIDI part to continue, fill or play along with — a "
+                     "transcription or an earlier composition both work"},
             {"key": "gap_start_s", "type": "float", "label": "Gap start (s)",
              "default": None, "nullable": True, "min": 0.0, "max": 600.0,
              "step": 0.5,
@@ -3729,11 +4371,13 @@ NEW_ENTRIES = [
              "default": 15.0, "nullable": False, "min": 5.0, "max": 60.0,
              "step": 5.0,
              "help": "How many seconds of music to compose (from-nothing "
-                     "and continue). Time is musical output length, not "
+                     "and continue). Play-along takes its length from the "
+                     "melody instead. Time is musical output length, not "
                      "render time"},
             {"key": "top_p", "type": "float", "label": "Top-P",
              "default": 0.98, "nullable": False, "min": 0.8, "max": 1.0,
              "step": 0.01},
+            seed_param(),
         ], est_realtime_factor=40.0),
         12, "slow", APACHE,
         variant_of="compose-anticipation", format_="MIDI events · medium",
@@ -3844,7 +4488,24 @@ NEW_ENTRIES = [
              "label": "Instrument name", "default": None, "nullable": True,
              "placeholder": "guitar",
              "help": "Names the resulting notes part"},
-                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+            # The model's two decision thresholds, at its own defaults. They
+            # fail in opposite directions, which is why both are offered
+            # rather than one "sensitivity" dial standing in for both.
+            {"key": "onset_threshold", "type": "float",
+             "label": "Note sensitivity", "default": 0.5, "nullable": False,
+             "min": 0.05, "max": 0.95, "step": 0.05,
+             "help": "How sure the model must be that a note STARTED. Lower "
+                     "it to catch quiet or legato playing it is missing; "
+                     "raise it when the transcript is full of notes nobody "
+                     "played."},
+            {"key": "frame_threshold", "type": "float",
+             "label": "Note sustain", "default": 0.3, "nullable": False,
+             "min": 0.05, "max": 0.95, "step": 0.05,
+             "help": "How sure it must be that a note is still SOUNDING. "
+                     "Lower gives longer, more joined-up notes and can smear "
+                     "fast passages; higher gives shorter, cleaner ones and "
+                     "can chop a held note into several."},
+            {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
              "default": False, "nullable": False,
              "help": "Also write each note track as ABC notation text — a "
                      "readable sketch, and the input the notation composers "
@@ -3929,7 +4590,22 @@ NEW_ENTRIES = [
         task_caps(["transcribe"], [
             source_audio_param("Monophonic audio — a vocals stem or a "
                                "single-instrument line"),
-                    {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
+            # 0.9 was hardcoded in the adapter. Strict is right for a full
+            # mix and wrong for a quiet line, and there was no way to say so.
+            {"key": "confidence", "type": "float",
+             "label": "Pitch confidence", "default": 0.9, "nullable": False,
+             "min": 0.1, "max": 0.99, "step": 0.05,
+             "help": "How certain the tracker must be before it calls "
+                     "something a pitch. High ignores breath, room and "
+                     "bleed — and quiet singing with them; lower it when a "
+                     "soft or breathy line is coming back empty."},
+            {"key": "min_note_s", "type": "float",
+             "label": "Shortest note (s)", "default": 0.05, "nullable": False,
+             "min": 0.02, "max": 0.5, "step": 0.01,
+             "help": "Anything shorter than this is not a note. Raise it to "
+                     "drop the flickers a slide or a vibrato leaves behind; "
+                     "lower it for fast, deliberately short phrasing."},
+            {"key": "emit_abc", "type": "bool", "label": "Also write ABC",
              "default": False, "nullable": False,
              "help": "Also write each note track as ABC notation text — a "
                      "readable sketch, and the input the notation composers "
@@ -3947,6 +4623,49 @@ NEW_ENTRIES = [
             {"key": "midi_file", "type": "midi", "label": "Notes",
              "default": None, "nullable": False,
              "help": "The MIDI part to render"},
+            # Every transcriber in the app writes its notes as program 0, so
+            # until now everything played back as a piano whatever it had
+            # been. Left blank the file plays as written, which is what a
+            # multi-instrument MT3 transcription wants.
+            {"key": "instrument", "type": "enum", "label": "Instrument",
+             "default": None, "nullable": True,
+             "choices": [
+                 {"value": "grand_piano", "label": "Grand piano"},
+                 {"value": "electric_piano", "label": "Electric piano"},
+                 {"value": "harpsichord", "label": "Harpsichord"},
+                 {"value": "music_box", "label": "Music box"},
+                 {"value": "vibraphone", "label": "Vibraphone"},
+                 {"value": "marimba", "label": "Marimba"},
+                 {"value": "drawbar_organ", "label": "Organ (drawbar)"},
+                 {"value": "church_organ", "label": "Organ (church)"},
+                 {"value": "accordion", "label": "Accordion"},
+                 {"value": "nylon_guitar", "label": "Nylon guitar"},
+                 {"value": "steel_guitar", "label": "Steel guitar"},
+                 {"value": "jazz_guitar", "label": "Jazz guitar"},
+                 {"value": "clean_electric_guitar",
+                  "label": "Electric guitar (clean)"},
+                 {"value": "overdriven_guitar",
+                  "label": "Electric guitar (overdriven)"},
+                 {"value": "acoustic_bass", "label": "Upright bass"},
+                 {"value": "electric_bass", "label": "Electric bass"},
+                 {"value": "synth_bass", "label": "Synth bass"},
+                 {"value": "violin", "label": "Violin"},
+                 {"value": "cello", "label": "Cello"},
+                 {"value": "string_ensemble", "label": "String section"},
+                 {"value": "choir", "label": "Choir"},
+                 {"value": "trumpet", "label": "Trumpet"},
+                 {"value": "trombone", "label": "Trombone"},
+                 {"value": "alto_sax", "label": "Saxophone"},
+                 {"value": "flute", "label": "Flute"},
+                 {"value": "square_lead", "label": "Synth lead (square)"},
+                 {"value": "saw_lead", "label": "Synth lead (saw)"},
+                 {"value": "warm_pad", "label": "Synth pad"},
+                 {"value": "sitar", "label": "Sitar"},
+                 {"value": "steel_drums", "label": "Steel drums"}],
+             "help": "Play every part with this instrument instead of "
+                     "whatever the file asks for. Left blank the file plays "
+                     "as written — which for anything the app transcribed "
+                     "means a piano. Drum tracks are never substituted."},
             {"key": "gain_db", "type": "float", "label": "Gain",
              "default": 0.0, "nullable": False, "min": -12.0, "max": 12.0,
              "step": 0.5},
@@ -3974,19 +4693,67 @@ def main() -> None:
     kept = [m for m in catalog["models"] if m["id"] not in generated]
 
     # hand-written entries pick up format/variant grouping tweaks
+    #
+    # …and any controls added to the generated half that they should share.
+    # The six hand-written entries survive regeneration untouched by design,
+    # which also means a param added to a shared `*_caps` helper never reaches
+    # them. Grafting is keyed by param key throughout, so re-running is a
+    # no-op rather than a duplication.
+    def graft(model: dict, *params: dict) -> None:
+        have = {p["key"] for p in model["capabilities"]["params"]}
+        model["capabilities"]["params"] += [
+            copy.deepcopy(p) for p in params if p["key"] not in have]
+
     for m in kept:
         if m["id"] == "musicgen-small" or m["id"] == "musicgen-medium":
             m["format"] = "mono"
+            # Trained continuation, same as the generated MusicGen entries.
+            # Both are plain (non-melody) transformers checkpoints, which is
+            # exactly where the audio slot means "continue this".
+            graft(m, continue_param())
+        if m["id"] == "stableaudio-small":
+            # Inert at this entry's default guidance of 1.0 — the DiT skips
+            # the guided branch entirely there — and live the moment guidance
+            # is raised, which is the whole reason it is worth having.
+            graft(m, {"key": "negative_prompt", "type": "string",
+                      "label": "Negative prompt", "default": None,
+                      "nullable": True,
+                      "placeholder": "low quality, distorted",
+                      "help": "What to steer away from. This model defaults "
+                              "to guidance 1.0, where the model ignores both "
+                              "prompts equally — raise CFG scale above 1 for "
+                              "this to do anything."})
+        if m["id"] == "yue":
+            # In-context learning: YuE's own style-reference route, the same
+            # shape as SongBloom's style_audio.
+            graft(m,
+                  {"key": "style_audio", "type": "audio",
+                   "label": "Sound like this", "default": None,
+                   "nullable": True,
+                   "help": "A recording whose style the song should take on. "
+                           "The model listens to the window below before it "
+                           "writes, so the take comes out in that idiom — "
+                           "voice, production and all. Use music you have "
+                           "the right to learn from."},
+                  {"key": "prompt_start_s", "type": "float",
+                   "label": "Reference from (s)", "default": 0.0,
+                   "nullable": False, "min": 0.0, "max": 600.0, "step": 1.0,
+                   "help": "Where in the reference to start listening. Pick a "
+                           "passage that represents the whole track — a "
+                           "chorus rather than an intro."},
+                  {"key": "prompt_end_s", "type": "float",
+                   "label": "Reference to (s)", "default": 30.0,
+                   "nullable": False, "min": 1.0, "max": 600.0, "step": 1.0,
+                   "help": "Where to stop listening. Thirty seconds is "
+                           "upstream's own figure; much more is mostly "
+                           "slower, not better."})
         if m["id"] == "acestep-base":
             m["format"] = "turbo · 8 steps"
             # acestep-base is hand-written rather than generated, so the plan
             # surface every other ACE-Step variant gets from `ace_variant` has
             # to be grafted on here. Keyed by param key so re-running is a
             # no-op rather than a duplication.
-            have = {p["key"] for p in m["capabilities"]["params"]}
-            m["capabilities"]["params"] += [
-                p for p in ace_plan_params() + ace_plan_task_params()
-                if p["key"] not in have]
+            graft(m, *(ace_plan_params() + ace_plan_task_params()))
             m["capabilities"]["tasks"] = ["generate", "plan"]
 
     # Order is load-bearing: several features resolve "the first installed

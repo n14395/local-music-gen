@@ -38,9 +38,12 @@ class NoteSynthAdapter(ModelAdapter):
         if cancel.cancelled:
             raise CancelledError()
 
+        instrument = str(params.get("instrument") or "").strip() or None
+
         progress_cb(0.2, "rendering notes")
         audio = render_midi(midi_path, sf_path, sample_rate=sample_rate,
-                            gain_db=gain_db, progress_cb=None, cancel=cancel)
+                            gain_db=gain_db, instrument=instrument,
+                            progress_cb=None, cancel=cancel)
 
         progress_cb(0.9, "writing audio")
         final = os.path.join(out_dir, "render.wav")
@@ -48,8 +51,11 @@ class NoteSynthAdapter(ModelAdapter):
                  subtype="PCM_16")
         os.replace(final + ".part", final)
         duration = round(len(audio) / sample_rate, 3)
+        meta = {"duration_s": duration}
+        if instrument:
+            meta["instrument"] = instrument
         return TaskResult(
             artifacts=[Artifact(kind="audio", label="render", path=final,
                                 format="wav", sample_rate=sample_rate,
                                 duration_s=duration)],
-            meta={"duration_s": duration})
+            meta=meta)

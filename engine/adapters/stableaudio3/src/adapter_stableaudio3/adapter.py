@@ -28,6 +28,7 @@ from __future__ import annotations
 import gc
 import json
 import os
+import secrets
 import sys
 
 import numpy as np
@@ -108,8 +109,11 @@ class StableAudio3Adapter(ModelAdapter):
         # 150 matches the top of the catalog's declared ranges; the old 50
         # silently ate medium-base's 51-150 (audit B5).
         steps = max(1, min(150, int(params.get("steps", 8))))
+        # Drawn here rather than handed to the library as -1: upstream
+        # draws its own and never tells us which, so the take could not be
+        # reproduced. Seeding it ourselves makes `seed_used` true.
         seed = params.get("seed")
-        seed = int(seed) if seed is not None else -1
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
 
         kwargs: dict = {
             "prompt": prompt,
@@ -213,7 +217,7 @@ class StableAudio3Adapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / self.sample_rate,
                               sample_rate=self.sample_rate,
-                              seed_used=seed if seed >= 0 else None)
+                              seed_used=seed)
 
     def _preview(self, latent, duration_s: float, step: int) -> None:
         """Publish the partial take behind `denoised`. Level is left alone: the

@@ -1028,16 +1028,6 @@ struct StudioView: View {
             await jobs.submit(modelId: model.id, prompt: prompt,
                               lyrics: lyricsValue, durationS: durationS,
                               count: count, params: params,
-                              // Previews are a Settings opt-in, off by
-                              // default: only some generative families can
-                              // decode mid-render, so with them on the render
-                              // card shows a live waveform for some models
-                              // and not others (which is why the per-render
-                              // control was removed). Gated on the model too:
-                              // the engine 422-refuses a preview it cannot
-                              // produce rather than silently ignoring it.
-                              preview: settings.livePreview
-                                  && model.capabilities.canPreview,
                               // A field still showing the default sends no
                               // name at all, so the number is allocated when
                               // the take lands. Pinning "track042" here would

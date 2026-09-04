@@ -26,6 +26,19 @@ COMPOSE = ("Write a piece of music in ABC notation matching this "
            "description: {text}. Reply with ABC notation only, starting at "
            "the X: header.")
 
+# The half of this checkpoint the app could not reach. ChatMusician is a
+# music-theory model as much as a notation one — its training set is chords,
+# forms, analysis and questions about them — and both templates above end with
+# "reply with ABC notation only", so every answer it could have given in words
+# was either suppressed or thrown away by the ABC cleaner downstream.
+#
+# No wrapper here on purpose: the question IS the instruction, and dressing it
+# up would answer a rewording of what the user asked. Pasting a tune into the
+# question works and is the point — "what key is this in, and why does the
+# bridge sound unresolved?" is a question about the notation you paste under
+# it.
+ASK = "{text}"
+
 
 def load(snapshot: str):
     import torch
@@ -44,7 +57,15 @@ def load(snapshot: str):
 
 
 def compose(bundle: dict, prompt: str, max_tokens: int, temperature: float,
-            seed: int | None, progress_cb, cancel) -> str:
+            seed: int | None, progress_cb, cancel, mode: str = "auto") -> str:
+    """`mode`: auto | compose | continue | ask.
+
+    `auto` is the original behaviour — a prompt that reads as ABC is continued,
+    anything else is treated as a description to set. The other three say so
+    explicitly, which matters because the heuristic cannot tell "here is a tune,
+    write me another like it" from "here is a tune, what is odd about its
+    cadence?" — both start with an X: header.
+    """
     import torch
     from transformers import StoppingCriteria, StoppingCriteriaList
 
@@ -55,8 +76,15 @@ def compose(bundle: dict, prompt: str, max_tokens: int, temperature: float,
     if seed is not None:
         torch.manual_seed(seed)
 
-    instruction = (CONTINUE.format(abc=prompt) if looks_like_abc(prompt)
-                   else COMPOSE.format(text=prompt))
+    if mode == "ask":
+        instruction = ASK.format(text=prompt)
+    elif mode == "continue":
+        instruction = CONTINUE.format(abc=prompt)
+    elif mode == "compose":
+        instruction = COMPOSE.format(text=prompt)
+    else:
+        instruction = (CONTINUE.format(abc=prompt) if looks_like_abc(prompt)
+                       else COMPOSE.format(text=prompt))
     text = TEMPLATE.format(instruction=instruction)
     # `add_special_tokens=False`, per the model card: the template already
     # carries its own turn markers, and letting the tokenizer add a second
@@ -75,7 +103,9 @@ def compose(bundle: dict, prompt: str, max_tokens: int, temperature: float,
                 return True
             if state["steps"] % 8 == 0:
                 fraction = 0.15 + 0.75 * min(state["steps"] / max_tokens, 0.98)
-                progress_cb(round(fraction, 3), "writing the notation")
+                progress_cb(round(fraction, 3),
+                            "thinking it through" if mode == "ask"
+                            else "writing the notation")
             return False
 
     with torch.no_grad():

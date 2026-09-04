@@ -11,6 +11,7 @@ the verification suite's task-path checks.
 from __future__ import annotations
 
 import json
+import math
 import os
 
 import numpy as np
@@ -161,7 +162,8 @@ class DSPAdapter(ModelAdapter):
                              str(track.get("fade_out_curve") or "linear"))
 
         gain = 10.0 ** ((_maybe_float(track.get("gain_db")) or 0.0) / 20.0)
-        return (audio * gain).astype(np.float32)
+        audio = (audio * gain).astype(np.float32)
+        return _pan(audio, _maybe_float(track.get("pan")) or 0.0)
 
     def _write(self, out_dir: str, label: str, audio: np.ndarray, sr: int,
                kind: str, fmt: str = "wav",
@@ -291,6 +293,32 @@ def _apply_effects(audio: "np.ndarray", sr: int, effects: list) -> "np.ndarray":
 
 def _maybe_float(v) -> float | None:
     return float(v) if v is not None else None
+
+
+def _pan(audio: np.ndarray, pan: float) -> np.ndarray:
+    """Place a track across the stereo field. -1 hard left, 0 centre, +1 right.
+
+    Constant power, not linear: a linear pan law drops a track by 6 dB in the
+    middle of its own sweep, which is audible as a dip every time something is
+    moved off centre. The sine/cosine pair keeps the summed power flat, so a
+    pan changes where a part sits and not how loud it is.
+
+    A stereo source is panned by balancing its existing channels rather than by
+    collapsing it to mono first: a wide pad moved slightly left should stay
+    wide.
+    """
+    if abs(pan) < 1e-6:
+        return audio
+    pan = min(1.0, max(-1.0, pan))
+    angle = (pan + 1.0) * (math.pi / 4.0)   # -1 -> 0, +1 -> pi/2
+    left, right = math.cos(angle), math.sin(angle)
+    # ×sqrt(2) so centre stays unity gain rather than 0.707.
+    left *= math.sqrt(2.0)
+    right *= math.sqrt(2.0)
+    stereo = _stereo(audio).copy()
+    stereo[:, 0] *= left
+    stereo[:, 1] *= right
+    return stereo.astype(np.float32)
 
 
 def _stereo(audio: np.ndarray) -> np.ndarray:

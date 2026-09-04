@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import glob
 import os
+import secrets
 import sys
 import tempfile
 
@@ -248,6 +249,17 @@ class InspireMusicAdapter(ModelAdapter):
         assert self.model is not None
         duration_s = min(180.0, float(params.get("duration_s") or 30.0))
         self.model.max_generate_audio_seconds = duration_s
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
+        # Upstream ships the seeding helper and its CLI never calls it, which
+        # is why every take was a fresh draw. Same process, same RNGs (torch,
+        # numpy and Python's own), set before `inference()` runs.
+        from inspiremusic.utils.common import set_all_random_seed
+
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        set_all_random_seed(seed)
         extend = params.get("extend_audio")
         task = ("continuation" if extend and os.path.isfile(extend)
                 else "text-to-music")
@@ -322,7 +334,7 @@ class InspireMusicAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(audio.shape[0] / sr, 3),
             sample_rate=int(sr),
-            seed_used=None)
+            seed_used=seed)
 
     def unload(self) -> None:
         self.model = None

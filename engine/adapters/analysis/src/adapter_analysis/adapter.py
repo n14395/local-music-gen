@@ -59,6 +59,7 @@ class AnalysisAdapter(ModelAdapter):
         self._audio2beats = None
         self._btc = None    # (model, mean, std, vocab) once the mode loads
         self._squim = None
+        self._squim_mos = None   # the subjective half; only if asked for
 
     def load(self, progress_cb: ProgressCb) -> None:
         os.environ.setdefault("TORCH_HOME", aux_dir("torch-cache"))
@@ -365,9 +366,9 @@ class AnalysisAdapter(ModelAdapter):
         check()
 
         progress_cb(0.5, "scoring")
+        wave = torch.from_numpy(mono).float().unsqueeze(0)
         with torch.no_grad():
-            stoi, pesq, si_sdr = self._squim(
-                torch.from_numpy(mono).float().unsqueeze(0))
+            stoi, pesq, si_sdr = self._squim(wave)
         check()
 
         payload = {"quality_version": 1,
@@ -376,6 +377,36 @@ class AnalysisAdapter(ModelAdapter):
                    "si_sdr": round(float(si_sdr.item()), 2),
                    "caveat": "speech-trained; compare takes, don't grade art",
                    "model": self.model_id, "engine": "squim"}
+
+        # The subjective half: a predicted mean opinion score. It needs a
+        # *non-matching* reference — a clean recording of the same broad kind,
+        # not the same performance — which is why it is a separate model and
+        # an optional input rather than another number from the pass above.
+        reference = params.get("reference_audio")
+        if reference and os.path.isfile(reference):
+            progress_cb(0.7, "predicting a listening score")
+            if getattr(self, "_squim_mos", None) is None:
+                from torchaudio.pipelines import SQUIM_SUBJECTIVE
+
+                self._squim_mos = SQUIM_SUBJECTIVE.get_model()
+                self._squim_mos.eval()
+            ref_audio, ref_sr = sf.read(reference, dtype="float32",
+                                        always_2d=True)
+            ref = ref_audio.mean(axis=1)
+            if ref_sr != 16000:
+                ref = soxr.resample(ref, ref_sr, 16000)
+            # The model compares two batches of equal length; the reference is
+            # tiled or trimmed to fit rather than the take being cut, because
+            # the take is the thing being scored.
+            if len(ref) < len(mono):
+                ref = np.tile(ref, -(-len(mono) // max(1, len(ref))))
+            ref = ref[:len(mono)]
+            check()
+            with torch.no_grad():
+                mos = self._squim_mos(
+                    wave, torch.from_numpy(ref).float().unsqueeze(0))
+            payload["mos"] = round(float(mos.item()), 3)
+            payload["mos_reference"] = os.path.basename(reference)
         final = os.path.join(out_dir, "analysis.json")
         tmp = final + ".part"
         with open(tmp, "w") as f:
@@ -383,11 +414,14 @@ class AnalysisAdapter(ModelAdapter):
         os.replace(tmp, final)
 
         progress_cb(1.0, "done")
+        meta = {"stoi": payload["stoi"], "pesq": payload["pesq"],
+                "si_sdr": payload["si_sdr"]}
+        if "mos" in payload:
+            meta["mos"] = payload["mos"]
         return TaskResult(
             artifacts=[Artifact(kind="analysis", label="quality", path=final,
                                 format="json")],
-            meta={"stoi": payload["stoi"], "pesq": payload["pesq"],
-                  "si_sdr": payload["si_sdr"]})
+            meta=meta)
 
     def _run_tag(self, params: dict, out_dir: str, progress_cb: ProgressCb,
                  cancel: CancelToken) -> TaskResult:
@@ -419,8 +453,20 @@ class AnalysisAdapter(ModelAdapter):
         audio_vector = clap.embed(mono, sr, snapshot)
         check()
 
-        tags = tagging.zero_shot(audio_vector, snapshot, top_k=top_k,
-                                 progress_cb=progress_cb, check=check)
+        # A caller who named their own labels asked a specific question, and
+        # answering it alongside three lists of general ones buries it. So
+        # custom labels replace the vocabularies rather than joining them —
+        # leave the field empty for the built-in genre/mood/instrument pass.
+        custom_labels = [label.strip()
+                         for label in (params.get("labels") or "").split(",")
+                         if label.strip()]
+        if custom_labels:
+            progress_cb(0.3, f"scoring {len(custom_labels)} labels")
+            tags = tagging.custom(audio_vector, custom_labels, snapshot)
+        else:
+            tags = tagging.zero_shot(audio_vector, snapshot, top_k=top_k,
+                                     progress_cb=progress_cb, check=check)
+        check()
 
         progress_cb(0.95, "writing tags")
         payload = {"text_version": 1, "kind": "tags", "tags": tags,
@@ -444,3 +490,4 @@ class AnalysisAdapter(ModelAdapter):
         self._audio2beats = None
         self._btc = None
         self._squim = None
+        self._squim_mos = None

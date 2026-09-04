@@ -31,61 +31,64 @@ def transcribe(model, model_id: str, params: dict, out_dir: str,
     progress_cb(0.05, "loading audio")
     audio, sr = sf.read(src, dtype="float32", always_2d=True)
     mono = audio.mean(axis=1)
-    duration_s = len(mono) / sr if sr else 0.0
     if sr != TARGET_SR:
         mono = soxr.resample(mono, sr, TARGET_SR)
     if cancel.cancelled:
         raise CancelledError()
 
     language = (params.get("language") or "").strip() or None
-    progress_cb(0.1, "listening for words")
+    translate = bool(params.get("translate"))
+    word_timestamps = bool(params.get("word_timestamps"))
 
-    # Streaming for the progress, not for the output: Whisper decodes a
-    # 30-second window at a time, and a job with no fraction at all reads as
-    # hung on a five-minute track. The fraction is decoded audio over total
-    # audio, which is honest and monotonic — unlike a token count, whose
-    # ceiling nobody knows until the model stops.
-    segments: list[dict] = []
-    text_parts: list[str] = []
-    detected = language
-    try:
-        stream = model.generate(mono, language=language, task="transcribe",
-                                return_timestamps=True, stream=True)
-        for chunk in stream:
-            if cancel.cancelled:
-                raise CancelledError()
-            for segment in (_segments_of(chunk)
-                            or _segments_of_streaming(chunk)):
-                segments.append(segment)
-                text_parts.append(segment["text"])
-                if duration_s > 0:
-                    fraction = min(0.95, 0.1 + 0.85 * segment["end_s"]
-                                   / duration_s)
-                    progress_cb(round(fraction, 3), "transcribing")
-            detected = _language_of(chunk) or detected
-    except CancelledError:
-        raise
-    except (TypeError, ValueError, NotImplementedError):
-        pass   # no streaming seam at this revision; the fallback below runs
+    # Biasing the decode toward words we already expect to hear.
+    #
+    # Whisper conditions on a prefix of "previous text" it believes it has
+    # already transcribed, which is the standard way to hand it a vocabulary:
+    # names, invented words and the app's own generated lyrics all decode far
+    # better when they have been seen once. `hotwords` is the same channel with
+    # a list-shaped door — mlx-audio folds it into `initial_prompt` itself
+    # (`merge_hotwords`) — so both are offered and either may be used alone.
+    #
+    # This is a bias, not a constraint: nothing forces the model to emit these
+    # words, and a prompt describing music the audio does not contain makes the
+    # transcript worse, not better.
+    expected = (params.get("expected_words") or "").strip() or None
+    hotwords = [word.strip()
+                for word in (params.get("hotwords") or "").split(",")
+                if word.strip()] or None
 
+    # One decode, not two, and deliberately NOT the streaming seam.
+    #
+    # The pinned mlx-audio exposes `stream=True`, and teaching this module its
+    # AlignAtt chunk shape was the obvious way to put a moving bar on a long
+    # transcription. Measured on this machine (2026-09-03, warm model, 45 s of
+    # music): one-shot 0.7 s versus streaming 14.0 s — **21× slower** — and the
+    # stream yielded three chunks whose committed text was ' Bye', '.', '.'
+    # while the same audio decoded in one pass gave whole sentences. The
+    # streaming path is an incremental-latency tool, not a throughput one, and
+    # at this revision its output is not usable as a transcript.
+    #
+    # So: decode once, and report the wait honestly with a null fraction (the
+    # app draws its indeterminate spinner). A five-minute track costs a few
+    # seconds here — the bar the streaming path would have bought is not worth
+    # 21× the runtime. Cancel is coarse for the same reason: the decode is one
+    # call, so a cancel lands when it returns (seconds), not mid-window.
+    progress_cb(None, "translating the words" if translate
+                else "listening for words")
+    result = model.generate(mono, language=language,
+                            task="translate" if translate else "transcribe",
+                            return_timestamps=True,
+                            word_timestamps=word_timestamps,
+                            initial_prompt=expected, hotwords=hotwords)
     if cancel.cancelled:
         raise CancelledError()
-
-    # The fallback is on the *result*, not only on an exception. A streaming
-    # seam that exists but yields chunks in a shape this module does not
-    # recognise would otherwise return an empty transcript from a model that
-    # heard perfectly well — silent, and indistinguishable from an
-    # instrumental. One-shot decoding is the path that always works.
+    segments = _segments_of(result)
+    text_parts = [s["text"] for s in segments]
+    detected = _language_of(result) or language
     if not segments:
-        progress_cb(None, "transcribing")
-        result = model.generate(mono, language=language, task="transcribe",
-                                return_timestamps=True)
-        segments = _segments_of(result)
-        text_parts = [s["text"] for s in segments]
-        detected = _language_of(result) or detected
-        if not segments:
-            whole = (getattr(result, "text", "") or "").strip()
-            text_parts = [whole] if whole else []
+        # A decode with no per-line timings still has the whole transcript.
+        whole = (getattr(result, "text", "") or "").strip()
+        text_parts = [whole] if whole else []
 
     kept, dropped = _drop_hallucinations(segments)
     segments = kept
@@ -103,9 +106,18 @@ def transcribe(model, model_id: str, params: dict, out_dir: str,
     payload = {"text_version": 1, "kind": "lyrics", "text": text,
                "language": detected, "segments": segments,
                "model": model_id, "engine": "whisper"}
+    if translate:
+        # The transcript is now English regardless of what was sung, and
+        # `detected` still names the sung language. Saying so in the payload is
+        # the only thing standing between a French song's English translation
+        # and a stored document that claims to be its lyrics.
+        payload["task"] = "translate"
     path = write_payload(out_dir, "lyrics", payload)
+    words = sum(len(s.get("words") or ()) for s in segments)
     meta = {"text": payload, "language": detected,
             "segments": len(segments), "lyrics_preview": preview(text)}
+    if words:
+        meta["words"] = words
     progress_cb(1.0, "done" if text else "no words heard")
     return ([{"kind": "text", "label": "lyrics", "path": path,
               "format": "json"}], meta)
@@ -157,6 +169,12 @@ def _segments_of(result) -> list[dict]:
         line = {"start_s": round(float(start or 0.0), 3),
                 "end_s": round(float(end or start or 0.0), 3),
                 "text": text}
+        # Per-word timings, present only when the job asked for them (they cost
+        # a second cross-attention pass per window). Same `_s` suffixes as the
+        # line above rather than upstream's bare `start`/`end`, so one payload
+        # does not carry two spellings of "seconds".
+        if words := _words_of(segment):
+            line["words"] = words
         # Whisper's own confidence, carried only as far as the filter above —
         # popped there, so it never reaches the payload the app stores.
         if "avg_logprob" in segment or "temperature" in segment:
@@ -167,20 +185,36 @@ def _segments_of(result) -> list[dict]:
     return out
 
 
-def _segments_of_streaming(result) -> list[dict]:
-    """The AlignAtt streaming shape at this revision: one committed span per
-    yield (`text`/`is_final`/`start_time`/`end_time`), no `.segments`. The
-    old code did not recognise it, discarded the whole streamed pass, and
-    decoded every track a second time (audit §3)."""
-    if not getattr(result, "is_final", False):
-        return []
-    text = str(getattr(result, "text", "") or "").strip()
-    if not text:
-        return []
-    start = float(getattr(result, "start_time", 0.0) or 0.0)
-    end = float(getattr(result, "end_time", 0.0) or start)
-    return [{"start_s": round(start, 3), "end_s": round(end, 3),
-             "text": text}]
+def _words_of(segment: dict) -> list[dict]:
+    """One word with its own start and end, when word timing was asked for.
+
+    Same tolerance as `_segments_of`: a word missing a timing is still a word,
+    and the probability is dropped when absent rather than defaulted to a
+    number nobody measured.
+    """
+    out: list[dict] = []
+    for word in segment.get("words") or ():
+        if not isinstance(word, dict):
+            continue
+        text = str(word.get("word") or "").strip()
+        if not text:
+            continue
+        start = word.get("start")
+        end = word.get("end")
+        timed = {"start_s": round(float(start or 0.0), 3),
+                 "end_s": round(float(end or start or 0.0), 3),
+                 "text": text}
+        if (probability := word.get("probability")) is not None:
+            timed["confidence"] = round(float(probability), 3)
+        out.append(timed)
+    return out
+
+
+# `_segments_of_streaming` lived here: the AlignAtt chunk shape
+# (text/is_final/start_time/end_time) that `stream=True` yields at this
+# revision. It is gone deliberately — see the measurement in transcribe():
+# the streaming decode is 21× slower than one-shot and its committed text
+# is unusable, so nothing should read that shape again.
 
 
 def _language_of(result) -> str | None:

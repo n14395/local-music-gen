@@ -68,8 +68,47 @@ class DiffusersAudioAdapter(ModelAdapter):
         # contribution to the render card's log. The step counts arrive as
         # progress events instead, and now as one line each.
         pipe.set_progress_bar_config(disable=True)
+        self._repair_audioldm2_language_model(pipe)
         self.pipe = pipe
         progress_cb(None, f"{self.pipe_class} on {self.device}")
+
+    @staticmethod
+    def _repair_audioldm2_language_model(pipe) -> None:
+        """Give AudioLDM 2's GPT-2 back the two methods transformers moved.
+
+        Found by running it (2026-09-04): every AudioLDM 2 entry failed with
+        `'GPT2Model' object has no attribute
+        '_update_model_kwargs_for_generation'`, and had been failing since the
+        transformers pin moved — nobody had run this family. The pipeline's
+        `generate_language_model` loop calls that method on `language_model`
+        (`pipeline_audioldm2.py:353`), but at transformers 4.57 it lives on
+        `GenerationMixin`, which the *base* `GPT2Model` does not inherit —
+        only the LM-head class does.
+
+        Both methods, not one: the loop's cache-position setup is guarded by
+        `hasattr(self.language_model, "_get_initial_cache_position")`, which is
+        false for the same reason, so restoring only the update method moves
+        the failure to `KeyError('cache_position')` one line later. They are
+        generic (arange the pre-fill positions; append the step's cache and
+        extend the mask), so binding the mixin's own implementations onto the
+        instance is the fix rather than a reimplementation.
+
+        Idempotent, and silent on every pipeline without this shape.
+        """
+        lm = getattr(pipe, "language_model", None)
+        if lm is None or hasattr(lm, "_update_model_kwargs_for_generation"):
+            return
+        try:
+            from transformers.generation.utils import GenerationMixin
+        except ImportError:  # pragma: no cover — no transformers, no problem
+            return
+        for name in ("_get_initial_cache_position",
+                     "_update_model_kwargs_for_generation"):
+            if not hasattr(lm, name):
+                setattr(lm, name, getattr(GenerationMixin, name).__get__(lm))
+        print("patched AudioLDM 2's language model: transformers moved its "
+              "cache-position and model-kwargs helpers to GenerationMixin",
+              file=sys.stderr)
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
@@ -100,12 +139,19 @@ class DiffusersAudioAdapter(ModelAdapter):
             # new-style callbacks must return the callback_kwargs dict
             return args[3] if new_style else None
 
+        # Best-of-N. The pipelines draw N waveforms in one batch and, for the
+        # CLAP-conditioned ones, already know how to rank them — the sampler
+        # cost is per-step and the batch rides one pass, so N candidates cost
+        # far less than N renders.
+        candidates = max(1, min(8, int(params.get("candidates") or 1)))
+
         kwargs = {
             "prompt": prompt,
             "num_inference_steps": steps,
             "guidance_scale": float(params.get("guidance_scale", 3.5)),
             "negative_prompt": str(params.get("negative_prompt", "")) or None,
             "generator": generator,
+            "num_waveforms_per_prompt": candidates,
         }
         accepted = set(inspect.signature(self.pipe.__call__).parameters)
         if "audio_end_in_s" in accepted:       # StableAudio
@@ -128,7 +174,12 @@ class DiffusersAudioAdapter(ModelAdapter):
         if cancel.cancelled:
             raise CancelledError()
 
-        audio = np.asarray(result.audios[0], dtype=np.float32)
+        best, score = 0, None
+        if candidates > 1 and len(result.audios) > 1:
+            progress_cb(None, f"listening to {len(result.audios)} takes",
+                        phase="master")
+            best, score = self._rank(result.audios, prompt, sample_rate)
+        audio = np.asarray(result.audios[best], dtype=np.float32)
         if audio.ndim == 2 and audio.shape[0] <= 8:   # (channels, samples)
             audio = audio.T
         peak = float(np.abs(audio).max())
@@ -141,10 +192,70 @@ class DiffusersAudioAdapter(ModelAdapter):
         tmp = out_path + ".part"
         sf.write(tmp, audio, sample_rate, format="WAV", subtype="PCM_16")
         os.replace(tmp, out_path)
+        extra = {}
+        if candidates > 1:
+            extra["candidates"] = candidates
+            if score is not None:
+                extra["prompt_match"] = round(score, 4)
         return GenerateResult(wav_path=out_path,
                               duration_s=len(audio) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=int(seed) if seed is not None else None)
+                              seed_used=int(seed) if seed is not None else None,
+                              extra=extra)
+
+    def _rank(self, audios, prompt: str,
+              sample_rate: int) -> tuple[int, float | None]:
+        """Which of the drawn takes best matches the prompt, and by how much.
+
+        The pipeline can do this itself — `score_waveforms` — but only when
+        librosa is installed, purely for one resample, and it silently returns
+        the takes in draw order when it is not. Silently is the problem: the
+        control would look like it worked and would be picking take zero every
+        time. So the same computation lives here, against the pipeline's own
+        CLAP (the audio tower is right there beside the text encoder it is
+        already using for conditioning), with soxr doing the resample.
+
+        A pipeline whose text encoder has no audio tower — AudioLDM 1, or a
+        user-added Stable Audio — cannot be ranked. That returns take zero and
+        no score, and the catalog only offers the control where it works.
+        """
+        import soxr
+
+        encoder = getattr(self.pipe, "text_encoder", None)
+        extractor = getattr(self.pipe, "feature_extractor", None)
+        tokenizer = getattr(self.pipe, "tokenizer", None)
+        if extractor is None or tokenizer is None \
+                or not hasattr(encoder, "get_audio_features"):
+            return 0, None
+        try:
+            wave = np.asarray(audios, dtype=np.float32)
+            if wave.ndim == 3:            # (takes, channels, samples)
+                wave = wave.mean(axis=1)
+            target_sr = int(extractor.sampling_rate)
+            resampled = [soxr.resample(take, sample_rate, target_sr)
+                         if sample_rate != target_sr else take
+                         for take in wave]
+            inputs = tokenizer([prompt], return_tensors="pt", padding=True)
+            inputs["input_features"] = extractor(
+                resampled, return_tensors="pt",
+                sampling_rate=target_sr).input_features
+            device = self.device
+            with torch.no_grad():
+                try:
+                    moved = {k: v.to(device) for k, v in inputs.items()}
+                    logits = encoder(**moved).logits_per_text
+                except Exception:  # noqa: BLE001 — MPS kernel gaps: retry on CPU
+                    encoder.to("cpu")
+                    moved = {k: v.to("cpu") for k, v in inputs.items()}
+                    logits = encoder(**moved).logits_per_text
+                    encoder.to(device)
+            row = logits[0].float().cpu().numpy()
+            best = int(np.argmax(row))
+            return best, float(row[best])
+        except Exception as e:  # noqa: BLE001 — a failed ranking is not a failed render
+            print(f"CLAP ranking failed, keeping the first take: {e}",
+                  file=sys.stderr)
+            return 0, None
 
     def _preview(self, latents, sample_rate: int, duration_s: float,
                  step: int) -> None:

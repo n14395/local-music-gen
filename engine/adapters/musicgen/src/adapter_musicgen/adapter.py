@@ -20,6 +20,7 @@ reconstruction that silently rots into decoding the wrong tokens.
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 
 import json
@@ -35,6 +36,11 @@ from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult
                                      ModelAdapter, ProgressCb, preview_stride)
 
 FRAME_RATE = 50  # EnCodec tokens per second of audio
+# How much of the source a continuation listens to. MusicGen's attention
+# window is 30 s total and the prompt sits inside it, so a longer excerpt buys
+# context at the direct cost of how much new music fits — 10 s is upstream's
+# own demo figure and leaves two thirds of the window to write in.
+CONTINUE_PROMPT_S = 10.0
 
 
 def _pcm16(wav: np.ndarray) -> bytes:
@@ -122,19 +128,57 @@ class MusicGenAdapter(ModelAdapter):
                                       cancel)
         assert self.model is not None and self.processor is not None
         duration_s = float(params.get("duration_s", 10.0))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            torch.manual_seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        torch.manual_seed(seed)
 
         # No count to report: everything up to the first token callback is
         # tokenisation plus the T5 encode inside generate(), and neither yields
         # steps. Naming the phase we are entering is all this can honestly say.
         progress_cb(None, "encoding prompt", phase="prompt_encode")
         melody_path = params.get("melody_audio")
+        continue_path = params.get("continue_audio")
+        continued_s = 0.0
+        if continue_path and self.is_melody:
+            # A melody checkpoint's processor reads `audio` as chroma to
+            # follow, not as tokens to continue from — the same argument, a
+            # different mechanism. Saying so beats quietly doing the other
+            # thing. (The audiocraft runtime CAN do both at once; this is a
+            # limit of the transformers path, and the catalog only offers
+            # continuation where it means continuation.)
+            raise RuntimeError(
+                "this melody checkpoint conditions on audio rather than "
+                "continuing it — use a plain MusicGen for continuation, or "
+                "the melody slot to follow this tune")
         if melody_path and self.is_melody:
             melody = self._load_melody(str(melody_path))
             inputs = self.processor(
                 audio=melody, sampling_rate=self._melody_rate(),
+                text=[prompt], padding=True, return_tensors="pt")
+        elif continue_path and os.path.isfile(str(continue_path)):
+            # Trained continuation, not a naive re-decode: `generate` sees
+            # `input_values`, encodes it with the model's own EnCodec and uses
+            # those codes as the decoder's prompt
+            # (`_prepare_audio_encoder_kwargs_for_generation`) — so the model
+            # continues from real tokens of the real audio, which is the one
+            # thing it was trained to do with a prompt.
+            #
+            # Melody checkpoints are excluded above and in the catalog: on
+            # those, audio through the processor means chroma conditioning,
+            # a different mechanism with the same shape.
+            tail, tail_rate = self._continuation_clip(str(continue_path))
+            # `shape[-1]`, not `len`: the stereo path returns (channels,
+            # samples), where `len` is 2 and the trim below would take two
+            # samples off the front instead of ten seconds (measured
+            # 2026-09-04 — the take came back 18 s long for an 8 s request).
+            continued_s = tail.shape[-1] / tail_rate
+            progress_cb(None, f"listening to the last {continued_s:.0f}s",
+                        phase="prompt_encode")
+            inputs = self.processor(
+                audio=tail, sampling_rate=tail_rate,
                 text=[prompt], padding=True, return_tensors="pt")
         else:
             inputs = self.processor(text=[prompt], padding=True,
@@ -164,6 +208,14 @@ class MusicGenAdapter(ModelAdapter):
         wav = audio[0].to(torch.float32).cpu().numpy().T
         if wav.ndim == 2 and wav.shape[1] == 1:
             wav = wav[:, 0]
+        if continued_s:
+            # The decoder's sequence is prompt-then-continuation, so the
+            # decoded audio opens with the excerpt it was given. Cut it: the
+            # length asked for was a length of NEW music, and returning the
+            # source's own tail bolted to the front would make every
+            # continuation longer than requested and repeat audio the user
+            # already has.
+            wav = wav[int(continued_s * sample_rate):]
         wav = np.clip(wav, -1.0, 1.0)
         tmp = out_path + ".part"
         sf.write(tmp, wav, sample_rate, format="WAV", subtype="PCM_16")
@@ -171,7 +223,7 @@ class MusicGenAdapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=int(seed) if seed is not None else None)
+                              seed_used=seed)
 
     def _generate_mlx(self, prompt: str, params: dict, out_path: str,
                       progress_cb: ProgressCb,
@@ -179,10 +231,21 @@ class MusicGenAdapter(ModelAdapter):
         import mlx.core as mx
 
         assert self.mlx_model is not None
+        if params.get("continue_audio"):
+            # The vendored MLX decode loop starts from the delay-pattern BOS
+            # and has no seam for a token prefix, so a continuation here would
+            # be silently ignored. The catalog offers it only on the
+            # transformers entries; this catches a hand-built job.
+            raise RuntimeError(
+                "the MLX runtime cannot continue from audio — use the "
+                "same model's standard entry for that")
         duration_s = float(params.get("duration_s", 10.0))
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
         seed = params.get("seed")
-        if seed is not None:
-            mx.random.seed(int(seed))
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        mx.random.seed(seed)
         max_steps = max(FRAME_RATE, int(duration_s * FRAME_RATE))
 
         def step_callback(step: int, total: int) -> None:
@@ -224,7 +287,7 @@ class MusicGenAdapter(ModelAdapter):
         return GenerateResult(wav_path=out_path,
                               duration_s=len(wav) / sample_rate,
                               sample_rate=sample_rate,
-                              seed_used=int(seed) if seed is not None else None)
+                              seed_used=seed)
 
     def _preview_mlx(self, audio, step: int) -> None:
         """Publish a partial take decoded from the tokens so far. Mono: the MLX
@@ -258,6 +321,41 @@ class MusicGenAdapter(ModelAdapter):
             wav = torchaudio.functional.resample(
                 torch.from_numpy(wav), sr, target).numpy()
         return wav
+
+    def _continuation_clip(self, path: str) -> tuple[np.ndarray, int]:
+        """The tail of a file at the audio encoder's rate, in ITS channel count.
+
+        The TAIL, because a continuation continues the end — handing over the
+        opening of a track and asking for what comes next produces the second
+        bar, not the next one. Trimmed to `CONTINUE_PROMPT_S` for the reason
+        upstream trims too: the prompt's tokens and the generated tokens share
+        one 30-second attention window, so every second of prompt is a second
+        the model cannot spend writing.
+
+        The channel count is the fiddly part and is not optional. EnCodec's
+        feature extractor transposes whatever it is handed and then checks the
+        last axis, so a stereo checkpoint wants `(channels, samples)` and a
+        mono one wants a flat `(samples,)` — hand a stereo model a mono array
+        and it reports "Expected stereo audio but example has 320000
+        channels", which is the length talking. Measured 2026-09-04 on
+        musicgen-stereo-small.
+        """
+        wav, sr = sf.read(path, dtype="float32", always_2d=True)  # (T, C)
+        target = int(self.model.config.audio_encoder.sampling_rate)
+        if sr != target:
+            import torchaudio
+
+            wav = torchaudio.functional.resample(
+                torch.from_numpy(wav.T), sr, target).numpy().T
+        keep = int(CONTINUE_PROMPT_S * target)
+        if len(wav) > keep:
+            wav = wav[-keep:]
+        want = int(getattr(self.processor.feature_extractor, "feature_size", 1))
+        if want == 1:
+            return wav.mean(axis=1), target
+        if wav.shape[1] == 1:
+            wav = np.repeat(wav, want, axis=1)
+        return np.ascontiguousarray(wav[:, :want].T), target
 
     def unload(self) -> None:
         self.model = None

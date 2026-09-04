@@ -10,6 +10,10 @@ dependencies = [
     "accelerate",
     "sentencepiece",
     "soundfile>=0.12",
+    # For best-of-N: CLAP scores candidates at 48 kHz and these pipelines
+    # vocode at 16 kHz. diffusers' own ranking reaches for librosa (and a
+    # numba/llvmlite tree) to do the same one resample.
+    "soxr",
     "numpy",
     "engine-protocol",
 ]

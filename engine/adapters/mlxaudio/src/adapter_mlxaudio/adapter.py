@@ -63,12 +63,18 @@ class MLXAudioAdapter(ModelAdapter):
         steps = max(1, min(30, int(params.get("steps", 30))))
         seed = params.get("seed")
         seed = int(seed) if seed is not None else secrets.randbelow(2**31)
+        # Guidance is a constant upstream — `_run_flow` passes
+        # `guidance_scale=DIT_CFG_SCALE` and `generate()` offers no way in — so
+        # it arrives through the same hook that counts the steps. None means
+        # "leave upstream's 1.7 alone".
+        cfg = params.get("cfg_scale")
+        cfg = float(cfg) if cfg is not None else None
         # The checkpoint contract requires lyrics; the official way to ask for
         # an instrumental track is the [instrumental] tag.
         lyrics_text = lyrics.strip() if lyrics and lyrics.strip() else "[instrumental]"
 
         result = self._run_hooked(prompt, lyrics_text, duration_s, steps, seed,
-                                  progress_cb, cancel)
+                                  cfg, progress_cb, cancel)
         if cancel.cancelled:
             raise CancelledError()
 
@@ -84,8 +90,8 @@ class MLXAudioAdapter(ModelAdapter):
                               seed_used=seed)
 
     def _run_hooked(self, prompt: str, lyrics: str, duration_s: float,
-                    steps: int, seed: int, progress_cb: ProgressCb,
-                    cancel: CancelToken):
+                    steps: int, seed: int, cfg: float | None,
+                    progress_cb: ProgressCb, cancel: CancelToken):
         """Generate with per-frame / per-step progress and cooperative cancel.
 
         mlx-audio exposes no callbacks, so hook the two module-level seams its
@@ -93,6 +99,10 @@ class MLXAudioAdapter(ModelAdapter):
         and `minimax_music3.denoise_chunk` (once per DiT window; its transformer
         argument is wrapped for per-step ticks). Raising here keeps the worker
         — and the loaded model — alive, unlike a SIGKILL cancel.
+
+        The denoise hook does double duty: `_run_flow` hard-codes
+        `guidance_scale=DIT_CFG_SCALE` at the call site, so intercepting that
+        call is the only place a guidance setting can reach the DiT at all.
         """
         from mlx_audio.music.models.minimax_music3 import ar as ar_mod
         from mlx_audio.music.models.minimax_music3 import (minimax_music3 as
@@ -135,6 +145,12 @@ class MLXAudioAdapter(ModelAdapter):
 
         def denoise_chunk(transformer, *args, **kwargs):
             nonlocal dit_total
+            if cfg is not None:
+                # Before the pass count below reads it: at 1.0 the sampler runs
+                # one forward per step instead of two, which halves the DiT
+                # stage — a real change to what the counter is counting, not
+                # only to how the audio sounds.
+                kwargs["guidance_scale"] = cfg
             if dit_total is None:
                 chunks = len(mm3_mod._chunk_starts(true_frames or ar_frames))
                 guidance = kwargs.get("guidance_scale", mm3_mod.DIT_CFG_SCALE)

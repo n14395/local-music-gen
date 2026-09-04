@@ -64,6 +64,82 @@ class ACEStepAdapter(ModelAdapter):
     def _snapshot(self) -> str:
         return next(iter(self.model_paths.values()))
 
+    # ---- seed determinism -------------------------------------------------
+    # MLX's default RNG key is THREAD-LOCAL and entropy-seeded per thread, and
+    # ACE-Step runs each render on its own worker thread. So `mx.random.seed()`
+    # called anywhere else (including this adapter) never reaches the thread
+    # that samples, and any upstream draw that does not pass an explicit key is
+    # unreproducible across processes. Measured 2026-09-03: seed 777 rendered
+    # in two fresh engines gave two different keys/time-signatures/captions and
+    # correlation 0.02 — while two renders inside ONE process matched exactly,
+    # which is why this hid for so long.
+    #
+    # Phase 2 (audio codes) already reseeds per step from the job seed, and the
+    # DiT's initial noise is drawn through an explicit key. The hole is Phase 1,
+    # the CoT metadata pass, which samples tempo/key/time-signature/caption with
+    # no seed at all — and everything downstream inherits its output. These two
+    # patches seed the sampling thread itself, at both entry points, from the
+    # seed the job pinned. Written into the venv's copy of the pinned upstream
+    # (the msst adapter does the same for its CLI), idempotent, and re-applied
+    # on every load so a reprovision cannot silently drop them.
+    _SEED_MARK = "LOCALMUSIC-THREAD-SEED"
+
+    @classmethod
+    def _patch_thread_seeding(cls) -> None:
+        # find_spec, not import: the patch has to land before anything in the
+        # package is executed, or the module already in memory is the old one.
+        import importlib.util
+
+        spec = importlib.util.find_spec("acestep")
+        if spec is None or not spec.submodule_search_locations:
+            raise RuntimeError("the acestep package is not importable")
+        root = spec.submodule_search_locations[0]
+        cls._patch_file(
+            os.path.join(root, "llm_inference.py"),
+            anchor="        # ========== PHASE 1: CoT Generation ==========\n",
+            insert=(
+                f"        # {cls._SEED_MARK}: the CoT pass below samples with no\n"
+                "        # seed, and MLX's default key is thread-local — so a pinned\n"
+                "        # seed produced a different key/tempo/caption in every\n"
+                "        # process, and the codes and audio inherited it. Seed the\n"
+                "        # sampling thread here; Phase 2 already seeds per step.\n"
+                "        if seeds:\n"
+                "            try:\n"
+                "                import mlx.core as _lm_mx\n"
+                "\n"
+                "                _lm_mx.random.seed(int(seeds[0]))\n"
+                "            except Exception:\n"
+                "                pass\n"
+            ))
+        cls._patch_file(
+            os.path.join(root, "models", "mlx", "dit_generate.py"),
+            anchor="    def _draw_noise(_seed):\n",
+            insert=(
+                f"    # {cls._SEED_MARK}: the initial noise below is keyed, but the\n"
+                "    # SDE branch and anything else in this thread draw from the\n"
+                "    # thread-local default key. Pin that too, from the same seed.\n"
+                "    if seed is not None:\n"
+                "        try:\n"
+                "            mx.random.seed(int(seed[0] if isinstance(seed, list)\n"
+                "                                else seed))\n"
+                "        except (TypeError, ValueError, IndexError):\n"
+                "            pass\n"
+                "\n"
+            ))
+
+    @classmethod
+    def _patch_file(cls, path: str, anchor: str, insert: str) -> None:
+        with open(path) as f:
+            src = f.read()
+        if cls._SEED_MARK in src:
+            return
+        if anchor not in src:
+            raise RuntimeError(
+                f"{os.path.basename(path)} no longer carries the expected "
+                "anchor for the seed patch — refusing to guess")
+        with open(path, "w") as f:
+            f.write(src.replace(anchor, insert + anchor, 1))
+
     def load(self, progress_cb: ProgressCb) -> None:
         os.environ.setdefault("ACESTEP_LM_BACKEND", "mlx")
         os.environ.setdefault("ACESTEP_DOWNLOAD_SOURCE", "huggingface")
@@ -75,6 +151,9 @@ class ACEStepAdapter(ModelAdapter):
         # before the acestep import below, because loguru reads the variable
         # once when it is first imported.
         os.environ.setdefault("LOGURU_LEVEL", "INFO")
+        # Before the first acestep import — a module already in memory would
+        # keep the unpatched sampling path.
+        self._patch_thread_seeding()
         import torch
 
         from acestep.handler import AceStepHandler

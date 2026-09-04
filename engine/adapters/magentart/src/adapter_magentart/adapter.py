@@ -16,6 +16,7 @@ progress and cancel — rare among the generate families.
 from __future__ import annotations
 
 import os
+import secrets
 import subprocess
 import sys
 
@@ -28,6 +29,51 @@ from engine_protocol.adapter import (CancelledError, CancelToken,
 
 FRAMES_PER_S = 25
 CHUNK_FRAMES = 50  # 2 s per generate() call: fine-grained cancel + progress
+# Conditioning is per call, not per frame, so the chunk length IS the note
+# grid's resolution. Sampling costs one step per frame either way — the chunk
+# only sets how often the conditioning is refreshed — so a note-conditioned
+# render drops to 200 ms chunks and pays almost nothing for it.
+NOTE_CHUNK_FRAMES = 5
+
+# `pianoroll_with_onsets_tokens` states, from magenta_rt/config.py:
+#   -1 masked (the model chooses)   0 off   1 held   2 onset   3 on, its choice
+PITCH_MASKED, PITCH_OFF, PITCH_HELD, PITCH_ONSET = -1, 0, 1, 2
+# `drum_pianoroll_tokens`: -1 masked, 0 no drum, 1 play drum
+DRUM_MASKED, DRUM_OFF, DRUM_ON = -1, 0, 1
+
+
+def _roll_from_midi(midi_path: str, total_frames: int):
+    """A MIDI file as (frames, 128) pitch states plus a (frames,) drum flag.
+
+    The vocabulary is the model's own: 0 off, 1 held, 2 onset — an onset is
+    written at the note's first frame and a hold for the rest, which is what
+    distinguishes "the same note again" from "still ringing". Percussion
+    tracks do not go in the pianoroll at all: they drive the separate one-bit
+    drum channel, which is the only place this model takes them.
+    """
+    import pretty_midi
+
+    pm = pretty_midi.PrettyMIDI(midi_path)
+    roll = np.zeros((total_frames, 128), dtype=np.int32)
+    drums = np.zeros(total_frames, dtype=np.int32)
+    for instrument in pm.instruments:
+        for note in instrument.notes:
+            start = int(round(note.start * FRAMES_PER_S))
+            end = int(round(note.end * FRAMES_PER_S))
+            if start >= total_frames:
+                continue
+            start = max(0, start)
+            end = min(max(end, start + 1), total_frames)
+            if instrument.is_drum:
+                drums[start:end] = DRUM_ON
+                continue
+            pitch = int(note.pitch)
+            if not 0 <= pitch < 128:
+                continue
+            roll[start:end, pitch] = np.maximum(roll[start:end, pitch],
+                                                PITCH_HELD)
+            roll[start, pitch] = PITCH_ONSET
+    return roll, drums
 
 
 class MagentaRTAdapter(ModelAdapter):
@@ -94,17 +140,54 @@ class MagentaRTAdapter(ModelAdapter):
         self.mrt = MagentaRT2StdMlxfn(size=self.size)
         progress_cb(None, "realtime engine ready")
 
+    def _require_conditioning(self, key: str) -> None:
+        """Fail loudly if this export does not take the channel being driven.
+
+        `_build_conditioning` walks the model's own input configs and reads
+        only the keys it finds there, so a conditioning key the export does not
+        declare is *silently ignored* — the render would come back with the
+        notes politely disregarded and nothing to say why. The two sizes this
+        catalog ships both declare all three channels; a future export might
+        not.
+        """
+        model = getattr(self.mrt, "_model", None)
+        configs = getattr(model, "input_configs", None)
+        if not configs:
+            return   # can't tell — let the render proceed rather than guess
+        if not any(getattr(c, "key", None) == key for c in configs):
+            raise RuntimeError(
+                f"this Magenta export does not take '{key}' conditioning — "
+                f"the notes and drums controls need a model that declares it")
+
     def generate(self, prompt: str, lyrics: str | None, params: dict,
                  out_path: str, progress_cb: ProgressCb,
                  cancel: CancelToken) -> GenerateResult:
         assert self.mrt is not None
-        from magenta_rt.config import MUSICCOCA
+        from magenta_rt.config import (DRUM_PIANOROLL, MUSICCOCA,
+                                       PIANOROLL_WITH_ONSETS)
 
         duration_s = float(params.get("duration_s") or 10.0)
+        # Drawn rather than left to chance when the job did not pin one:
+        # an unreproducible take is one you cannot come back to after
+        # changing a single other setting. `seed_used` reports it back.
+        # MLX's default RNG key is thread-local (the ACE-Step lesson), so this
+        # has to be set on the thread that runs the sampler — which is this
+        # one: `mrt.generate` is a plain call, not a worker thread.
+        import mlx.core as mx
+
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+        mx.random.seed(seed)
         temperature = float(params.get("temperature") or 1.3)
         top_k = int(params.get("top_k") or 40)
-        cfg_scales = {"musiccoca": float(params.get("guidance_scale") or 3.0),
-                      "notes": 1.0, "drums": 1.0}
+        # Three independent guidance scales, one per conditioning channel.
+        # Notes and drums were pinned at 1.0 because nothing was driving them;
+        # now that both channels can carry real conditioning, each gets the
+        # dial the exported graph already had.
+        cfg_scales = {
+            "musiccoca": float(params.get("guidance_scale") or 3.0),
+            "notes": float(params.get("notes_guidance") or 3.0),
+            "drums": float(params.get("drums_guidance") or 3.0)}
 
         def style_input(path_key: str, text: str | None):
             """A Waveform for an audio param, else the text, else None."""
@@ -129,7 +212,25 @@ class MagentaRTAdapter(ModelAdapter):
         conditioning = {MUSICCOCA.key: embedding}
 
         total_frames = max(FRAMES_PER_S, int(duration_s * FRAMES_PER_S))
-        n_chunks = max(1, -(-total_frames // CHUNK_FRAMES))
+
+        # Notes and drums: the two conditioning channels the exported graph
+        # takes beside the style embedding, and the reason this family pairs
+        # with the app's MIDI half at all. A pianoroll says which pitches are
+        # sounding; the drum channel is one bit saying whether percussion is
+        # playing. Both are read per call, so the chunk shrinks below.
+        notes_path = params.get("melody_midi")
+        roll = drum_track = None
+        if notes_path and os.path.isfile(notes_path):
+            self._require_conditioning(PIANOROLL_WITH_ONSETS.key)
+            progress_cb(None, "reading the notes")
+            roll, drum_track = _roll_from_midi(notes_path, total_frames)
+        drums_mode = str(params.get("drums") or "auto")
+        drum_override = {"play": DRUM_ON, "silent": DRUM_OFF}.get(drums_mode)
+        if drum_override is not None:
+            self._require_conditioning(DRUM_PIANOROLL.key)
+
+        chunk_frames = CHUNK_FRAMES if roll is None else NOTE_CHUNK_FRAMES
+        n_chunks = max(1, -(-total_frames // chunk_frames))
         pieces: list[np.ndarray] = []
         state = None
         sample_rate = 48000
@@ -142,7 +243,19 @@ class MagentaRTAdapter(ModelAdapter):
                 t = index / (n_chunks - 1) if n_chunks > 1 else 1.0
                 conditioning = {
                     MUSICCOCA.key: (1.0 - t) * embedding + t * embedding_b}
-            chunk = min(CHUNK_FRAMES, total_frames - done)
+            chunk = min(chunk_frames, total_frames - done)
+            if roll is not None:
+                # One vector for the whole chunk, so a note that starts
+                # anywhere inside it reads as an onset: `max` over the window
+                # keeps 2 (onset) above 1 (held) above 0 (off).
+                window = roll[done:done + chunk]
+                conditioning[PIANOROLL_WITH_ONSETS.key] = [
+                    int(v) for v in window.max(axis=0)]
+            if drum_override is not None:
+                conditioning[DRUM_PIANOROLL.key] = [drum_override]
+            elif drum_track is not None:
+                conditioning[DRUM_PIANOROLL.key] = [
+                    int(drum_track[done:done + chunk].max())]
             waveform, state = self.mrt.generate(
                 conditioning=conditioning, cfg_scales=cfg_scales,
                 temperature=temperature, top_k=top_k,
@@ -165,7 +278,7 @@ class MagentaRTAdapter(ModelAdapter):
             wav_path=out_path,
             duration_s=round(samples.shape[0] / sample_rate, 3),
             sample_rate=sample_rate,
-            seed_used=None)
+            seed_used=seed)
 
     def unload(self) -> None:
         self.mrt = None

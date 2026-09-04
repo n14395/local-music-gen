@@ -53,7 +53,7 @@ class SeparationAdapter(ModelAdapter):
         if engine == "demucs":
             return self._run_demucs(src, params, out_dir, progress_cb, cancel)
         if engine == "roformer":
-            return self._run_roformer(src, out_dir, progress_cb, cancel)
+            return self._run_roformer(src, params, out_dir, progress_cb, cancel)
         raise RuntimeError(f"unknown separation engine '{engine}'")
 
     # MARK: demucs
@@ -119,11 +119,33 @@ class SeparationAdapter(ModelAdapter):
 
     # MARK: roformer (audio-separator)
 
-    def _run_roformer(self, src: str, out_dir: str, progress_cb: ProgressCb,
+    def _run_roformer(self, src: str, params: dict, out_dir: str,
+                      progress_cb: ProgressCb,
                       cancel: CancelToken) -> TaskResult:
         from audio_separator.separator import Separator
 
-        checkpoint = self.settings["checkpoint"]
+        # An ensemble card carries no checkpoint of its own: the chosen preset
+        # names the models, and audio-separator runs each in turn and combines
+        # the stems with the preset's own algorithm.
+        preset = str(params.get("ensemble_preset") or "").strip() or None
+        checkpoint = self.settings.get("checkpoint")
+        if preset is None and not checkpoint:
+            raise RuntimeError("this card needs an ensemble preset")
+
+        # VR-architecture knobs. Only the `.pth` cleanup models take them —
+        # the MDX/RoFormer separators ignore the block entirely — so this is
+        # sent unconditionally and read by whichever architecture wants it.
+        vr_params = {"batch_size": 1, "window_size": 512, "aggression": 5,
+                     "enable_tta": False, "enable_post_process": False,
+                     "post_process_threshold": 0.2, "high_end_process": False}
+        if (aggression := params.get("aggression")) is not None:
+            vr_params["aggression"] = int(aggression)
+        if params.get("tta"):
+            # Test-time augmentation: separate again on a transformed copy and
+            # average. Upstream's own word for the trade is "slow but improves
+            # quality"; it roughly doubles the runtime.
+            vr_params["enable_tta"] = True
+
         model_dir = aux_dir("audio-separator-models")
         # If the catalog entry ships the checkpoint via HF snapshots, stage the
         # files into the model dir so audio-separator skips its own (fragile,
@@ -141,20 +163,32 @@ class SeparationAdapter(ModelAdapter):
                         except OSError:
                             pass
 
-        if self._separator is None or getattr(self, "_sep_key", None) != checkpoint:
+        # The cached separator holds the loaded weights AND the arch settings
+        # it was constructed with, so the key has to name both — a changed
+        # aggression on a warm worker would otherwise re-run the previous one.
+        sep_key = (checkpoint, preset, vr_params["aggression"],
+                   vr_params["enable_tta"])
+        if self._separator is None or getattr(self, "_sep_key", None) != sep_key:
             progress_cb(None, "loading separation model (downloads on first use)")
             self._separator = Separator(output_dir=out_dir,
                                         model_file_dir=model_dir,
-                                        output_format="WAV")
+                                        output_format="WAV",
+                                        vr_params=vr_params,
+                                        ensemble_preset=preset)
             # BaseException: audio-separator can exit via SystemExit on a bad
             # checkpoint, which would kill the worker silently. An interrupted
             # download leaves a truncated file that fails on EVERY retry —
             # remove the model's files so the next attempt re-downloads.
             try:
-                self._separator.load_model(model_filename=checkpoint)
+                if preset:
+                    # No argument: `load_model` substitutes the preset's model
+                    # list only when it sees its own default filename.
+                    self._separator.load_model()
+                else:
+                    self._separator.load_model(model_filename=checkpoint)
             except BaseException as e:
                 self._separator = None
-                stem_name = os.path.splitext(checkpoint)[0]
+                stem_name = os.path.splitext(checkpoint or "")[0] or "\0"
                 removed = []
                 for f in os.listdir(model_dir):
                     if f.startswith(stem_name):
@@ -168,7 +202,7 @@ class SeparationAdapter(ModelAdapter):
                     f"({type(e).__name__}: {e}); removed "
                     f"{removed or 'no files'} — likely an interrupted "
                     f"download, try again") from None
-            self._sep_key = checkpoint
+            self._sep_key = sep_key
         else:
             self._separator.output_dir = out_dir
         if cancel.cancelled:
@@ -189,10 +223,21 @@ class SeparationAdapter(ModelAdapter):
             if cancel.cancelled:
                 raise CancelledError()
             total = getattr(bar, "total", None)
-            if total:
-                progress_cb(min(0.98, bar.n / total),
-                            f"separating — {int(bar.n)}/{int(total)}",
-                            step=int(bar.n), steps=int(total))
+            if not total:
+                return result
+            if getattr(bar, "unit", "it") == "B":
+                # A download, not the separation. Measured 2026-09-04 on the
+                # first ensemble run: two model fetches drove the job's
+                # fraction to 0.15 and parked it there for 25 minutes, in
+                # 12 970 progress events. Report it as the indeterminate wait
+                # it is — the fraction belongs to the work, not to the wire.
+                progress_cb(None,
+                            f"fetching a model ({int(bar.n) >> 20} MB "
+                            f"of {int(total) >> 20} MB)")
+                return result
+            progress_cb(min(0.98, bar.n / total),
+                        f"separating — {int(bar.n)}/{int(total)}",
+                        step=int(bar.n), steps=int(total))
             return result
 
         _tqdm.tqdm.update = patched_update
@@ -239,8 +284,12 @@ class SeparationAdapter(ModelAdapter):
                                       format="wav",
                                       sample_rate=int(info.samplerate),
                                       duration_s=round(info.duration, 3)))
-        return TaskResult(artifacts=artifacts,
-                          meta={"engine": "roformer", "checkpoint": checkpoint})
+        meta = {"engine": "roformer", "checkpoint": checkpoint}
+        if preset:
+            meta["ensemble_preset"] = preset
+            meta["ensemble_models"] = list(
+                getattr(self._separator, "model_filenames", []) or [])
+        return TaskResult(artifacts=artifacts, meta=meta)
 
     def unload(self) -> None:
         self._separator = None

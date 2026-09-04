@@ -311,9 +311,16 @@ bundle_engine() {
     # runs from this tree) and failed only in the built app, with
     # "No module named 'adapter_captioning.vendor'". Exclude build outputs by
     # their own names; never by a word that also means "source we ship".
+    # `yue/vendor` is the YuE checkout the adapter git-clones on first load —
+    # a runtime cache like a venv, not source we ship, and it holds an absolute
+    # symlink into the model library (inference/xcodec_mini_infer → the
+    # xcodec_mini_infer snapshot). codesign refuses to seal a bundle whose
+    # symlink escapes it: "invalid destination for symbolic link in bundle".
+    # Excluded by its own path, per the rule above — never by the word
+    # `vendor`, which also names Python we do ship.
     rsync -a \
         --exclude '.venv' --exclude '__pycache__' \
-        --exclude 'build-src' \
+        --exclude 'build-src' --exclude 'yue/vendor' \
         --exclude '*.pyc' --exclude '.python-version' \
         engine/supervisor engine/protocol engine/adapters engine/catalog \
         "$res/engine/"

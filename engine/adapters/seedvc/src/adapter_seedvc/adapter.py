@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import glob
 import os
+import secrets
 import subprocess
 import sys
 
@@ -75,6 +76,14 @@ class SeedVCAdapter(ModelAdapter):
                                "seconds of the voice this should become")
         length = min(2.0, max(0.5,
                               float(params.get("length_adjust") or 1.0)))
+        # Neither route took a seed: v1's CLI has no --seed flag and the v2
+        # wrapper takes none either, so every conversion was a fresh draw from
+        # the CFM sampler and no two runs of the same settings matched. Both
+        # routes are driven through a `-c` bootstrap, which is a place to seed
+        # torch before their code runs — so the seed lands in the same process
+        # that does the sampling.
+        seed = params.get("seed")
+        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
         v2 = int(self.settings.get("version") or 1) == 2
         if v2:
             steps = max(4, min(100, int(params.get("diffusion_steps") or 30)))
@@ -89,6 +98,12 @@ class SeedVCAdapter(ModelAdapter):
                                  0.7 if intel is None else float(intel)))
             style = bool(params.get("convert_style"))
             anon = bool(params.get("anonymize"))
+            # v2 has two conversion paths and only the slow one was reachable.
+            # `convert_timbre` skips the autoregressive stage entirely: the
+            # CFM re-voices the source while the source's own timing and
+            # delivery are left exactly as they were. That is the right tool
+            # for a sung line, where the AR path is free to re-phrase it.
+            timbre_only = str(params.get("mode") or "full") == "timbre"
             # Not inference_v2.py: that CLI hardcodes fp16, which CPU
             # linears reject (Half×Float mat1/mat2 crash, proven in the
             # 2026-08-26 smoke). Drive the wrapper directly in float32 —
@@ -99,6 +114,7 @@ class SeedVCAdapter(ModelAdapter):
                 "sys.path.insert(0, os.getcwd())\n"
                 "import torch\n"
                 "torch.backends.mps.is_available = (lambda: False)\n"
+                f"torch.manual_seed({seed})\n"
                 "import soundfile as sf\n"
                 "import yaml\n"
                 "from hydra.utils import instantiate\n"
@@ -113,21 +129,38 @@ class SeedVCAdapter(ModelAdapter):
                 "vc.to(device)\n"
                 "vc.eval()\n"
                 "vc.setup_ar_caches(max_batch_size=1, max_seq_len=4096, "
-                "dtype=dtype, device=device)\n"
-                "gen = vc.convert_voice_with_streaming("
-                f"source_audio_path={src!r}, target_audio_path={ref!r}, "
-                f"diffusion_steps={steps}, length_adjust={length}, "
-                f"intelligebility_cfg_rate={intel}, "
-                f"similarity_cfg_rate={sim}, "
-                "top_p=0.9, temperature=1.0, repetition_penalty=1.0, "
-                f"convert_style={style}, anonymization_only={anon}, "
-                "device=device, dtype=dtype, stream_output=True)\n"
-                "full = None\n"
-                "for out in gen:\n"
-                "    _, full = out\n"
-                "sr, audio = full\n"
-                f"sf.write(os.path.join({out_dir!r}, 'converted_v2.wav'), "
-                "audio, sr)\n")
+                "dtype=dtype, device=device)\n")
+            if timbre_only:
+                # Returns the waveform itself, shape (1, samples) at `vc.sr`,
+                # rather than streaming chunks — so there is no generator to
+                # drain and the write is one line. `inference_cfg_rate` is
+                # this path's single guidance knob; the similarity /
+                # intelligibility pair belongs to the AR path that is being
+                # skipped, so the similarity dial stands in for it.
+                bootstrap += (
+                    "audio = vc.convert_timbre("
+                    f"source_audio_path={src!r}, target_audio_path={ref!r}, "
+                    f"diffusion_steps={steps}, length_adjust={length}, "
+                    f"inference_cfg_rate={sim}, "
+                    "device=device, dtype=dtype)\n"
+                    f"sf.write(os.path.join({out_dir!r}, 'converted_v2.wav'), "
+                    "audio[0], vc.sr)\n")
+            else:
+                bootstrap += (
+                    "gen = vc.convert_voice_with_streaming("
+                    f"source_audio_path={src!r}, target_audio_path={ref!r}, "
+                    f"diffusion_steps={steps}, length_adjust={length}, "
+                    f"intelligebility_cfg_rate={intel}, "
+                    f"similarity_cfg_rate={sim}, "
+                    "top_p=0.9, temperature=1.0, repetition_penalty=1.0, "
+                    f"convert_style={style}, anonymization_only={anon}, "
+                    "device=device, dtype=dtype, stream_output=True)\n"
+                    "full = None\n"
+                    "for out in gen:\n"
+                    "    _, full = out\n"
+                    "sr, audio = full\n"
+                    f"sf.write(os.path.join({out_dir!r}, "
+                    "'converted_v2.wav'), audio, sr)\n")
         else:
             steps = max(4, min(50, int(params.get("diffusion_steps") or 10)))
             sing = bool(params.get("sing_mode"))
@@ -150,6 +183,7 @@ class SeedVCAdapter(ModelAdapter):
             bootstrap = (
                 "import sys, runpy, torch;"
                 "torch.backends.mps.is_available = (lambda: False);"
+                f"torch.manual_seed({seed});"
                 f"sys.argv = {argv!r};"
                 "runpy.run_path(sys.argv[0], run_name='__main__')")
 
@@ -200,7 +234,8 @@ class SeedVCAdapter(ModelAdapter):
                                 sample_rate=int(info.samplerate),
                                 duration_s=round(info.duration, 3))],
             meta={"engine": "seedvc", "version": 2 if v2 else 1,
-                  "sing_mode": sing, "diffusion_steps": steps})
+                  "sing_mode": sing, "diffusion_steps": steps,
+                  "seed_used": seed})
 
     def unload(self) -> None:
         pass
