@@ -17,8 +17,17 @@ struct ClipTimelineView: View {
     /// the screen, so the lane area only reports where the drop happened.
     let onDrop: ([String], Double) -> Bool
 
-    @State private var zoom: CGFloat = 20
+    /// Pixels per second. Held by the screen rather than here so the View
+    /// menu's zoom items can reach it — a `Commands` body cannot see a view's
+    /// `@State`, and ⌘+ on the bench used to do nothing at all.
+    @Binding var zoom: CGFloat
     @State private var snap: TimelineMath.Snap = .bar
+    /// The lane area's width, for Zoom to Fit. In a box rather than in state —
+    /// see where it is measured.
+    @State private var viewport = WidthBox()
+
+    /// Mutable storage deliberately invisible to SwiftUI.
+    final class WidthBox { var value: CGFloat = 0 }
     @State private var playheadBeats: Double = 0
     @State private var showsWaveforms = true
     @State private var drag: DragSession?
@@ -184,6 +193,46 @@ struct ClipTimelineView: View {
         .onMoveCommand { direction in
             nudge(direction)
         }
+        // Measured, not stored: the width is only ever read inside Zoom to
+        // Fit's closure, and holding it in `@State` would rebuild this whole
+        // view on every frame of a window drag to learn a number nothing on
+        // screen is drawing. The same reason `MainWindow` keeps its width in
+        // a box.
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onChange(of: proxy.size.width, initial: true) {
+                        viewport.value = proxy.size.width - Self.headerWidth
+                    }
+            }
+        }
+        // The View menu's zoom items, while the timeline is the lens on
+        // screen. No Zoom to Selection: an arrangement has picked clips, not
+        // a span of time, so that one item dims and the other three work.
+        .focusedSceneValue(\.zoomCommands, ZoomCommands(
+            canZoomToSelection: false,
+            zoomIn: { zoom = TimelineMath.clampZoom(zoom * 1.5) },
+            zoomOut: { zoom = TimelineMath.clampZoom(zoom / 1.5) },
+            zoomToFit: zoomToFit))
+    }
+
+    /// Fit the whole arrangement across the lane area.
+    ///
+    /// Falls back to the default 20 px/s when there is nothing placed yet or
+    /// the width has not been measured — `fitZoom` already answers that way,
+    /// so an empty bench zooms to something sane rather than to infinity.
+    private func zoomToFit() {
+        let end = model.clips
+            .map { $0.startBeats + model.lengthBeats(of: $0) }
+            .max() ?? 0
+        // The same two trailing bars the ruler draws, so fitting leaves the
+        // arrangement where it sits rather than flush against the edge.
+        let beats = TimelineMath.contentBeats(
+            [TimelineMath.Placement(id: "", laneIndex: 0, startBeats: 0,
+                                    lengthBeats: end)],
+            beatsPerBar: model.beatsPerBar)
+        zoom = TimelineMath.fitZoom(contentSeconds: math.seconds(beats: beats),
+                                    width: viewport.value)
     }
 
     /// Binding to the one selected clip (the inspector edits a single clip;

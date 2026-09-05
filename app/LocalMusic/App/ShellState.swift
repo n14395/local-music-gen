@@ -51,6 +51,19 @@ final class ShellState {
     /// The model whose properties rail was open.
     var modelInspectedId: String?
 
+    /// Which pane the Settings window should show. A mailbox rather than a
+    /// stored preference: the App menu's submenu opens Settings *on* a pane,
+    /// and the window clears this once it has moved, so reopening Settings by
+    /// ⌘, afterwards lands where you left it rather than where a menu once
+    /// sent you.
+    var settingsPane: SettingsPane?
+
+    /// Whether the Library groups parts under the song they came from. Lifted
+    /// out of the screen for the same reason the selection was: the View menu
+    /// carries the toggle, and a `Commands` body cannot reach a view's state.
+    /// Not persisted — it is a way of reading one list, not a way of working.
+    var libraryGroupsParts = true
+
     // MARK: - What is picked
 
     /// What was picked in the Library — the inspected row of each kind, and
@@ -117,6 +130,14 @@ final class ShellState {
     /// levels inside the Library and a menu item cannot reach a `FocusState`.
     var renameRequest: String?
 
+    /// The same one-shot request, aimed at the notes field instead of the
+    /// title. Two mailboxes rather than one with a "which field" payload,
+    /// because the two fields are consumed by different views.
+    var notesRequest: String?
+
+    /// The keyboard-shortcut reference, opened from Help.
+    var showShortcuts = false
+
     /// A track the user asked to revert, held until they confirm.
     var pendingRevert: SongRecord?
 
@@ -131,6 +152,11 @@ final class ShellState {
     /// Set when a revert could not run because a render was in flight — a
     /// confirmed destructive action must never appear to do nothing.
     var revertBlocked: String?
+
+    /// The ticked rows the Track menu's batch Delete is waiting to be
+    /// confirmed for. Ids rather than records, for the reason `pendingDelete`
+    /// holds a target: the rows are re-read when the user actually confirms.
+    var pendingBatchDelete: Set<String>?
 
     // MARK: - Storage
 

@@ -73,6 +73,9 @@ struct SongDetailView: View {
     @Environment(ShellState.self) private var shell: ShellState?
     /// The name field, so Track ▸ Rename can put the caret in it.
     @FocusState private var titleFocused: Bool
+    /// Track ▸ Edit Notes, the sibling of `titleFocused` — see the mailbox
+    /// consumed below.
+    @FocusState private var notesFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -144,6 +147,13 @@ struct SongDetailView: View {
             guard let shell, shell.renameRequest == song.id else { return }
             titleFocused = true
             shell.renameRequest = nil
+        }
+        // Track ▸ Edit Notes, on the same contract as Rename above: one
+        // request, consumed once, aimed at the other field.
+        .onChange(of: shell?.notesRequest, initial: true) {
+            guard let shell, shell.notesRequest == song.id else { return }
+            notesFocused = true
+            shell.notesRequest = nil
         }
         .confirmationDialog("Delete “\(song.title)”?", isPresented: $confirmDelete) {
             Button("Delete song and audio file", role: .destructive) {
@@ -566,6 +576,7 @@ struct SongDetailView: View {
 
     private var notes: some View {
         TextEditor(text: $editor.notes)
+            .focused($notesFocused)
             .textEditorStyle(.plain)
             .tint(Bench.Palette.accent)
             .scrollContentBackground(.hidden)

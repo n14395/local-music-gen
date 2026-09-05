@@ -14,10 +14,15 @@ struct BatchSplitActionView: View {
     let parts: PartsStore
     let jobs: JobsStore
     let playback: PlaybackController
+    /// Rows the Library had ticked when this page was opened from the Track
+    /// menu. Seeded once, on appear — a preselection that reasserted itself
+    /// would fight the tick you just made here.
+    var preselected: Set<String> = []
     let onOpenModels: () -> Void
     let onBack: () -> Void
 
     @State private var picked: Set<String> = []
+    @State private var didSeedPicked = false
     @State private var selectedModelId: String?
     @State private var query = ""
     @State private var submitting = false
@@ -98,6 +103,10 @@ struct BatchSplitActionView: View {
         }
         .onAppear {
             if selectedModelId == nil { selectedModelId = eligible.first?.id }
+            if !didSeedPicked {
+                didSeedPicked = true
+                if picked.isEmpty { picked = preselected }
+            }
         }
         .task { runLog = ActionRunLog.decoded(runsJSON) }
         .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }

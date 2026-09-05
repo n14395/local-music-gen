@@ -85,6 +85,18 @@ struct EditorScreen: View {
         // selection, whether the clipboard came from this track, and whether a
         // render has frozen the document.
         .focusedSceneValue(\.editorCommands, editorCommands)
+        // The Audio menu — every operation the toolbar, the rail and the ···
+        // overflow offer, which until now the menubar could not see at all.
+        .focusedSceneValue(\.editorAudioCommands,
+                           EditorAudioCommands(store: store))
+        // The View menu's four zoom items, which the Workbench's timeline
+        // publishes too — whichever ruler is on screen owns them.
+        .focusedSceneValue(\.zoomCommands, ZoomCommands(
+            canZoomToSelection: (store.selection?.length ?? 0) > 0,
+            zoomIn: { store.zoomIn() },
+            zoomOut: { store.zoomOut() },
+            zoomToFit: { store.zoomToFit() },
+            zoomToSelection: { store.zoomToSelection() }))
         // The Editor's ⌘↩, named by the screen so the item can read
         // "Apply 3 edits" rather than a generic verb.
         .focusedSceneValue(\.runCommand, RunCommand(

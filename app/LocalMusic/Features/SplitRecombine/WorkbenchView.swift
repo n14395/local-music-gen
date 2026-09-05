@@ -142,6 +142,9 @@ struct WorkbenchScreen: View {
 
     @AppStorage("workbench.lens") private var lens: WorkbenchLens = .rows
     @State private var showPicker = false
+    /// The timeline's pixels-per-second. Held here rather than inside the lens
+    /// so the View menu's zoom items can move it — see `ClipTimelineView.zoom`.
+    @State private var timelineZoom: CGFloat = 20
     @State private var outputPath: OutputPath = .exact
     @State private var preview = MultiPartPlayer()
     @State private var selection: Set<String> = []
@@ -246,6 +249,19 @@ struct WorkbenchScreen: View {
             }
         }
         .background(Bench.Palette.windowBackground)
+        // The bench's ⌘↩. Published for the same reason the Editor publishes
+        // its Apply: the Render menu's first item is whatever the screen you
+        // are on calls "run this", and on the bench that key used to do
+        // nothing at all.
+        .focusedSceneValue(\.runCommand, RunCommand(
+            title: "Create Mix",
+            isEnabled: mixModel != nil && !model.clips.isEmpty
+                && !model.hasMissingClips,
+            run: createMix))
+        // The arrangement, where the menubar can reach it. Clip operations
+        // were ruled out when the menubar was built because the bench had no
+        // lifted selection; the cards and the timeline share one now.
+        .focusedSceneValue(\.workbenchCommands, benchCommands)
         // Coming back to a finished mix should not leave you stranded on an
         // empty rendering pane; the receipts go with it, so the next visit
         // starts clean.
@@ -327,12 +343,8 @@ struct WorkbenchScreen: View {
                 Button("Pull everything to bar 1") { pullToStart() }
                     .disabled(model.clips.isEmpty)
                 Divider()
-                Button("Clear the bench", role: .destructive) {
-                    preview.stop()
-                    selection = []
-                    for lane in model.lanes { model.removeLane(lane.id) }
-                }
-                .disabled(model.lanes.isEmpty)
+                Button("Clear the bench", role: .destructive, action: clearBench)
+                    .disabled(model.lanes.isEmpty)
             } label: {
                 Text("⋯")
                     .font(Bench.Typo.secondary)
@@ -451,7 +463,8 @@ struct WorkbenchScreen: View {
                                  },
                                  onDrop: { ids, beats in
                                      drop(ids: ids, atBeats: beats)
-                                 })
+                                 },
+                                 zoom: $timelineZoom)
             }
         }
     }
@@ -507,6 +520,81 @@ struct WorkbenchScreen: View {
         // model to play over, and handing one across would open the workspace
         // on something it cannot use.
         onOpenStyleTransfer(preset, aiLayerSource?.material.id)
+    }
+
+    /// What the menubar may do to the bench, assembled from the same helpers
+    /// the cards and the inspector use — so a clip duplicated from the menu
+    /// and one duplicated from its own card do the same thing.
+    private var benchCommands: WorkbenchCommands {
+        let picked = pickedClip
+        return WorkbenchCommands(
+            hasClips: !model.clips.isEmpty,
+            hasLanes: !model.lanes.isEmpty,
+            hasSelection: picked != nil,
+            canExplode: (picked?.sections.count ?? 0) >= 2,
+            canCrossfade: picked.flatMap(crossfadeCandidate) != nil,
+            canReimagine: canReimagine && !reimaginePrompt.isEmpty
+                && !reimagineModels.isEmpty,
+            addPart: { showPicker = true },
+            duplicate: {
+                guard let picked else { return }
+                if let new = model.duplicate(picked.id) { selection = [new.id] }
+            },
+            remove: { picked.map(removeClip) },
+            explode: {
+                guard let picked else { return }
+                model.explodeIntoSections(picked.id)
+            },
+            crossfade: {
+                guard let picked, let other = crossfadeCandidate(picked)
+                else { return }
+                model.crossfade(picked.id, with: other)
+            },
+            pullToStart: pullToStart,
+            clearBench: clearBench,
+            reimagine: { Task { await createReimagine() } })
+    }
+
+    /// The one clip the menubar acts on: the first selected in arrangement
+    /// order, which is the same clip the rows lens hands to its inspector.
+    /// Selecting a card selects every clip on its lane, so a lane with several
+    /// placements resolves to its first.
+    private var pickedClip: WorkbenchModel.Clip? {
+        WorkbenchModel.ordered(lanes: model.lanes, clips: model.clips)
+            .first { selection.contains($0.id) }
+    }
+
+    /// Removing the last clip on a lane takes the lane with it — an empty lane
+    /// draws a card with no waveform and reads as a bug. The rows lens has the
+    /// same rule for its own Remove button.
+    private func removeClip(_ clip: WorkbenchModel.Clip) {
+        selection.remove(clip.id)
+        if model.clips(inLane: clip.laneId).count <= 1 {
+            model.removeLane(clip.laneId)
+        } else {
+            model.removeClip(clip.id)
+        }
+    }
+
+    /// A clip on the same lane whose span overlaps this one — the pair a
+    /// crossfade joins. The timeline's own menu asks the same question; this
+    /// is that rule, where both the menu bar and the lens can read it.
+    private func crossfadeCandidate(_ clip: WorkbenchModel.Clip) -> String? {
+        let start = clip.startBeats
+        let end = start + model.lengthBeats(of: clip)
+        return model.clips.first { other in
+            other.id != clip.id && other.laneId == clip.laneId
+                && other.startBeats < end
+                && other.startBeats + model.lengthBeats(of: other) > start
+        }?.id
+    }
+
+    /// Take everything off the bench. The overflow menu's item, lifted so the
+    /// menubar and the `⋯` run one implementation.
+    private func clearBench() {
+        preview.stop()
+        selection = []
+        for lane in model.lanes { model.removeLane(lane.id) }
     }
 
     /// Slide the whole arrangement back so the earliest clip starts at bar 1.

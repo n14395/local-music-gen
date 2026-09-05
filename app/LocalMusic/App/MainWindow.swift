@@ -235,6 +235,30 @@ struct MainWindow: View {
                 shell.pendingDelete = nil
             }
         }
+        // The same dialog for the ticked set. Its own rather than a plural
+        // mode of the one above, because the question is a count rather than
+        // a name — and a count is the whole reason this one is worth asking.
+        .confirmationDialog(
+            "Delete \(shell.pendingBatchDelete?.count ?? 0) tracks?",
+            isPresented: Binding(
+                get: { shell.pendingBatchDelete != nil },
+                set: { if !$0 { shell.pendingBatchDelete = nil } })) {
+            Button("Delete them and their files", role: .destructive) {
+                if let ids = shell.pendingBatchDelete {
+                    actions.deleteChecked(ids)
+                }
+                shell.pendingBatchDelete = nil
+            }
+        } message: {
+            Text("Their audio files are removed too. This cannot be undone.")
+        }
+        // Help ▸ Keyboard Shortcuts. On the main window rather than as a scene
+        // of its own: it is a reference for this window's menus, and a second
+        // window in the Window menu for a page of text would be a heavier
+        // thing than what it holds.
+        .sheet(isPresented: $shell.showShortcuts) {
+            KeyboardShortcutsSheet { shell.showShortcuts = false }
+        }
 
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
         // Stamped on the way *out* rather than by the sheet's own buttons, so
@@ -472,7 +496,8 @@ struct MainWindow: View {
                           scrollMemory: libraryScroll,
                           selectedSongId: $shell.selectedSongId,
                           selectedPartId: $shell.selectedPartId,
-                          checked: $shell.checked)
+                          checked: $shell.checked,
+                          groupBySong: $shell.libraryGroupsParts)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
@@ -490,6 +515,10 @@ struct MainWindow: View {
                 assistant: env.assistant, plans: env.plans,
                 textStore: env.textStore, textChain: env.textChain,
                 route: $shell.actionsRoute,
+                // Track ▸ Ticked Rows ▸ Tag All / Split All opens a batch page
+                // over what the Library had ticked; every other route into
+                // Actions carries nothing and the pages start empty.
+                batchPreselection: shell.checked,
                 onOpenModels: { openModels(for: $0) },
                 onOpenWorkbench: { notes in
                     shell.workbenchNotices = notes

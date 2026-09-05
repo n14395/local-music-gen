@@ -78,6 +78,20 @@ struct SettingsView: View {
         // invisible ones that claimed the key with nothing to show for it.
         .focusedSceneValue(\.searchCommand,
                            SearchCommand(scope: "Settings") { searchFocused = true })
+        // The App menu's Settings submenu opens the window *on* a pane. A
+        // mailbox rather than a stored preference, and cleared as soon as it
+        // is read: ⌘, afterwards should land where you left off, not where a
+        // menu item once sent you.
+        //
+        // `initial` because the window is usually created by the same click
+        // that set this — the first body evaluation is already carrying it,
+        // and there is no change left to observe.
+        .onChange(of: env.shell.settingsPane, initial: true) {
+            guard let requested = env.shell.settingsPane else { return }
+            pane = requested
+            query = ""
+            env.shell.settingsPane = nil
+        }
     }
 
     private func refreshSongCount() {

@@ -58,6 +58,23 @@ final class MultiPartPlayer {
     /// two sounding at once (a crossfade) — and scaling by segment count
     /// would make a heavily-cut track quieter with every cut.
     var sumsConcurrently = true
+    /// The listener's own level, 0…1, multiplied into the mixer on top of the
+    /// headroom scaling above.
+    ///
+    /// Separate from that scaling rather than folded into it: headroom is a
+    /// property of what is being summed and changes with the arrangement,
+    /// while this is a property of how loud the room is. Applied live, so
+    /// Volume Up during a preview is heard rather than queued for the next
+    /// one.
+    var outputScale: Double = 1 {
+        didSet {
+            guard outputScale != oldValue else { return }
+            applyOutputVolume()
+        }
+    }
+    /// The count the headroom was last computed from, kept so the level can be
+    /// reapplied without rebuilding the graph.
+    private var preparedCount = 0
     private(set) var durationS: Double = 0
     var lastError: String?
 
@@ -179,6 +196,20 @@ final class MultiPartPlayer {
     /// out whether it needs `play` or only `updateGains`.
     var armedSchedule: Schedule { Schedule(armedItems) }
 
+    /// The mixer's level: headroom for what is being summed, times the
+    /// listener's own volume.
+    private func applyOutputVolume() {
+        // Nothing armed and nothing running: reading `mainMixerNode` would
+        // build the graph, and a level set at launch has no business starting
+        // an audio engine. `prepare` applies it before anything sounds.
+        guard preparedCount > 0 || engine.isRunning else { return }
+        let headroom = sumsConcurrently && preparedCount > 0
+            ? min(1.0, 4.0 / Double(preparedCount).squareRoot())
+            : 1.0
+        engine.mainMixerNode.outputVolume =
+            Float(headroom * outputScale.clamped(to: 0...1))
+    }
+
     /// Live gain/mute updates without restarting (mute = volume 0; a muted
     /// node keeps its schedule so unmute stays in sync).
     func updateGains(items: [Item]) {
@@ -276,9 +307,8 @@ final class MultiPartPlayer {
         }
         // Summing N clips with no normalisation clips the mixer; the mix job
         // normalises and limits, the preview does neither.
-        engine.mainMixerNode.outputVolume = sumsConcurrently
-            ? Float(min(1.0, 4.0 / Double(prepared.count).squareRoot()))
-            : 1.0
+        preparedCount = prepared.count
+        applyOutputVolume()
         if !engine.isRunning {
             do {
                 try engine.start()

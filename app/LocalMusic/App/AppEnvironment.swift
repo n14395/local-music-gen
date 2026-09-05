@@ -326,6 +326,12 @@ final class AppEnvironment {
         }
         if self.settings.nowPlayingEnabled { nowPlaying.start() }
 
+        // The stored level, onto the Editor's own graph. The transport applied
+        // it in its initialiser; the preview has to be told, because a volume
+        // set last session must be in force on both players before either of
+        // them makes a sound.
+        editor.setPreviewVolume(playback.isMuted ? 0 : playback.volume)
+
         editor.notifyApplied = { [weak self] title in
             guard self?.settings.notifyEditsApplied ?? true else { return }
             self?.notifications.notifyIfInactive(

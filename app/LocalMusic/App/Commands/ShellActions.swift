@@ -213,11 +213,68 @@ struct ShellActions {
 
     func renameTarget() {
         guard case .song(let id) = target else { return }
+        revealSongForEditing(id)
+        shell.renameRequest = id
+    }
+
+    /// Put the caret in the notes field of the selected track. Songs only, for
+    /// the same reason Rename is: a part's inspector has no notes field.
+    func editTargetNotes() {
+        guard case .song(let id) = target else { return }
+        revealSongForEditing(id)
+        shell.notesRequest = id
+    }
+
+    /// Land on the Library, on the scope that lists this track, with it
+    /// selected — what both field-focus mailboxes need before the field they
+    /// aim at exists.
+    private func revealSongForEditing(_ id: String) {
         shell.libraryScope = LibraryScope(
             origin: env.library.song(id: id)?.originKind ?? .generated)
         shell.selectedSongId = id
         shell.go(to: .library)
-        shell.renameRequest = id
+    }
+
+    // MARK: - Copying what a track knows
+
+    /// The prompt that made it. Generated tracks only — an import has none,
+    /// and a render's provenance is a bench, not a sentence.
+    var targetPrompt: String? {
+        guard let song = resolvedTarget.song,
+              !song.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                  .isEmpty
+        else { return nil }
+        return song.prompt
+    }
+
+    var targetSeed: Int64? { resolvedTarget.song?.seedUsed }
+
+    func copyPrompt() {
+        guard let prompt = targetPrompt else { return }
+        copyToPasteboard(prompt)
+    }
+
+    func copySeed() {
+        guard let seed = targetSeed else { return }
+        copyToPasteboard("\(seed)")
+    }
+
+    /// Everything the inspector shows, as one block — the thing you paste into
+    /// a note or a bug report when a take comes out strange.
+    func copyTrackDetails() {
+        let picked = resolvedTarget
+        guard let text = ShellCommandRouting.details(
+            song: picked.song, part: picked.part,
+            analysis: picked.kind.id.flatMap {
+                env.partsStore.analysis(for: $0)
+            })
+        else { return }
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     // MARK: - Files
@@ -294,6 +351,57 @@ struct ShellActions {
         }
     }
 
+    /// Bring in every audio file in a folder, one level down.
+    ///
+    /// Deliberately not recursive: a folder chosen by hand is an album or a
+    /// session, and walking a whole `~/Music` tree is an import nobody asked
+    /// for and cannot undo in one gesture. `AudioDrop` decides what counts as
+    /// audio, so this takes exactly what a drop of the same files would.
+    func importFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Import"
+        panel.message = "Choose a folder of audio to add to the library"
+        panel.begin { response in
+            guard response == .OK, let folder = panel.url else { return }
+            let urls = (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]))?
+                .filter(AudioDrop.isAudio)
+                .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
+            guard !urls.isEmpty else { return }
+            Task { @MainActor in
+                let imported = await env.library.importSongs(urls: urls)
+                shell.libraryScope = .imported
+                if let first = imported.first {
+                    shell.selectedSongId = first.id
+                    shell.libraryReveal = LibraryReveal(songId: first.id,
+                                                        scope: .imported)
+                }
+                shell.go(to: .library)
+            }
+        }
+    }
+
+    /// The stashed pre-edit original, in Finder.
+    ///
+    /// Songs only, and only once one exists: a part has no backup, and a track
+    /// that was never edited has nothing stashed. Both the row menu and the
+    /// Editor's apply panel offer this; this is the same act from the menubar.
+    var backupURL: URL? {
+        guard let song = resolvedTarget.song,
+              FileManager.default.fileExists(atPath: song.backupURL.path)
+        else { return nil }
+        return song.backupURL
+    }
+
+    func revealBackup() {
+        guard let url = backupURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     /// Ask to delete, or delete — the same `confirmDeletes` gate the panes
     /// honour, and the same dialog for both kinds.
     func requestDeleteTarget() {
@@ -341,6 +449,202 @@ struct ShellActions {
                 ?? "this part"
         case .none: return ""
         }
+    }
+
+    // MARK: - The ticked rows
+
+    /// What is ticked, resolved against the database rather than against the
+    /// list on screen.
+    ///
+    /// `LibrarySelection.of` resolves from the arrays the Library happens to
+    /// be showing, which is right for a panel drawn beside that list and wrong
+    /// for a menu: a filter typed after the ticks were made would quietly turn
+    /// "Delete 6 tracks" into "delete the 2 that are still visible".
+    var checkedSelection: LibrarySelection {
+        var selection = LibrarySelection()
+        for id in shell.checked.sorted() {
+            if let song = env.library.song(id: id) {
+                selection.songs.append(song)
+            } else if let part = (try? env.partsStore.repository.part(id: id))
+                ?? nil {
+                selection.parts.append(part)
+            } else {
+                selection.unresolved += 1
+            }
+        }
+        return selection
+    }
+
+    /// Tick every row the Library is listing.
+    ///
+    /// The visible rows, not the whole table: what the user can see is what a
+    /// select-all means, and a filtered list that ticked six hundred hidden
+    /// tracks would be a trap with a Delete item three lines below it.
+    func selectAllRows() {
+        let songs = env.library.results.map(\.id)
+        let parts = env.partsStore.results.map(\.id)
+        switch shell.libraryScope {
+        case .parts: shell.checked = Set(parts)
+        // Favourites lists both kinds, so both are taken.
+        case .favourites: shell.checked = Set(songs + parts)
+        case .songs, .imported, .renders, .edited: shell.checked = Set(songs)
+        }
+    }
+
+    func clearRowSelection() {
+        shell.checked = []
+        // A comparison is a pair of ticks; untick them and the transport's
+        // A|B is about rows nothing has picked.
+        if shell.compare.isActive { shell.compare.end() }
+    }
+
+    func toggleCheckedFavourite() {
+        let selection = checkedSelection
+        let wanted = !selection.allFavourite
+        env.library.update(selection.songs.filter { $0.favorite != wanted }
+            .map { var song = $0; song.favorite = wanted; return song })
+        env.partsStore.update(selection.parts.filter { $0.favorite != wanted }
+            .map { var part = $0; part.favorite = wanted; return part })
+    }
+
+    func rateChecked(_ rating: Int) {
+        let selection = checkedSelection
+        env.library.update(selection.songs.filter { $0.rating != rating }
+            .map { var song = $0; song.rating = rating; return song })
+        env.partsStore.update(selection.parts.filter { $0.rating != rating }
+            .map { var part = $0; part.rating = rating; return part })
+    }
+
+    /// Ask before deleting several, honouring the same preference one delete
+    /// does — and with the count in the question, because this is the item
+    /// that can empty a whole afternoon's work in one press.
+    func requestDeleteChecked() {
+        guard !shell.checked.isEmpty else { return }
+        if env.settings.confirmDeletes {
+            shell.pendingBatchDelete = shell.checked
+        } else {
+            deleteChecked(shell.checked)
+        }
+    }
+
+    func deleteChecked(_ ids: Set<String>) {
+        var selection = LibrarySelection()
+        for id in ids.sorted() {
+            if let song = env.library.song(id: id) {
+                selection.songs.append(song)
+            } else if let part = (try? env.partsStore.repository.part(id: id))
+                ?? nil {
+                selection.parts.append(part)
+            }
+        }
+        // Anything playing out of a file about to go is stopped first; a
+        // player holding a deleted file is a stall with no error.
+        for song in selection.songs { env.playback.stop(songId: song.id) }
+        for part in selection.parts { env.playback.stop(songId: part.id) }
+        env.library.delete(selection.songs)
+        env.partsStore.delete(selection.parts)
+        if let picked = shell.selectedSongId, ids.contains(picked) {
+            shell.selectedSongId = nil
+        }
+        if let picked = shell.selectedPartId, ids.contains(picked) {
+            shell.selectedPartId = nil
+        }
+        shell.checked.subtract(ids)
+        if shell.compare.isActive { shell.compare.end() }
+    }
+
+    /// Copy every ticked file into one folder.
+    ///
+    /// A folder rather than a save panel per file — twenty save panels is not
+    /// a feature — and the same unique-naming the selection inspector uses, so
+    /// two tracks called `track042` land as `track042.wav` and `track042-2.wav`
+    /// rather than one overwriting the other.
+    func exportChecked() {
+        let selection = checkedSelection
+        guard selection.count > 0 else { return }
+        let files = selection.songs.map {
+            ($0.fileURL, SongDetailView.exportName(title: $0.title,
+                                                   fileName: $0.fileName))
+        } + selection.parts.map {
+            ($0.fileURL, SongDetailView.exportName(title: $0.name,
+                                                   fileName: $0.fileName))
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export here"
+        panel.message = "Choose a folder for \(files.count) files"
+        panel.begin { response in
+            guard response == .OK, let folder = panel.url else { return }
+            var used: Set<String> = []
+            for (url, name) in files {
+                let unique = LibrarySelectionInspector.unique(name, taken: &used)
+                let destination = folder.appendingPathComponent(unique)
+                try? FileManager.default.removeItem(at: destination)
+                try? FileManager.default.copyItem(at: url, to: destination)
+            }
+        }
+    }
+
+    /// Every ticked part onto the bench, in the order they were listed.
+    ///
+    /// Songs are skipped rather than refused: a mixed selection is a normal
+    /// thing to have, and the item says "parts" — see `canAddCheckedToBench`.
+    func addCheckedToWorkbench() {
+        let parts = checkedSelection.parts
+        guard !parts.isEmpty else { return }
+        for part in parts {
+            let title = env.library.song(id: part.songId)?.title
+                ?? part.modelName
+            env.workbench.add(
+                material: PickedMaterial(part: part, sourceTitle: title),
+                parts: env.partsStore)
+        }
+        shell.go(to: .workbench)
+    }
+
+    var canAddCheckedToBench: Bool {
+        shell.checked.contains { id in
+            ((try? env.partsStore.repository.part(id: id)) ?? nil) != nil
+        }
+    }
+
+    /// Open a batch Actions page over the ticked rows. The page seeds its own
+    /// picker from `shell.checked` — see `ActionsScreen.batchPreselection` —
+    /// so this is a jump, not a submission.
+    func openBatchAction(recipeId: String) {
+        shell.actionsRoute = .action(recipeId: recipeId, sourceId: nil)
+        shell.go(to: .actions)
+    }
+
+    // MARK: - The Library's own view
+
+    func setLibrarySort(_ sort: LibraryRepository.Sort) {
+        env.library.filters.sort = sort
+        // The same follow-through the filter bar's menu has: a sort chosen
+        // here is a choice, and Settings may want to remember it.
+        if env.settings.libraryRemembersSort {
+            env.settings.libraryDefaultSort = sort
+        }
+    }
+
+    /// Put the filters back to what this scope starts from.
+    ///
+    /// Mirrors `LibraryScreen.scopeBaseline`: a scope *is* a filter set, so
+    /// "clear" cannot mean an empty one — clearing inside Renders must leave
+    /// you in Renders.
+    func clearLibraryFilters() {
+        var baseline = LibraryRepository.Filters()
+        baseline.sort = env.settings.libraryDefaultSort
+        let scope = shell.libraryScope
+        baseline.origin = scope.origin.map { .only($0.rawValue) } ?? .any
+        baseline.favoritesOnly = scope == .favourites
+        baseline.hasEdits = scope == .edited
+        if scope == .edited { baseline.sort = .recentlyEdited }
+        env.library.filters = baseline
+        env.partsStore.filters = PartsRepository.Filters()
+        env.partsStore.filters.favoritesOnly = scope == .favourites
     }
 
     // MARK: - Playback
@@ -393,6 +697,80 @@ struct ShellActions {
             let next = (env.playback.currentTime + seconds)
                 .clamped(to: 0...max(0, env.playback.duration))
             env.playback.seek(to: next)
+        }
+    }
+
+    /// Jump to either end of whatever is loaded. The Editor's own timeline
+    /// when it is the screen you are on, for the reason `skip` routes there.
+    func seekToStart() {
+        if shell.destination == .editor, env.editor.material != nil {
+            env.editor.seekPreview(to: 0)
+        } else if env.playback.currentSongId != nil {
+            env.playback.seek(to: 0)
+        }
+    }
+
+    func seekToEnd() {
+        if shell.destination == .editor, env.editor.material != nil {
+            env.editor.seekPreview(to: max(0, env.editor.timelineDurationS))
+        } else if env.playback.currentSongId != nil {
+            env.playback.seek(to: max(0, env.playback.duration))
+        }
+    }
+
+    // MARK: - Level
+
+    /// One level for the app, told to both players.
+    ///
+    /// The Editor auditions through its own graph, so a volume applied only to
+    /// the transport would leave the Editor loud — turning the app down on the
+    /// one screen where you are actually listening would do nothing.
+    /// The bench's audition keeps its own per-clip gains and is left alone.
+    func setVolume(_ level: Double) {
+        env.playback.setVolume(level)
+        env.editor.setPreviewVolume(env.playback.isMuted ? 0 : env.playback.volume)
+    }
+
+    func adjustVolume(by delta: Double) {
+        env.playback.adjustVolume(by: delta)
+        env.editor.setPreviewVolume(env.playback.isMuted ? 0 : env.playback.volume)
+    }
+
+    func toggleMute() {
+        env.playback.toggleMute()
+        env.editor.setPreviewVolume(env.playback.isMuted ? 0 : env.playback.volume)
+    }
+
+    /// `Volume · 70%`, as a disabled readout above the two items that move it.
+    var volumeSummary: String {
+        env.playback.isMuted
+            ? "Muted"
+            : "Volume \(Int((env.playback.volume * 100).rounded()))%"
+    }
+
+    // MARK: - Now playing
+
+    /// Show the track that is sounding, wherever it lives.
+    ///
+    /// The id carries a suffix while an original is being auditioned
+    /// (`song.id + ".original"`), so it is trimmed back to the row it belongs
+    /// to rather than looked up and missed.
+    var nowPlayingSongId: String? {
+        guard let id = env.playback.currentSongId else { return nil }
+        let suffix = ".original"
+        return id.hasSuffix(suffix) ? String(id.dropLast(suffix.count)) : id
+    }
+
+    func showNowPlaying() {
+        guard let id = nowPlayingSongId else { return }
+        if let song = env.library.song(id: id) {
+            let scope = LibraryScope(origin: song.originKind)
+            shell.libraryReveal = LibraryReveal(songId: id, scope: scope)
+            shell.selectedSongId = id
+            shell.go(to: scope)
+        } else if ((try? env.partsStore.repository.part(id: id)) ?? nil) != nil {
+            shell.selectedPartId = id
+            shell.go(to: LibraryScope.parts)
         }
     }
 
@@ -463,6 +841,57 @@ struct ShellActions {
     func cancelCurrentRender() {
         guard let jobId = env.jobsStore.runningJob?.id else { return }
         Task { await env.jobsStore.cancel(jobId) }
+    }
+
+    /// Cancel everything that has not finished.
+    ///
+    /// Read from `displayJobs` inside the action, never from a menu body — the
+    /// list carries live progress, and a `Commands` body that touched it would
+    /// put the whole menubar on the render's tick.
+    func cancelAllRenders() {
+        let ids = env.jobsStore.displayJobs
+            .filter { !$0.status.isTerminal }
+            .map(\.id)
+        guard !ids.isEmpty else { return }
+        Task {
+            for id in ids { await env.jobsStore.cancel(id) }
+        }
+    }
+
+    /// Ask to be told when the render in flight lands — the queue row's own
+    /// bell, from the menubar, for when you are about to walk away.
+    func armCurrentRender() {
+        guard let jobId = env.jobsStore.runningJob?.id else { return }
+        env.jobsStore.setNotifyOnLanding(jobId, true)
+    }
+
+    /// The running job's mirrored stderr, on the pasteboard. The engine log
+    /// beside it is the whole process; this is one render.
+    func copyRenderLog() {
+        guard let jobId = env.jobsStore.runningJob?.id
+            ?? env.jobsStore.displayJobs.last?.id else { return }
+        let text = env.jobsStore.log(for: jobId).lines
+            .map(\.text)
+            .joined(separator: "\n")
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func pauseAllDownloads() {
+        Task { await env.downloadsStore.pauseAll() }
+    }
+
+    func resumeAllDownloads() {
+        Task { await env.downloadsStore.resumeAll() }
+    }
+
+    func clearFinishedDownloads() {
+        env.downloadsStore.dismissAllFinished()
+    }
+
+    func refreshCatalog() {
+        Task { await env.catalog.refresh() }
     }
 
     func toggleQueueHold() {
@@ -557,5 +986,93 @@ struct ShellActions {
 
     func revealDataFolder() {
         NSWorkspace.shared.activateFileViewerSelecting([StoragePaths.root])
+    }
+
+    /// Check the model library is where the engine thinks it is, and that what
+    /// it holds is intact — the Settings card's button, which is four clicks
+    /// deep from a question you ask when a download claims to have finished
+    /// and the model still will not load.
+    func verifyModelLibrary() {
+        Task { await env.modelLibrary.verify() }
+    }
+
+    /// The weights folder, not the app's data folder — on this Mac they are
+    /// usually on different disks, which is exactly why both are offered.
+    func revealModelLibrary() {
+        let path = env.modelLibrary.info?.path
+            ?? env.settings.hfHomePath
+            ?? NSString(string: "~/.cache/huggingface").expandingTildeInPath
+        NSWorkspace.shared.activateFileViewerSelecting(
+            [URL(fileURLWithPath: path)])
+    }
+
+    func openAppLogs() {
+        NSWorkspace.shared.open(StoragePaths.appLogs)
+    }
+
+    /// Everything worth pasting into a bug report, in one press.
+    ///
+    /// The engine's state, the machine's, and what is installed — assembled
+    /// from the stores that already hold it rather than measured again here.
+    func copyDiagnostics() {
+        var lines = ["LocalMusic \(Self.appVersion)"]
+        lines.append("Engine: \(engineSummary)")
+        if let modelId = env.backendStatus.workerModelId {
+            lines.append("Worker: \(modelId)")
+        }
+        let installed = env.catalog.models.filter {
+            $0.installState == .installed
+        }
+        lines.append("Models installed: \(installed.count)")
+        if let memory = env.telemetry.memoryLine { lines.append("Memory: \(memory)") }
+        if let free = env.telemetry.freeDiskBytes {
+            lines.append("Free disk: \(TelemetryStore.gigabytes(free)) GB")
+        }
+        lines.append("Data folder: \(StoragePaths.root.path)")
+        if let path = env.modelLibrary.info?.path {
+            lines.append("Model library: \(path)")
+        }
+        let tail = env.backendStatus.stderrTail.suffix(12)
+        if !tail.isEmpty {
+            lines.append("")
+            lines.append("Last engine output:")
+            lines.append(contentsOf: tail)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"),
+                                       forType: .string)
+    }
+
+    /// `1.4 (218)` — what the About box and the diagnostics both lead with.
+    static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
+    }
+
+    /// The About panel, with the engine in it.
+    ///
+    /// `orderFrontStandardAboutPanel` rather than a window of the app's own:
+    /// the standard panel is already right about the icon, the name and the
+    /// copyright, and what it was missing is the one thing this app is asked
+    /// about — which engine is running, on which port, having restarted how
+    /// many times.
+    func showAbout() {
+        var credits = engineSummary
+        if let path = env.modelLibrary.info?.path {
+            credits += "\n\(path)"
+        }
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationVersion: Self.appVersion,
+            .credits: NSAttributedString(
+                string: credits,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 10,
+                                                       weight: .regular),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]),
+        ])
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

@@ -121,4 +121,54 @@ enum ShellCommandRouting {
     static func queueItemTitle(isOpen: Bool) -> String {
         isOpen ? "Hide Queue" : "Show Queue"
     }
+
+    /// What Track ▸ Copy Track Details puts on the pasteboard.
+    ///
+    /// Plain `KEY: value` lines rather than JSON: this is pasted into a note,
+    /// a message or a bug report, and the fields that are unknown are left out
+    /// entirely — a block half full of `nil` reads as a broken export rather
+    /// than as a track nobody has analysed yet.
+    static func details(song: SongRecord?, part: PartRecord?,
+                        analysis: AnalysisRecord?) -> String? {
+        var lines: [String] = []
+        if let song {
+            lines.append("Title: \(song.title)")
+            lines.append("Source: \(song.sourceLabel)")
+            lines.append("Origin: \(song.originKind.rawValue)")
+            lines.append("Duration: " + duration(song.durationS))
+            if !song.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty {
+                lines.append("Prompt: \(song.prompt)")
+            }
+            if let seed = song.seedUsed { lines.append("Seed: \(seed)") }
+            if song.rating > 0 { lines.append("Rating: \(song.rating)/5") }
+            lines.append("File: \(song.fileName)")
+        } else if let part {
+            lines.append("Part: \(part.name)")
+            lines.append("Kind: \(part.kind)")
+            lines.append("Source: \(part.modelName)")
+            if let seconds = part.durationS {
+                lines.append("Duration: " + duration(seconds))
+            }
+            if part.rating > 0 { lines.append("Rating: \(part.rating)/5") }
+            lines.append("File: \(part.fileName)")
+        } else {
+            return nil
+        }
+        if let bpm = analysis?.bpm {
+            lines.append("Tempo: \(Int(bpm.rounded())) BPM")
+        }
+        if let camelot = analysis?.camelot {
+            let key = analysis?.keyName.map { "\($0) (\(camelot))" } ?? camelot
+            lines.append("Key: \(key)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// `3:07`. Minutes and seconds, because that is how the app writes a
+    /// length everywhere else it prints one.
+    static func duration(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
 }

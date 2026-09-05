@@ -14,10 +14,15 @@ struct BatchTagActionView: View {
     let parts: PartsStore
     let jobs: JobsStore
     let playback: PlaybackController
+    /// Rows the Library had ticked when this page was opened from the Track
+    /// menu. Seeded once, on appear — a preselection that reasserted itself
+    /// would fight the tick you just made here.
+    var preselected: Set<String> = []
     let onOpenModels: () -> Void
     let onBack: () -> Void
 
     @State private var picked: Set<String> = []
+    @State private var didSeedPicked = false
     @State private var selectedModelId: String?
     @State private var query = ""
     @State private var untaggedOnly = true
@@ -112,6 +117,13 @@ struct BatchTagActionView: View {
         }
         .onAppear {
             if selectedModelId == nil { selectedModelId = model?.id }
+            if !didSeedPicked {
+                didSeedPicked = true
+                if picked.isEmpty { picked = preselected }
+                // A preselection made in the Library is a deliberate set, and
+                // the untagged filter would silently drop half of it.
+                if !picked.isEmpty { untaggedOnly = false }
+            }
             refreshUntagged()
         }
         .onChange(of: untaggedOnly) { refreshUntagged() }

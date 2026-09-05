@@ -51,7 +51,11 @@ struct LibraryScreen: View {
     @Binding var checked: Set<String>
     @State private var showImporter = false
     @State private var isDropTargeted = false
-    @State private var groupBySong = true
+    /// Whether parts are gathered under the song they came from. Owned by the
+    /// shell rather than by this screen, for the same reason the selection is:
+    /// the View menu carries the toggle, and a `Commands` body cannot reach a
+    /// view's `@State`.
+    @Binding var groupBySong: Bool
     @State private var ownCompare = LibraryCompare()
 
     // Derived database reads, refreshed when the stores change rather than on

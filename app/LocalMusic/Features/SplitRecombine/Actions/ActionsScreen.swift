@@ -23,6 +23,10 @@ struct ActionsScreen: View {
     let textStore: TextStore
     let textChain: TextChainModel
     @Binding var route: Route?
+    /// The Library's ticked rows, so a batch page opened from Track ▸ Ticked
+    /// Rows starts with them chosen. Empty from every other route, which is
+    /// what the pages' own "nothing picked yet" state is for.
+    var batchPreselection: Set<String> = []
     let onOpenModels: (ModelRequirement?) -> Void
     /// Switches the shell to the Workbench destination, carrying the one-off
     /// notes `WorkbenchScreen` shows above the bench ("12 sections placed back
@@ -555,12 +559,14 @@ struct ActionsScreen: View {
             BatchSplitActionView(recipe: recipe, catalog: catalog,
                                  library: library, parts: parts, jobs: jobs,
                                  playback: playback,
+                                 preselected: batchPreselection,
                                  onOpenModels: { onOpenModels(requirement(for: recipe)) },
                                  onBack: back)
         case .batchTag:
             BatchTagActionView(recipe: recipe, catalog: catalog,
                                library: library, parts: parts, jobs: jobs,
                                playback: playback,
+                               preselected: batchPreselection,
                                onOpenModels: { onOpenModels(requirement(for: recipe)) },
                                onBack: back)
         case .editor:

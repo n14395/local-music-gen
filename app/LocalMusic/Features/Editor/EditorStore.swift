@@ -1287,6 +1287,16 @@ final class EditorStore {
 
     var isPlaying: Bool { player.isPlaying }
 
+    /// The listener's level, handed to the preview graph.
+    ///
+    /// The Editor has its own player, so the app's volume has to be told to it
+    /// as well as to the transport — otherwise turning the app down would go
+    /// quiet everywhere except the screen you are actually listening on.
+    /// `ShellActions` writes both from one number; nothing here remembers it.
+    func setPreviewVolume(_ level: Double) {
+        player.outputScale = level
+    }
+
     /// True while the preview is playing, or paused part-way through — i.e.
     /// while the Editor is the thing the system transport should be about. A
     /// track that is merely loaded has not "played", and must not take the Now

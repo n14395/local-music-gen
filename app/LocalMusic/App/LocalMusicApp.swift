@@ -48,15 +48,22 @@ struct LocalMusicApp: App {
             // ⌘, still opens it, and still sits where macOS puts Settings in
             // the app menu — replacing the item the `Settings` scene would
             // have installed.
-            CommandGroup(replacing: .appSettings) { OpenSettingsButton() }
+            CommandGroup(replacing: .appSettings) {
+                OpenSettingsButton(env: appDelegate.env)
+            }
         }
     }
 }
 
-/// The app menu's Settings item. A view rather than a plain `Button` because
-/// `openWindow` is only reachable from the environment, and command groups get
-/// one.
+/// The app menu's Settings item, and one for each pane.
+///
+/// A view rather than a plain `Button` because `openWindow` is only reachable
+/// from the environment, and command groups get one. The submenu writes the
+/// pane into the shell before opening the window, so a Settings window that is
+/// already up moves to the chosen pane rather than opening a second one behind
+/// the first — see `SettingsView`'s mailbox.
 private struct OpenSettingsButton: View {
+    let env: AppEnvironment
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -64,6 +71,19 @@ private struct OpenSettingsButton: View {
             openWindow(id: LocalMusicApp.settingsWindowID)
         }
         .keyboardShortcut(",", modifiers: .command)
+
+        Menu("Open Settings Pane") {
+            ForEach(SettingsPane.Group.allCases, id: \.self) { group in
+                Section(group.rawValue) {
+                    ForEach(group.panes) { pane in
+                        Button(pane.title) {
+                            env.shell.settingsPane = pane
+                            openWindow(id: LocalMusicApp.settingsWindowID)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

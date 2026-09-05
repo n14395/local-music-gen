@@ -142,6 +142,14 @@ struct StyleTransferScreen: View {
             }
         }
         .background(Bench.Palette.windowBackground)
+        // The workspace's ⌘↩, named by the mode the way the commit bar is.
+        // Published for the same reason the bench publishes its Create Mix:
+        // the Render menu's first item belongs to whichever screen is up, and
+        // on this one the key used to do nothing.
+        .focusedSceneValue(\.runCommand, RunCommand(
+            title: model.mode.isChain ? "Run the Chain" : "Transform",
+            isEnabled: knowsModels && model.blockedReason(in: models) == nil,
+            run: { Task { await run() } }))
         .onAppear(perform: restore)
         .task { runLog = ActionRunLog.decoded(runsJSON) }
         .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }

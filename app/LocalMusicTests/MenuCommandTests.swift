@@ -210,4 +210,160 @@ final class MenuCommandTests: XCTestCase {
         XCTAssertNil(shell.modelRequirement)
         XCTAssertEqual(shell.destination, .models)
     }
+
+    // MARK: - The shortcut table
+
+    /// The failure this table was built to make impossible.
+    ///
+    /// Two menus claiming one key is silent at runtime — whichever loads last
+    /// wins, and the other item simply never fires. The ranges (⌘1–7, ⌥⌘1–6,
+    /// ⌃⌘0–5) are checked against the same set below, since they are built
+    /// from `menuKey` rather than declared here.
+    func testNoTwoMenuItemsClaimTheSameKey() {
+        var seen: [String: String] = [:]
+        for shortcut in ShortcutCatalog.installed {
+            if let owner = seen[shortcut.display] {
+                XCTFail("\(shortcut.display) is claimed by both “\(owner)” "
+                        + "and “\(shortcut.title)”")
+            }
+            seen[shortcut.display] = shortcut.title
+        }
+    }
+
+    /// The three generated ranges are not in `installed` — they are built from
+    /// `Destination.menuKey` and friends — so they get their own collision
+    /// check against everything that is.
+    func testGeneratedRangesDoNotCollideWithTheTable() {
+        let claimed = Set(ShortcutCatalog.installed.map(\.display))
+        for destination in Destination.allCases {
+            guard let key = destination.menuKey else { continue }
+            XCTAssertFalse(claimed.contains("\u{2318}\(key)"),
+                           "\u{2318}\(key) is both a destination and an item")
+        }
+        for scope in LibraryScope.allCases {
+            guard let key = scope.menuKey else { continue }
+            XCTAssertFalse(claimed.contains("\u{2325}\u{2318}\(key)"),
+                           "\u{2325}\u{2318}\(key) is both a scope and an item")
+        }
+        for stars in 0...5 {
+            XCTAssertFalse(claimed.contains("\u{2303}\u{2318}\(stars)"),
+                           "\u{2303}\u{2318}\(stars) is both a rating and an "
+                           + "item")
+        }
+    }
+
+    /// Modifiers print in the order macOS prints them, and the keys that are
+    /// not characters print as their glyphs rather than as control codes.
+    func testShortcutsAreWrittenTheWayAMenuWritesThem() {
+        XCTAssertEqual(ShortcutCatalog.export.display, "\u{21E7}\u{2318}E")
+        XCTAssertEqual(ShortcutCatalog.skipBack.display,
+                       "\u{2303}\u{2318}\u{2190}")
+        XCTAssertEqual(ShortcutCatalog.playPause.display, "\u{2303}Space")
+        XCTAssertEqual(ShortcutCatalog.run.display, "\u{2318}\u{23CE}")
+        XCTAssertEqual(ShortcutCatalog.delete.display, "\u{2318}\u{232B}")
+    }
+
+    /// Every binding the menubar installs is in the sheet, because the sheet
+    /// is drawn from the same table. The test is that nobody has added a
+    /// section without its rows — an entry in `installed` that no section
+    /// lists would be a key with no reference line.
+    func testEveryInstalledShortcutIsInTheReferenceSheet() {
+        let listed = Set(ShortcutCatalog.sections
+            .flatMap(\.lines)
+            .map(\.keys))
+        for shortcut in ShortcutCatalog.installed {
+            XCTAssertTrue(listed.contains(shortcut.display),
+                          "\(shortcut.title) (\(shortcut.display)) is not in "
+                          + "the shortcuts sheet")
+        }
+    }
+
+    // MARK: - Volume
+
+    /// Stepping lands on the step, not merely inside the range: adding a tenth
+    /// to 0.35 repeatedly must reach 1.0 exactly rather than walking half a
+    /// step out of alignment and stopping at 0.95.
+    func testVolumeStepsLandOnTheStep() {
+        XCTAssertEqual(PlaybackController.stepped(0.35, by: 0.1), 0.4,
+                       accuracy: 1e-9)
+        XCTAssertEqual(PlaybackController.stepped(0.4, by: -0.1), 0.3,
+                       accuracy: 1e-9)
+        var level = 0.35
+        for _ in 0..<20 { level = PlaybackController.stepped(level, by: 0.1) }
+        XCTAssertEqual(level, 1.0, accuracy: 1e-9)
+    }
+
+    func testVolumeIsClampedAtBothEnds() {
+        XCTAssertEqual(PlaybackController.stepped(1, by: 0.1), 1)
+        XCTAssertEqual(PlaybackController.stepped(0, by: -0.1), 0)
+        XCTAssertEqual(PlaybackController.stepped(0.05, by: -0.1), 0)
+    }
+
+    // MARK: - Copy Track Details
+
+    private func makeSong(title: String = "track042",
+                          prompt: String = "warm rhodes, slow",
+                          seed: Int64? = 7) -> SongRecord {
+        SongRecord(id: "s1", title: title, prompt: prompt, lyrics: nil,
+                   modelId: "m", modelName: "MusicGen Small", groupId: nil,
+                   paramsJSON: "{}", durationS: 187, sampleRate: 44_100,
+                   fileName: "track042.wav", seedUsed: seed,
+                   createdAt: Date(), rating: 4, notes: "", favorite: false)
+    }
+
+    func testDetailsNamesWhatTheTrackKnows() {
+        let text = ShellCommandRouting.details(
+            song: makeSong(), part: nil,
+            analysis: AnalysisRecord(ownerId: "s1", ownerType: "song",
+                                     bpm: 92.4, keyName: "A minor",
+                                     camelot: "8A", analysisJSON: "{}",
+                                     modelId: "analyzer", createdAt: Date()))
+        let unwrapped = try? XCTUnwrap(text)
+        XCTAssertTrue(unwrapped?.contains("Title: track042") ?? false)
+        XCTAssertTrue(unwrapped?.contains("Duration: 3:07") ?? false)
+        XCTAssertTrue(unwrapped?.contains("Seed: 7") ?? false)
+        XCTAssertTrue(unwrapped?.contains("Rating: 4/5") ?? false)
+        XCTAssertTrue(unwrapped?.contains("Tempo: 92 BPM") ?? false)
+        XCTAssertTrue(unwrapped?.contains("Key: A minor (8A)") ?? false)
+    }
+
+    /// A field nobody has filled is left out rather than printed empty: a
+    /// block half full of blanks reads as a broken export rather than as a
+    /// track nothing has measured.
+    func testDetailsLeaveOutWhatIsNotKnown() {
+        let text = ShellCommandRouting.details(
+            song: makeSong(prompt: "  ", seed: nil), part: nil, analysis: nil)
+        XCTAssertNotNil(text)
+        XCTAssertFalse(text?.contains("Prompt:") ?? true)
+        XCTAssertFalse(text?.contains("Seed:") ?? true)
+        XCTAssertFalse(text?.contains("Tempo:") ?? true)
+    }
+
+    func testDetailsAreNilWithNothingPicked() {
+        XCTAssertNil(ShellCommandRouting.details(song: nil, part: nil,
+                                                 analysis: nil))
+    }
+
+    func testDurationsAreMinutesAndSeconds() {
+        XCTAssertEqual(ShellCommandRouting.duration(0), "0:00")
+        XCTAssertEqual(ShellCommandRouting.duration(9.6), "0:10")
+        XCTAssertEqual(ShellCommandRouting.duration(605), "10:05")
+    }
+
+    // MARK: - Shell mailboxes
+
+    /// The Settings pane, the notes field and the shortcuts sheet are all
+    /// one-shot requests, and the window that consumes one clears it. What is
+    /// checked here is that they start empty — a mailbox with a default would
+    /// fire on launch.
+    func testTheNewMailboxesStartEmpty() {
+        let shell = freshShell()
+        XCTAssertNil(shell.settingsPane)
+        XCTAssertNil(shell.notesRequest)
+        XCTAssertNil(shell.pendingBatchDelete)
+        XCTAssertFalse(shell.showShortcuts)
+        // Not a mailbox: a display preference the View menu toggles, and the
+        // Library groups parts by default.
+        XCTAssertTrue(shell.libraryGroupsParts)
+    }
 }
