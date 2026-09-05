@@ -35,13 +35,13 @@ def spawn(tmp: str, token: str, parent_pid: int,
     if os.path.exists(handshake):
         os.unlink(handshake)
     return subprocess.Popen(
-        ["uv", "run", "local-music-engine",
+        ["uv", "run", "local-music-gen-engine",
          "--handshake-file", handshake, "--parent-pid", str(parent_pid),
          "--data-dir", os.path.join(tmp, "data"),
          "--output-dir", os.path.join(tmp, "outputs"),
          "--log-level", "warning"],
-        cwd=SUP, env={**os.environ, "LOCALMUSIC_AUTH_TOKEN": token,
-                      "LOCALMUSIC_TEST_CATALOG": "1",
+        cwd=SUP, env={**os.environ, "LOCALMUSICGEN_AUTH_TOKEN": token,
+                      "LOCALMUSICGEN_TEST_CATALOG": "1",
                       # never the shared system cache: the suite downloads AND
                       # deletes repos (rmtree)
                       "HF_HOME": os.path.join(tmp, "data", "hf-cache"),
@@ -164,10 +164,10 @@ def check_retention_logic() -> None:
     from supervisor.retention import outputs_retention_days, sweep_outputs
 
     check("retention defaults to 14 days when the env is unset",
-          "LOCALMUSIC_OUTPUTS_RETENTION_DAYS" not in os.environ
+          "LOCALMUSICGEN_OUTPUTS_RETENTION_DAYS" not in os.environ
           and outputs_retention_days() == 14)
 
-    out = tempfile.mkdtemp(prefix="localmusic-verify-retention-")
+    out = tempfile.mkdtemp(prefix="localmusicgen-verify-retention-")
     now = time.time()
     old_age = now - 20 * 86400
     for name, mtime in (("job_old", old_age), ("job_live", old_age),
@@ -283,7 +283,7 @@ def check_catalog_curation() -> None:
     # PENDING_PREFERRED and expected to be absent; a pending id that turns up
     # in the catalog should be taken off the list.
     PENDING_PREFERRED: set[str] = set()
-    recipe_src = open(os.path.join(ROOT, "app", "LocalMusic", "Features",
+    recipe_src = open(os.path.join(ROOT, "app", "LocalMusicGen", "Features",
                                    "SplitRecombine",
                                    "RecipeCatalog.swift")).read()
     preferred: list[str] = []
@@ -339,7 +339,7 @@ def check_catalog_curation() -> None:
 
     # The first-run sheet installs by id; a renamed catalog entry would silently
     # drop a model from onboarding rather than fail anywhere visible.
-    plan_src = open(os.path.join(ROOT, "app", "LocalMusic", "Features",
+    plan_src = open(os.path.join(ROOT, "app", "LocalMusicGen", "Features",
                                  "Onboarding", "OnboardingPlan.swift")).read()
     plan_ids = []
     for block in re.findall(r"static let \w+Ids = \[(.*?)\]", plan_src, re.S):
@@ -528,7 +528,7 @@ def check_adapter_binaries() -> None:
 
 
 def main() -> int:
-    tmp = tempfile.mkdtemp(prefix="localmusic-verify-engine-")
+    tmp = tempfile.mkdtemp(prefix="localmusicgen-verify-engine-")
     token = secrets.token_hex(16)
 
     check_catalog_curation()
@@ -1619,7 +1619,7 @@ def main() -> int:
         # loads crosses it — the engine must WARN (engine.warning + job.log)
         # but the job must still complete
         proc = spawn(tmp, token, os.getpid(),
-                     extra_env={"LOCALMUSIC_MEM_GUARD_BYTES": "1"})
+                     extra_env={"LOCALMUSICGEN_MEM_GUARD_BYTES": "1"})
         hs = wait_handshake(tmp, proc)
         check("relaunch for memory-warning test", hs is not None)
         if hs is not None:
@@ -1656,7 +1656,7 @@ def main() -> int:
         # kill-switch: with the policy disabled every model uses the single
         # resident slot again, so a small model DOES take the titlebar
         proc = spawn(tmp, token, os.getpid(),
-                     extra_env={"LOCALMUSIC_SMALL_MODEL_BYTES": "0"})
+                     extra_env={"LOCALMUSICGEN_SMALL_MODEL_BYTES": "0"})
         hs = wait_handshake(tmp, proc)
         check("relaunch with the small-model policy disabled", hs is not None)
         if hs is not None:
@@ -1694,7 +1694,7 @@ def main() -> int:
         # the timed wake-up the idle runner has to perform — a queue that only
         # expired workers after the *next* job would keep it forever.
         proc = spawn(tmp, token, os.getpid(),
-                     extra_env={"LOCALMUSIC_SMALL_WARM_TTL_S": "2"})
+                     extra_env={"LOCALMUSICGEN_SMALL_WARM_TTL_S": "2"})
         hs = wait_handshake(tmp, proc)
         check("relaunch with a short warm-pool life", hs is not None)
         if hs is not None:
@@ -1752,7 +1752,7 @@ def main() -> int:
                     'version = "0.1.0"\nrequires-python = ">=3.11"\n'
                     'dependencies = []\n\n[tool.uv]\npackage = false\n')
         proc = spawn(tmp, token, os.getpid(),
-                     extra_env={"LOCALMUSIC_ADAPTERS_DIR": prov_root})
+                     extra_env={"LOCALMUSICGEN_ADAPTERS_DIR": prov_root})
         hs = wait_handshake(tmp, proc)
         check("relaunch for provisioning test", hs is not None)
         if hs is not None:

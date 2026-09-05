@@ -35,7 +35,7 @@ MAX_RETRIES = 2
 # that serialising is the bottleneck, but the default is 1 for the reasons in
 # the module docstring.
 MAX_ACTIVE_DOWNLOADS = max(
-    1, int(os.environ.get("LOCALMUSIC_MAX_ACTIVE_DOWNLOADS") or 1))
+    1, int(os.environ.get("LOCALMUSICGEN_MAX_ACTIVE_DOWNLOADS") or 1))
 
 
 class DownloadError(Exception):

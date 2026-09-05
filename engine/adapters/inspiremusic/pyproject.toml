@@ -1,7 +1,7 @@
 [project]
 name = "adapter-inspiremusic"
 version = "0.1.0"
-description = "InspireMusic long-form text-to-music / continuation (ModelScope-only weights) for the LocalMusic engine"
+description = "InspireMusic long-form text-to-music / continuation (ModelScope-only weights) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # Their requirements minus deepspeed / flash-attn / WeTextProcessing /

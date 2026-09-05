@@ -1,7 +1,7 @@
 [project]
 name = "adapter-mlxstt"
 version = "0.1.0"
-description = "MLX speech/audio-to-text adapter (Whisper lyrics, Qwen2-Audio captions) for the LocalMusic engine"
+description = "MLX speech/audio-to-text adapter (Whisper lyrics, Qwen2-Audio captions) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "mlx-audio",

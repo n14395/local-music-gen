@@ -1,7 +1,7 @@
 [project]
 name = "adapter-rave"
 version = "0.1.0"
-description = "RAVE neural timbre transfer (IRCAM TorchScript models) for the LocalMusic engine"
+description = "RAVE neural timbre transfer (IRCAM TorchScript models) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # TorchScript-only: torch.jit.load + forward. The lightest adapter venv

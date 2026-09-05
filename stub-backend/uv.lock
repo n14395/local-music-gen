@@ -89,7 +89,7 @@ wheels = [
 ]
 
 [[package]]
-name = "localmusic-stub"
+name = "localmusicgen-stub"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,15 +1,15 @@
-# LocalMusic
+# LocalMusicGen
 
 Run open music-generation models locally on your Mac and compare them side by side.
 
-LocalMusic is a native macOS app that downloads music models from Hugging Face, runs
+LocalMusicGen is a native macOS app that downloads music models from Hugging Face, runs
 them on Apple Silicon, and keeps everything they produce in a searchable library. Send
 one prompt to several models at once to hear how they differ. Once a model is
 downloaded, generation is entirely local — no accounts, no API keys, no audio leaving
 the machine.
 
 > **Note**
-> LocalMusic is distributed outside the Mac App Store (Developer ID signed and
+> LocalMusicGen is distributed outside the Mac App Store (Developer ID signed and
 > notarized). It provisions a Python runtime at first launch, which App Store rules
 > don't permit.
 
@@ -41,11 +41,11 @@ Settings.
 
 ## Install
 
-Download the latest `LocalMusic.dmg` from [Releases](../../releases) and drag the app
+Download the latest `LocalMusicGen.dmg` from [Releases](../../releases) and drag the app
 into `/Applications`.
 
 The first launch provisions a Python runtime and the engine's dependencies into
-`~/Library/Application Support/LocalMusic/`. That takes a minute or two and is narrated
+`~/Library/Application Support/LocalMusicGen/`. That takes a minute or two and is narrated
 in the onboarding sheet. After that, pick a model in **Models**, download it, and
 generate.
 
@@ -68,8 +68,8 @@ Needs full Xcode (not just the Command Line Tools), plus
 Python 3.11.
 
 ```sh
-./build.sh                  # build build/LocalMusic.app
-./build.sh --dmg            # ...and package it into build/LocalMusic.dmg
+./build.sh                  # build build/LocalMusicGen.app
+./build.sh --dmg            # ...and package it into build/LocalMusicGen.dmg
 ./build.sh --sign           # ...Developer ID sign it, notarize and staple
 ./build.sh --debug --test   # fast Debug build, then the test suites
 ```
@@ -99,13 +99,13 @@ The app resolves its engine in this order, so a dev build can be pointed anywher
 
 | Variable | Effect |
 | --- | --- |
-| `LOCALMUSIC_BACKEND_HANDSHAKE` (+ `LOCALMUSIC_BACKEND_TOKEN`) | attach to an already-running engine |
-| `LOCALMUSIC_BACKEND_CMD` | spawn an arbitrary command, e.g. the stub |
+| `LOCALMUSICGEN_BACKEND_HANDSHAKE` (+ `LOCALMUSICGEN_BACKEND_TOKEN`) | attach to an already-running engine |
+| `LOCALMUSICGEN_BACKEND_CMD` | spawn an arbitrary command, e.g. the stub |
 | *(neither)* | the engine bundled inside the `.app` |
 
 Only one instance runs at a time: a second launch activates the first and exits, since
 two would fight over the same engine and data directory. Set
-`LOCALMUSIC_ALLOW_MULTIPLE_INSTANCES=1` to run one deliberately side by side, and pair
+`LOCALMUSICGEN_ALLOW_MULTIPLE_INSTANCES=1` to run one deliberately side by side, and pair
 it with the variables above.
 
 ## How it works

@@ -1,6 +1,6 @@
 #!/bin/bash
-# LocalMusic bundled-engine launcher. Installed at
-# Contents/Resources/backend/bin/local-music-engine inside the .app.
+# LocalMusicGen bundled-engine launcher. Installed at
+# Contents/Resources/backend/bin/local-music-gen-engine inside the .app.
 #
 # The bundle is read-only, so on each launch this shim rsyncs the engine sources
 # into the app's data dir, lets the bundled uv provision CPython 3.11 and the
@@ -28,7 +28,7 @@ mkdir -p "$DATA_DIR"
 
 export UV_PYTHON_INSTALL_DIR="$DATA_DIR/python"
 export UV_CACHE_DIR="$DATA_DIR/uv-cache"
-export LOCALMUSIC_UV="$UV"
+export LOCALMUSICGEN_UV="$UV"
 
 SRC="$DATA_DIR/engine-src"
 mkdir -p "$SRC"
@@ -54,7 +54,7 @@ rsync -a --delete \
     --exclude '.venv' --exclude 'build-src' \
     --exclude '__pycache__' \
     "$RESOURCES/engine/" "$SRC/"
-export LOCALMUSIC_ADAPTERS_DIR="$SRC/adapters"
+export LOCALMUSICGEN_ADAPTERS_DIR="$SRC/adapters"
 
 cd "$SRC/supervisor"
 
@@ -71,4 +71,4 @@ say "Preparing the Python runtime"
 say "Installing the engine's dependencies"
 "$UV" sync --frozen --quiet
 say "Starting the engine"
-exec "$UV" run --frozen local-music-engine "$@"
+exec "$UV" run --frozen local-music-gen-engine "$@"

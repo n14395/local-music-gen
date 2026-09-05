@@ -33,7 +33,7 @@ from contractlib import Client, SSEListener, check, report  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUP = os.path.join(ROOT, "engine", "supervisor")
-DEFAULT_DATA = os.path.expanduser("~/Library/Application Support/LocalMusic")
+DEFAULT_DATA = os.path.expanduser("~/Library/Application Support/LocalMusicGen")
 
 
 def drain(sse, cursor: int, event: str, pred):
@@ -136,13 +136,13 @@ def main() -> int:
         os.unlink(handshake)
 
     proc = subprocess.Popen(
-        ["uv", "run", "local-music-engine",
+        ["uv", "run", "local-music-gen-engine",
          "--handshake-file", handshake, "--parent-pid", str(os.getpid()),
          "--data-dir", args.data_dir,
          "--output-dir", os.path.join(args.data_dir, "Outputs"),
          "--log-level", "warning"],
-        cwd=SUP, env={**os.environ, "LOCALMUSIC_AUTH_TOKEN": token,
-                      "LOCALMUSIC_TEST_CATALOG": "1"},
+        cwd=SUP, env={**os.environ, "LOCALMUSICGEN_AUTH_TOKEN": token,
+                      "LOCALMUSICGEN_TEST_CATALOG": "1"},
         stderr=None, stdout=subprocess.DEVNULL)
 
     try:

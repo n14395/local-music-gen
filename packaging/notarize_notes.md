@@ -2,7 +2,7 @@
 
 ## What ships
 
-`scripts/package_app.sh` produces `dist/LocalMusic.app`:
+`scripts/package_app.sh` produces `dist/LocalMusicGen.app`:
 
 - The SwiftUI app (arm64, macOS 14+).
 - `Contents/Resources/backend/bin/` — the engine launcher shim + the `uv` binary
@@ -10,7 +10,7 @@
 - `Contents/Resources/engine/` — supervisor/protocol/adapter sources, lockfiles,
   and the model catalog. No Python, no wheels: at first launch the shim has uv
   install CPython 3.11 and provision venvs under
-  `~/Library/Application Support/LocalMusic/`, pinned by the shipped `uv.lock`
+  `~/Library/Application Support/LocalMusicGen/`, pinned by the shipped `uv.lock`
   files. First launch therefore needs internet — as does every model download.
 
 This keeps the app ~50 MB with two artifacts to sign, instead of a 12–15 GB
@@ -20,21 +20,21 @@ bundle with tens of thousands of dylibs to re-sign.
 
 ```sh
 # one-time: store notary credentials
-xcrun notarytool store-credentials localmusic \
+xcrun notarytool store-credentials localmusicgen \
     --apple-id YOU@example.com --team-id TEAMID --password app-specific-pw
 
 IDENTITY="Developer ID Application: Your Name (TEAMID)" ./build.sh --dmg
-xcrun notarytool submit dist/LocalMusic-*.dmg --keychain-profile localmusic --wait
-xcrun stapler staple dist/LocalMusic-*.dmg
-spctl -a -t open --context context:primary-signature -vv dist/LocalMusic-*.dmg
+xcrun notarytool submit dist/LocalMusicGen-*.dmg --keychain-profile localmusicgen --wait
+xcrun stapler staple dist/LocalMusicGen-*.dmg
+spctl -a -t open --context context:primary-signature -vv dist/LocalMusicGen-*.dmg
 # stapling the dmg covers the download; optionally also staple the app inside:
-#   xcrun stapler staple dist/LocalMusic.app  (then rebuild the dmg, or ship as-is —
+#   xcrun stapler staple dist/LocalMusicGen.app  (then rebuild the dmg, or ship as-is —
 #   the dmg staple is what Gatekeeper checks on first open)
 
 # zip alternative (app-only distribution, e.g. Sparkle feeds):
-#   ditto -c -k --keepParent dist/LocalMusic.app dist/LocalMusic.zip
-#   xcrun notarytool submit dist/LocalMusic.zip --keychain-profile localmusic --wait
-#   xcrun stapler staple dist/LocalMusic.app
+#   ditto -c -k --keepParent dist/LocalMusicGen.app dist/LocalMusicGen.zip
+#   xcrun notarytool submit dist/LocalMusicGen.zip --keychain-profile localmusicgen --wait
+#   xcrun stapler staple dist/LocalMusicGen.app
 ```
 
 For real releases change `--timestamp=none` to `--timestamp` in

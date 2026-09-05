@@ -2,7 +2,7 @@
 #
 # Vendored from ml-explore/mlx-examples (musicgen example) at
 # 796f5b53cab69a3d48a44233ce21aae889e94a08, MIT license (see LICENSE).
-# LocalMusic changes: loads the transformers-format facebook/musicgen-*
+# LocalMusicGen changes: loads the transformers-format facebook/musicgen-*
 # snapshot the engine already has on disk (T5 + EnCodec + decoder are all
 # remapped from the one safetensors checkpoint — no hub downloads),
 # generate() takes a per-step callback for progress/cancel, and it can decode

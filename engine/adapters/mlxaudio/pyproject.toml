@@ -1,7 +1,7 @@
 [project]
 name = "adapter-mlxaudio"
 version = "0.1.0"
-description = "mlx-audio adapter (native MLX music models — MiniMax Music 3 quants) for the LocalMusic engine"
+description = "mlx-audio adapter (native MLX music models — MiniMax Music 3 quants) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "mlx-audio",

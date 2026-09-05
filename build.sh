@@ -1,10 +1,10 @@
 #!/bin/bash
-# LocalMusic — build, package, sign and publish.
+# LocalMusicGen — build, package, sign and publish.
 #
-#   ./build.sh                 build the production build/LocalMusic.app
-#   ./build.sh --dmg           …and package it into build/LocalMusic.dmg
+#   ./build.sh                 build the production build/LocalMusicGen.app
+#   ./build.sh --dmg           …and package it into build/LocalMusicGen.dmg
 #   ./build.sh --sign          …Developer ID sign the .app and .dmg, notarize and staple
-#   ./build.sh --publish vN.N  tag, push and cut a GitHub release from build/LocalMusic.dmg
+#   ./build.sh --publish vN.N  tag, push and cut a GitHub release from build/LocalMusicGen.dmg
 #
 #   ./build.sh --debug         fast Debug dev build instead of the production one
 #   ./build.sh --test          …then run the app test suite + stub contract checks
@@ -14,16 +14,16 @@
 #                              downloaded model (quit the app first)
 #
 # Flags combine — `./build.sh --sign --publish v1.2` signs, notarizes and releases in
-# one go. `--publish` on its own does not rebuild: it requires build/LocalMusic.dmg to
+# one go. `--publish` on its own does not rebuild: it requires build/LocalMusicGen.dmg to
 # already exist.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="LocalMusic"
+APP_NAME="LocalMusicGen"
 BUILD_DIR="$PWD/build"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 DMG_PATH="$BUILD_DIR/$APP_NAME.dmg"
-BUNDLE_ID="com.n14395.localmusic"
+BUNDLE_ID="com.n14395.local-music-gen"
 ENTITLEMENTS="$PWD/packaging/entitlements.plist"
 
 # Exported from ~/.zshrc. The literal fallback keeps the script working when it is
@@ -258,7 +258,7 @@ regen_project() {
     # until `make app-test`). xcodegen is deterministic — same inputs, byte
     # identical output — and takes about 60 ms, so there is nothing to save by
     # guessing when to run it.
-    step "Regenerating app/LocalMusic.xcodeproj"
+    step "Regenerating app/LocalMusicGen.xcodeproj"
     (cd app && xcodegen generate >/dev/null)
 }
 
@@ -276,7 +276,7 @@ sync_engine_venvs() {
 }
 
 # Stage the Python engine into the built bundle:
-#   Contents/Resources/backend/bin/{local-music-engine,uv}
+#   Contents/Resources/backend/bin/{local-music-gen-engine,uv}
 #   Contents/Resources/engine/{supervisor,protocol,adapters,catalog}
 bundle_engine() {
     step "Bundling the engine"
@@ -284,7 +284,7 @@ bundle_engine() {
     rm -rf "$res/backend" "$res/engine"
     mkdir -p "$res/backend/bin"
 
-    install -m 755 packaging/engine-shim.sh "$res/backend/bin/local-music-engine"
+    install -m 755 packaging/engine-shim.sh "$res/backend/bin/local-music-gen-engine"
 
     # uv is a single static executable. Prefer a repo-local pinned copy; fall
     # back to whatever the host has for dev packaging.
@@ -331,7 +331,7 @@ build_app() {
 
     if [[ $WANT_DEBUG -eq 1 ]]; then
         step "Building $APP_NAME (Debug — fast dev build, no bundled engine)"
-        xcb -project app/LocalMusic.xcodeproj -scheme LocalMusic \
+        xcb -project app/LocalMusicGen.xcodeproj -scheme LocalMusicGen \
             -destination 'platform=macOS,arch=arm64' build
         sync_engine_venvs
         return
@@ -339,11 +339,11 @@ build_app() {
 
     step "Building $APP_NAME (Release)"
     local derived="$BUILD_DIR/.derived"
-    xcb -project app/LocalMusic.xcodeproj -scheme LocalMusic \
+    xcb -project app/LocalMusicGen.xcodeproj -scheme LocalMusicGen \
         -configuration Release -destination 'platform=macOS,arch=arm64' \
         -derivedDataPath "$derived" build
 
-    local built="$derived/Build/Products/Release/LocalMusic.app"
+    local built="$derived/Build/Products/Release/LocalMusicGen.app"
     [[ -d "$built" ]] || die "Release build missing at $built"
     rm -rf "$APP_PATH"
     ditto "$built" "$APP_PATH"
@@ -358,7 +358,7 @@ run_tests() {
     step "Building + running the app test suite"
     # A plain `build` rewrites the bundle without the embedded test bundle and
     # can race a following `test`, so when testing we build via `test` alone.
-    xcb -project app/LocalMusic.xcodeproj -scheme LocalMusic \
+    xcb -project app/LocalMusicGen.xcodeproj -scheme LocalMusicGen \
         -destination 'platform=macOS,arch=arm64' test
     step "Stub contract checks"
     local out

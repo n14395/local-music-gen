@@ -74,8 +74,8 @@ rest didn't. Regenerate catalog sizes/entries with `scripts/build_catalog.py`.
 ## The off-Hub integration wave (2026-08-25)
 
 The "Beyond Hugging Face" triage (53 verdicts, evidence in
-`~/build/local-music/new-model-testing/`, handoff in
-`~/build/local-music/new-models-test-results.md`) landed as **38 new catalog
+`~/build/local-music-gen/new-model-testing/`, handoff in
+`~/build/local-music-gen/new-models-test-results.md`) landed as **38 new catalog
 entries across 17 new adapter families**, four new task strings
 (`timbre`, `reamp`, `convert-voice`, `sing`) and one piece of new engine
 plumbing — the ModelScope download route (`ms_repos`, anonymous HTTPS via
@@ -88,7 +88,7 @@ repointed at the mirrors — `rtikw/acestep15xlsft-*` (5, Apache-2.0),
 `rtikw/bsrnn-large` (CC-BY-4.0), `rtikw/piano-transcription-crnn`
 (CC-BY-4.0), and `rtikw/localmusic-assets` (beat_this final0 + both BTC
 checkpoints, MIT — this makes install-state real for `analysis-basic`/`-clap`
-too). Full record: `~/build/local-music/models-uploaded-to-my-HF.md`. The
+too). Full record: `~/build/local-music-gen/models-uploaded-to-my-HF.md`. The
 `ms_repos` engine route remains supported but currently has no catalog users.
 NC-licensed weights (RAVE, Essentia, VampNet zips, OpenVPI) deliberately stay
 at origin; UVR/SCNet/MDX23C checkpoints have no redistribution grant and were
@@ -137,7 +137,7 @@ UVR cleanup + demucs variants as `separation` entries, SA3 Medium on
 ## The capability-exposure wave (2026-08-25, same day)
 
 The "missing functionality" plan
-(`~/build/local-music/plan-to-add-missing-fuctionality-for-new-models.md`)
+(`~/build/local-music-gen/plan-to-add-missing-fuctionality-for-new-models.md`)
 was implemented in full: the catalog grew from 111 to **127 entries**, ten
 new Actions cards landed (vocals2music, edit-with-words, vamp-loop,
 dereverb, denoise, read-chords, rate-quality, gen-my-voice, style-morph,
@@ -214,7 +214,7 @@ Four of the deliberate skips above were revisited, all four resolved
 - **SongGen dual-track: rendered, awaiting the listen.** interleaving_A_V
   (5.4 GB) renders vocal + accompaniment stems at the same token cost as
   mixed_pro but yields half the audio per token (two streams share the
-  frames). A/B files in `~/build/local-music/listen-2026-08-26/`;
+  frames). A/B files in `~/build/local-music-gen/listen-2026-08-26/`;
   entry only if it wins on listening.
 
 Still genuinely blocked, unchanged: BS-Mamba2 (CUDA-only kernels), the

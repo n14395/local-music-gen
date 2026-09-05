@@ -18,8 +18,8 @@ class Settings:
         """Accelerator-memory ceiling for workers; breach = kill before swap.
         macOS won't OOM-kill a runaway Metal allocator — it swaps until the
         machine crawls — so the guard fails the job cleanly instead. Default 90%
-        of physical RAM; LOCALMUSIC_MEM_GUARD_BYTES overrides (0 disables)."""
-        env = os.environ.get("LOCALMUSIC_MEM_GUARD_BYTES")
+        of physical RAM; LOCALMUSICGEN_MEM_GUARD_BYTES overrides (0 disables)."""
+        env = os.environ.get("LOCALMUSICGEN_MEM_GUARD_BYTES")
         if env is not None:
             return int(env or 0)
         from .telemetry import physical_ram_bytes
@@ -50,7 +50,7 @@ class Settings:
         # because unlike ms-cache it holds real gigabytes. These used to be
         # derived per-adapter as a sibling of HF_HOME, which meant a library
         # move silently stranded them; one root, named here, is the fix.
-        return (os.environ.get("LOCALMUSIC_AUX_CACHE")
+        return (os.environ.get("LOCALMUSICGEN_AUX_CACHE")
                 or os.path.join(self.data_dir, "aux-cache"))
 
     @property
@@ -117,4 +117,4 @@ class Settings:
         os.environ["HF_HOME"] = self.hf_cache_dir
         # Likewise every adapter's own download; the worker sets this explicitly
         # too, so the two agree whatever the import order turns out to be.
-        os.environ["LOCALMUSIC_AUX_CACHE"] = self.aux_cache_dir
+        os.environ["LOCALMUSICGEN_AUX_CACHE"] = self.aux_cache_dir

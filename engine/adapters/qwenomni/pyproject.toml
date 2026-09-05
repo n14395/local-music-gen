@@ -1,7 +1,7 @@
 [project]
 name = "adapter-qwenomni"
 version = "0.1.0"
-description = "Qwen2.5-Omni music listeners (ACE-Step transcriber & captioner) for the LocalMusic engine"
+description = "Qwen2.5-Omni music listeners (ACE-Step transcriber & captioner) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # The Qwen2_5Omni* classes need a current transformers; nothing here pins

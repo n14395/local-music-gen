@@ -9,7 +9,7 @@ model, which would swap-death long before finishing. Wrapping generate() with a
 stopping criteria that returns freed blocks to the OS every 25 tokens holds the
 footprint flat at no measurable cost.
 
-Set LOCALMUSIC_MPS_FLUSH_DEBUG=1 to log hook activity to stderr.
+Set LOCALMUSICGEN_MPS_FLUSH_DEBUG=1 to log hook activity to stderr.
 """
 import os
 import sys
@@ -21,7 +21,7 @@ try:
         from transformers.generation import StoppingCriteria, StoppingCriteriaList
         from transformers.generation.utils import GenerationMixin
 
-        _debug = os.environ.get("LOCALMUSIC_MPS_FLUSH_DEBUG") == "1"
+        _debug = os.environ.get("LOCALMUSICGEN_MPS_FLUSH_DEBUG") == "1"
 
         class _FlushMPS(StoppingCriteria):
             def __init__(self) -> None:

@@ -41,11 +41,11 @@ AUX_KEPT_DIRS = ("tone3000-tones",)
 def aux_root() -> str:
     """Where adapter-fetched weights live.
 
-    The worker always sets `LOCALMUSIC_AUX_CACHE`. The fallback is the pre-aux
+    The worker always sets `LOCALMUSICGEN_AUX_CACHE`. The fallback is the pre-aux
     derivation — a sibling of `HF_HOME` — kept only so an adapter still lands
     somewhere sane when it is driven directly by the verify scripts.
     """
-    root = os.environ.get("LOCALMUSIC_AUX_CACHE")
+    root = os.environ.get("LOCALMUSICGEN_AUX_CACHE")
     if root:
         return root
     hf_home = os.environ.get("HF_HOME")

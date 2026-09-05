@@ -11,7 +11,7 @@ xcuserdata/
 
 # The Xcode project is generated from app/project.yml by xcodegen (build.sh
 # regenerates it). It stays tracked so a fresh clone can run `make app-test`
-# without generating first; add `app/LocalMusic.xcodeproj/` here if you'd
+# without generating first; add `app/LocalMusicGen.xcodeproj/` here if you'd
 # rather treat it as pure build output.
 
 # Distribution output — everything under dist/ is produced by
@@ -45,7 +45,7 @@ engine/adapters/acestepcpp/.revision
 engine/adapters/yue/vendor/
 
 # Model weights / engine runtime state never belong in the repo (they live in
-# ~/Library/Application Support/LocalMusic and the shared HF cache), but guard
+# ~/Library/Application Support/LocalMusicGen and the shared HF cache), but guard
 # against a stray dev-mode data dir
 hf-cache/
 envs/

@@ -1,4 +1,4 @@
-# LocalMusic engine API contract
+# LocalMusicGen engine API contract
 
 Version: `1` (breaking changes bump this; the app checks `contract` in the handshake file).
 
@@ -20,7 +20,7 @@ Error codes used in this document: `UNAUTHORIZED`, `NOT_FOUND`, `VALIDATION`,
 
 Memory warning: workers report their Metal/accelerator memory every 2 s. When
 usage crosses the warning level (default 90% of physical RAM;
-`LOCALMUSIC_MEM_GUARD_BYTES` in the engine's environment overrides, `0`
+`LOCALMUSICGEN_MEM_GUARD_BYTES` in the engine's environment overrides, `0`
 disables), the engine emits `engine.warning` plus a `job.log` line for the
 running job — it never stops the job (transient allocator spikes can cross the
 level during legitimate generations). The warning re-arms after usage falls
@@ -34,7 +34,7 @@ The app spawns:
 <engine> --handshake-file <path> --parent-pid <pid> --data-dir <dir> --output-dir <dir> [--log-level info]
 ```
 
-Environment: `LOCALMUSIC_AUTH_TOKEN=<random hex>` — generated fresh by the app each
+Environment: `LOCALMUSICGEN_AUTH_TOKEN=<random hex>` — generated fresh by the app each
 launch; never written to disk by either side.
 
 Engine behavior:
@@ -465,7 +465,7 @@ JSON-encoded **string** (the params dict itself stays flat scalars on the wire).
   `stage` reads `weights` provisionally — whether it needs to provision at all
   is decided when it starts, since the download ahead of it may have built the
   same family's runtime in the meantime. The concurrency limit is overridable
-  with `LOCALMUSIC_MAX_ACTIVE_DOWNLOADS` in the engine's environment.
+  with `LOCALMUSICGEN_MAX_ACTIVE_DOWNLOADS` in the engine's environment.
 
   A queued download emits `download.progress` **when it is accepted**, not when
   it starts transferring: a client watching the stream has to be able to see
@@ -517,9 +517,9 @@ running a job is never evicted.
   pool currently holds (empty when it is).
 - Resident and pooled workers can be loaded at once by design; the warn-only
   memory guard still applies per worker. Env overrides on the engine:
-  `LOCALMUSIC_SMALL_MODEL_BYTES` (`0` disables the policy, restoring
-  single-slot behaviour), `LOCALMUSIC_SMALL_WARM_SLOTS` and
-  `LOCALMUSIC_SMALL_WARM_TTL_S` (either `0` drops small workers as soon as they
+  `LOCALMUSICGEN_SMALL_MODEL_BYTES` (`0` disables the policy, restoring
+  single-slot behaviour), `LOCALMUSICGEN_SMALL_WARM_SLOTS` and
+  `LOCALMUSICGEN_SMALL_WARM_TTL_S` (either `0` drops small workers as soon as they
   go idle).
 
 `POST /v1/worker/unload` → `202 {}` — free the resident model now. Refusal:
@@ -543,7 +543,7 @@ engine owns the folder or borrows it:
 | root | where | env | ours | relocatable |
 |---|---|---|---|---|
 | Hugging Face cache | `~/.cache/huggingface` by default | `HF_HOME` | only what the catalog names | yes |
-| auxiliary cache | `<data-dir>/aux-cache` by default | `LOCALMUSIC_AUX_CACHE` | all of it | yes, with the library folder |
+| auxiliary cache | `<data-dir>/aux-cache` by default | `LOCALMUSICGEN_AUX_CACHE` | all of it | yes, with the library folder |
 | ModelScope cache | `<data-dir>/ms-cache` | — | all of it | no |
 
 The Hugging Face folder is **shared**: other Hugging Face tooling on the machine
@@ -685,7 +685,7 @@ folder, or a destination inside the current auxiliary root.
 `409 INSUFFICIENT_DISK` is checked per root against its own destination — the
 two can be on different volumes.
 
-**The engine reads `HF_HOME` and `LOCALMUSIC_AUX_CACHE` once, at launch.** This endpoint only rearranges
+**The engine reads `HF_HOME` and `LOCALMUSICGEN_AUX_CACHE` once, at launch.** This endpoint only rearranges
 files; the client applies the new path and restarts the engine afterwards.
 Every event for a relocate carries `restart_required: true` — including a
 failed one, which needs the restart *more*, since some repositories are already
@@ -842,10 +842,10 @@ output and remains the source of truth, so a client that saw `job.take_done`
 dedups by take index, and one that missed it (ring-buffer replay is
 best-effort) loses nothing. A take announced this way is final; the engine
 never rewrites it. The engine garbage-collects `Outputs/<job_id>/` directories left
-untouched for `LOCALMUSIC_OUTPUTS_RETENTION_DAYS` days (default 14; `0` keeps
+untouched for `LOCALMUSICGEN_OUTPUTS_RETENTION_DAYS` days (default 14; `0` keeps
 everything) — swept at startup and daily, never touching a non-terminal job's
 directory. Terminal jobs are also evicted from the in-memory history past
-`LOCALMUSIC_JOB_HISTORY_CAP` total jobs (default 200; `0` unbounded), oldest
+`LOCALMUSICGEN_JOB_HISTORY_CAP` total jobs (default 200; `0` unbounded), oldest
 first; a purged job answers `404` like any unknown id.
 
 ### 5.3 Cancel
@@ -1393,7 +1393,7 @@ This is not a separate event — it arrives as an ordinary `job.log` line.
 
 ## 7. Storage ownership
 
-Under `~/Library/Application Support/LocalMusic/` (the app passes the concrete dirs):
+Under `~/Library/Application Support/LocalMusicGen/` (the app passes the concrete dirs):
 
 - App-owned (engine never touches): `Database/`, `Library/`.
 - Engine-owned (rooted at `--data-dir` / `--output-dir`): `envs/`, `Outputs/`

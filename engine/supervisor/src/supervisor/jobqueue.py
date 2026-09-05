@@ -42,7 +42,7 @@ TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
 # Terminal jobs are kept as history for the app's queue rail, but the dict
 # grew without bound over a long engine run. Oldest terminal rows are evicted
 # past this many total jobs; live jobs are never counted out. 0 = unbounded.
-JOB_HISTORY_CAP = int(os.environ.get("LOCALMUSIC_JOB_HISTORY_CAP") or 200)
+JOB_HISTORY_CAP = int(os.environ.get("LOCALMUSICGEN_JOB_HISTORY_CAP") or 200)
 
 # Floor on the gap between two job.progress events of the same stage. Each one
 # is an SSE frame, a decode and a main-thread store mutation in the app, so the
@@ -89,7 +89,7 @@ TASKS = ("generate", "separate", "transcribe", "analyze", "render", "mix",
 # empty gap here — every auxiliary (non-generate) model is ≤0.91 GB and the
 # smallest generation model is 1.64 GB — so this splits exactly along "does
 # this model run as a step attached to other work".
-SMALL_MODEL_BYTES = int(os.environ.get("LOCALMUSIC_SMALL_MODEL_BYTES")
+SMALL_MODEL_BYTES = int(os.environ.get("LOCALMUSICGEN_SMALL_MODEL_BYTES")
                         or 1_500_000_000)
 
 # How many small workers may stay warm at once, and for how long after their
@@ -97,8 +97,8 @@ SMALL_MODEL_BYTES = int(os.environ.get("LOCALMUSIC_SMALL_MODEL_BYTES")
 # on every workbench mix, separation↔analysis on every split); ten minutes
 # outlives think-time plus a full generation, so the analyzer that runs after
 # the next track is still warm. Either at 0 restores immediate reaping.
-SMALL_WARM_SLOTS = int(os.environ.get("LOCALMUSIC_SMALL_WARM_SLOTS") or 2)
-SMALL_WARM_TTL_S = float(os.environ.get("LOCALMUSIC_SMALL_WARM_TTL_S") or 600)
+SMALL_WARM_SLOTS = int(os.environ.get("LOCALMUSICGEN_SMALL_WARM_SLOTS") or 2)
+SMALL_WARM_TTL_S = float(os.environ.get("LOCALMUSICGEN_SMALL_WARM_TTL_S") or 600)
 
 
 def _is_small(model: dict) -> bool:

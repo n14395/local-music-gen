@@ -1,7 +1,7 @@
 [project]
 name = "adapter-msst"
 version = "0.1.0"
-description = "Research separation zoo (ZFTurbo MSST models + Inria BSRNN) for the LocalMusic engine"
+description = "Research separation zoo (ZFTurbo MSST models + Inria BSRNN) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # torch 2.7 pair: the last with native torchaudio.load, and both repos'

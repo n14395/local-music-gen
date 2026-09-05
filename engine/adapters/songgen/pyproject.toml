@@ -1,7 +1,7 @@
 [project]
 name = "adapter-songgen"
 version = "0.1.0"
-description = "SongGen single-stage text+lyrics-to-song (ICML 2025) for the LocalMusic engine"
+description = "SongGen single-stage text+lyrics-to-song (ICML 2025) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "songgen",

@@ -1,7 +1,7 @@
 [project]
 name = "adapter-assistant"
 version = "0.1.0"
-description = "Writing-assistant adapter (small local instruct LLM that drafts prompts, lyrics and titles) for the LocalMusic engine"
+description = "Writing-assistant adapter (small local instruct LLM that drafts prompts, lyrics and titles) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # The whole family is one dependency. mlx-lm brings mlx, transformers and

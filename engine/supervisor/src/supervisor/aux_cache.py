@@ -24,7 +24,7 @@ from engine_protocol.adapter import AUX_DIRS
 # Written into the aux root once the sweep has run. Without it, a
 # `torch-cache` the user's *other* tooling recreates at the legacy path would
 # be swallowed on every launch.
-MARKER = ".localmusic-migrated"
+MARKER = ".localmusicgen-migrated"
 
 
 def _legacy_bases(settings) -> list[str]:

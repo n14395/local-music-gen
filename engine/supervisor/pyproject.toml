@@ -1,7 +1,7 @@
 [project]
 name = "localmusic-supervisor"
 version = "0.1.0"
-description = "LocalMusic inference engine supervisor (sidecar API)"
+description = "LocalMusicGen inference engine supervisor (sidecar API)"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.115",
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-local-music-engine = "supervisor.main:cli"
+local-music-gen-engine = "supervisor.main:cli"
 
 [tool.uv.sources]
 engine-protocol = { path = "../protocol", editable = true }

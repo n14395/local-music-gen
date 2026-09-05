@@ -171,7 +171,7 @@ class DenseActivation(nn.Module):
     def __init__(self, config):
         super().__init__()
         mlp_dims = config.d_ff or config.d_model * 4
-        # LocalMusic: transformers sub-configs always serialize
+        # LocalMusicGen: transformers sub-configs always serialize
         # feed_forward_proj (e.g. "relu"), so gating must key off the
         # "gated-" prefix, not the attribute's presence.
         proj = getattr(config, "feed_forward_proj", "relu")
@@ -310,7 +310,7 @@ class T5(nn.Module):
     def __init__(self, config, encoder_only: bool = False):
         self.wte = nn.Embedding(config.vocab_size, config.d_model)
         self.encoder = TransformerEncoder(config)
-        # LocalMusic: MusicGen only needs the encoder; skip the decoder so its
+        # LocalMusicGen: MusicGen only needs the encoder; skip the decoder so its
         # parameters are never allocated.
         if not encoder_only:
             self.decoder = TransformerDecoder(config)

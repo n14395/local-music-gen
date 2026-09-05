@@ -1,7 +1,7 @@
 [project]
 name = "adapter-yue"
 version = "0.1.0"
-description = "YuE adapter (experimental, subprocess infer.py) for the LocalMusic engine"
+description = "YuE adapter (experimental, subprocess infer.py) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch",

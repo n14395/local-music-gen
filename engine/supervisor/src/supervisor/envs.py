@@ -1,8 +1,8 @@
 """Per-family adapter venv provisioning via uv.
 
 Dev layout: engine/adapters/<family>/ with pyproject.toml; `uv sync` creates .venv in
-place. Packaged builds (M9) point LOCALMUSIC_ADAPTERS_DIR at a writable copy under
-Application Support and LOCALMUSIC_UV at the bundled uv binary.
+place. Packaged builds (M9) point LOCALMUSICGEN_ADAPTERS_DIR at a writable copy under
+Application Support and LOCALMUSICGEN_UV at the bundled uv binary.
 
 A family's venv is its *runtime*: the torch-sized dependency tree its adapter
 imports. It is downloaded with the first model of the family (contract 4.2),
@@ -28,7 +28,7 @@ _GLOBAL = threading.Lock()
 
 # Written into the venv after a successful sync, so it dies with the venv and
 # can never outlive what it describes.
-MARKER_NAME = ".localmusic-runtime.json"
+MARKER_NAME = ".localmusicgen-runtime.json"
 
 # (path, mtime_ns, size) -> digest. `/v1/models` asks about every family in the
 # catalog on every refresh, and hashing a megabyte of uv.lock 60 times per
@@ -41,14 +41,14 @@ class ProvisionError(Exception):
 
 
 def adapters_root() -> str:
-    if custom := os.environ.get("LOCALMUSIC_ADAPTERS_DIR"):
+    if custom := os.environ.get("LOCALMUSICGEN_ADAPTERS_DIR"):
         return custom
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.abspath(os.path.join(here, "..", "..", "..", "adapters"))
 
 
 def _uv() -> str:
-    return os.environ.get("LOCALMUSIC_UV", "uv")
+    return os.environ.get("LOCALMUSICGEN_UV", "uv")
 
 
 def family_dir(family: str) -> str:

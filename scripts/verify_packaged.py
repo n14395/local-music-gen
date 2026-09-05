@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """First-run verification of the PACKAGED app's engine.
 
-Spawns dist/LocalMusic.app's bundled engine shim against an empty data dir — the
+Spawns dist/LocalMusicGen.app's bundled engine shim against an empty data dir — the
 same thing the app does on a fresh machine: sources copied out of the bundle, uv
 installs CPython 3.11, the supervisor venv syncs, then a real download + generation
 runs through a freshly provisioned adapter venv. Slow on first run by design.
@@ -23,15 +23,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from contractlib import Client, SSEListener, check, report  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHIM = os.path.join(ROOT, "dist", "LocalMusic.app", "Contents", "Resources",
-                    "backend", "bin", "local-music-engine")
+SHIM = os.path.join(ROOT, "dist", "LocalMusicGen.app", "Contents", "Resources",
+                    "backend", "bin", "local-music-gen-engine")
 
 
 def main() -> int:
     if not os.path.exists(SHIM):
         print("run scripts/package_app.sh first")
         return 1
-    tmp = tempfile.mkdtemp(prefix="localmusic-packaged-")
+    tmp = tempfile.mkdtemp(prefix="localmusicgen-packaged-")
     handshake = os.path.join(tmp, "hs.json")
     token = secrets.token_hex(16)
     proc = subprocess.Popen(
@@ -39,8 +39,8 @@ def main() -> int:
          "--data-dir", os.path.join(tmp, "data"),
          "--output-dir", os.path.join(tmp, "outputs"),
          "--log-level", "warning"],
-        env={**os.environ, "LOCALMUSIC_AUTH_TOKEN": token,
-             "LOCALMUSIC_TEST_CATALOG": "1"},
+        env={**os.environ, "LOCALMUSICGEN_AUTH_TOKEN": token,
+             "LOCALMUSICGEN_TEST_CATALOG": "1"},
         stderr=subprocess.STDOUT, stdout=subprocess.PIPE, text=True)
 
     try:

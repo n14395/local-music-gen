@@ -2121,7 +2121,7 @@ NEW_ENTRIES = [
     # acestep entries use (shared-repo refcounting applies); the LoRAs were
     # ModelScope-exclusive and are now mirrored (unmodified, Apache-2.0) on
     # the user-owned HF account — see rtikw/acestep15xlsft-* and
-    # ~/build/local-music/models-uploaded-to-my-HF.md.
+    # ~/build/local-music-gen/models-uploaded-to-my-HF.md.
     entry("acestep-xl-vocals2music", "diffsynthace",
           [{"repo_id": ACE_CORE, "gated": False,
             "allow_patterns": ["Qwen3-Embedding-0.6B/*", "vae/*"]},

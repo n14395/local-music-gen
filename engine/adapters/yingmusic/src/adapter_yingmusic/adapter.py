@@ -36,7 +36,7 @@ REPO_TARBALL = (f"https://github.com/GiantAILab/YingMusic-Singer/archive/"
 
 LANGSEGMENT_PATCH = '''
 
-# --- LocalMusic patch: LangSegment 0.2.0's __init__ imports these four
+# --- LocalMusicGen patch: LangSegment 0.2.0's __init__ imports these four
 # setters but the module never defines them; upstream is deleted, so provide
 # benign defaults. ---
 _lang_filters = []

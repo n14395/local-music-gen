@@ -30,12 +30,12 @@ def main() -> int:
     ap.add_argument("--play", action="store_true")
     args = ap.parse_args()
 
-    tmp = tempfile.mkdtemp(prefix="localmusic-verify-")
+    tmp = tempfile.mkdtemp(prefix="localmusicgen-verify-")
     handshake = os.path.join(tmp, "handshake.json")
     token = secrets.token_hex(16)
-    env = {**os.environ, "LOCALMUSIC_AUTH_TOKEN": token,
-           "LOCALMUSIC_STUB_DOWNLOAD_S": "2", "LOCALMUSIC_STUB_PROVISION_S": "1",
-           "LOCALMUSIC_STUB_JOB_SPEED": "4"}
+    env = {**os.environ, "LOCALMUSICGEN_AUTH_TOKEN": token,
+           "LOCALMUSICGEN_STUB_DOWNLOAD_S": "2", "LOCALMUSICGEN_STUB_PROVISION_S": "1",
+           "LOCALMUSICGEN_STUB_JOB_SPEED": "4"}
     proc = subprocess.Popen(
         ["uv", "run", "python", "stub_server.py",
          "--handshake-file", handshake, "--parent-pid", str(os.getpid()),

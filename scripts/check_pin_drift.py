@@ -27,9 +27,9 @@ import os
 import subprocess
 import sys
 
-APP = ("/Users/nwf/Library/Application Support/LocalMusic/engine-src/"
+APP = ("/Users/nwf/Library/Application Support/LocalMusicGen/engine-src/"
        "adapters/{}/.venv/bin/python")
-TRIAGE = "/Users/nwf/build/local-music/new-model-testing/envs/{}/bin/python"
+TRIAGE = "/Users/nwf/build/local-music-gen/new-model-testing/envs/{}/bin/python"
 
 # adapter family -> triage env that proved it
 PAIRS = {

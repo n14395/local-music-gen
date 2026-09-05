@@ -1,7 +1,7 @@
 [project]
 name = "adapter-diffsynthace"
 version = "0.1.0"
-description = "ACE-Step 1.5 XL LoRA pack (vocals2music + instrument LoRAs) via DiffSynth-Studio, for the LocalMusic engine"
+description = "ACE-Step 1.5 XL LoRA pack (vocals2music + instrument LoRAs) via DiffSynth-Studio, for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "diffsynth",

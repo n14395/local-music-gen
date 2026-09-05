@@ -131,7 +131,7 @@ _TEST_MODEL_SPLIT = {
 
 
 # Weightless entry on a family that exists nowhere: the verification suite
-# points LOCALMUSIC_ADAPTERS_DIR at a scratch root holding one dependency-free
+# points LOCALMUSICGEN_ADAPTERS_DIR at a scratch root holding one dependency-free
 # `test-provision` project, which is the only way to watch a venv being built
 # from cold — every real family is already synced in a dev checkout, and the
 # download path skips a family it already has.
@@ -162,7 +162,7 @@ class Registry:
         self.settings = settings
         with open(_catalog_path()) as f:
             models = json.load(f)["models"]
-        if os.environ.get("LOCALMUSIC_TEST_CATALOG"):
+        if os.environ.get("LOCALMUSICGEN_TEST_CATALOG"):
             models = models + [_TEST_MODEL, _TEST_MODEL_SHARED,
                                _TEST_MODEL_PATTERNS, _TEST_MODEL_SPLIT,
                                _TEST_MODEL_PROVISION]

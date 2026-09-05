@@ -1,7 +1,7 @@
 [project]
 name = "adapter-diffrhythm2"
 version = "0.1.0"
-description = "DiffRhythm2 full-song lyrics-to-song (block-cache flow matching) for the LocalMusic engine"
+description = "DiffRhythm2 full-song lyrics-to-song (block-cache flow matching) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # The proven triage stack (2026-08-25) — the worst dependency gauntlet of

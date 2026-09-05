@@ -1,7 +1,7 @@
 [project]
 name = "adapter-musicgen"
 version = "0.1.0"
-description = "MusicGen adapter (transformers on MPS) for the LocalMusic engine"
+description = "MusicGen adapter (transformers on MPS) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch>=2.4",

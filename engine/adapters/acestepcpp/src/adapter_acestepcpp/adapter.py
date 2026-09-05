@@ -98,7 +98,7 @@ _BOUNDARY = b"--ace-batch-boundary"
 # What we send: any token httplib can split on. Its parser files a part under
 # `files` only when the Content-Disposition carries a filename, and every part
 # the handlers look for is fetched with `has_file`.
-_UPLOAD_BOUNDARY = "localmusic-ace-upload"
+_UPLOAD_BOUNDARY = "localmusicgen-ace-upload"
 
 _POLL_S = 0.2            # job status poll interval
 _START_TIMEOUT_S = 60.0  # server boot: a registry scan reads GGUF metadata only
@@ -118,7 +118,7 @@ _LATENT_TASKS = frozenset({"cover", "cover-nofsq", "extract", "complete"})
 
 
 def _bin_dir() -> Path:
-    if custom := os.environ.get("LOCALMUSIC_ACESTEP_CPP_BIN"):
+    if custom := os.environ.get("LOCALMUSICGEN_ACESTEP_CPP_BIN"):
         return Path(custom)
     # src/adapter_acestepcpp/adapter.py -> adapters/acestepcpp/bin
     return Path(__file__).resolve().parents[2] / "bin"

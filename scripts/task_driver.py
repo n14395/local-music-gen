@@ -8,7 +8,7 @@ events, artifacts and result meta. Exit 0 iff the job completed.
 import argparse, json, os, secrets, signal, subprocess, sys, time
 from urllib.parse import quote
 
-ROOT = "/Users/nwf/build/local-music/src"
+ROOT = "/Users/nwf/build/local-music-gen/src"
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from contractlib import Client, SSEListener  # noqa: E402
 
@@ -21,16 +21,16 @@ ap.add_argument("--timeout", type=float, default=1800)
 args = ap.parse_args()
 
 token = secrets.token_hex(16)
-data_dir = os.path.expanduser("~/Library/Application Support/LocalMusic")
+data_dir = os.path.expanduser("~/Library/Application Support/LocalMusicGen")
 hs_path = os.path.join(data_dir, "Backend", "audit-task-handshake.json")
 if os.path.exists(hs_path):
     os.unlink(hs_path)
 proc = subprocess.Popen(
-    ["uv", "run", "local-music-engine", "--handshake-file", hs_path,
+    ["uv", "run", "local-music-gen-engine", "--handshake-file", hs_path,
      "--parent-pid", str(os.getpid()), "--data-dir", data_dir,
      "--output-dir", os.path.join(data_dir, "Outputs"), "--log-level", "warning"],
     cwd=os.path.join(ROOT, "engine", "supervisor"),
-    env={**os.environ, "LOCALMUSIC_AUTH_TOKEN": token},
+    env={**os.environ, "LOCALMUSICGEN_AUTH_TOKEN": token},
     stdout=subprocess.DEVNULL)
 try:
     deadline = time.time() + 60

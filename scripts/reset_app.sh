@@ -1,5 +1,5 @@
 #!/bin/bash
-# Put LocalMusic back to a first-run install — without re-downloading anything.
+# Put LocalMusicGen back to a first-run install — without re-downloading anything.
 #
 # The point is to be able to exercise onboarding (and every other "first time
 # you see this" affordance) on a machine that already has hundreds of gigabytes
@@ -9,9 +9,9 @@
 #   ~/.cache/huggingface          model weights
 #   ~/.cache/torch                Demucs checkpoints fetched by its own tooling
 #   ~/.cache/localmusic-soundfonts  the MuseScore SoundFont
-#   …/LocalMusic/engine-src       the adapter venvs (torch and friends)
-#   …/LocalMusic/uv-cache         the wheel cache
-#   …/LocalMusic/python           the bundled interpreter
+#   …/LocalMusicGen/engine-src       the adapter venvs (torch and friends)
+#   …/LocalMusicGen/uv-cache         the wheel cache
+#   …/LocalMusicGen/python           the bundled interpreter
 #   Keychain                      the Hugging Face token
 #
 # What goes is the app's own state: preferences (which is what makes the
@@ -24,12 +24,12 @@
 # That is the only way onboarding has anything to offer, and re-installing is
 # close to instant: the download finds every blob already in the HF cache.
 #
-# Usage: scripts/reset_app.sh [--yes]     (or LOCALMUSIC_RESET_YES=1)
+# Usage: scripts/reset_app.sh [--yes]     (or LOCALMUSICGEN_RESET_YES=1)
 set -euo pipefail
 
-ROOT="$HOME/Library/Application Support/LocalMusic"
-DOMAIN="dev.nwf.LocalMusic"
-ASSUME_YES="${LOCALMUSIC_RESET_YES:-0}"
+ROOT="$HOME/Library/Application Support/LocalMusicGen"
+DOMAIN="com.n14395.local-music-gen"
+ASSUME_YES="${LOCALMUSICGEN_RESET_YES:-0}"
 [[ "${1:-}" == "--yes" ]] && ASSUME_YES=1
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
@@ -38,9 +38,9 @@ bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 # app rewrites them as it quits, so a `defaults delete` underneath a live
 # process buys nothing. A live engine is worse — it owns the directories we are
 # about to remove.
-for pattern in "LocalMusic.app" "local-music-engine"; do
+for pattern in "LocalMusicGen.app" "local-music-gen-engine"; do
     if pgrep -f "$pattern" >/dev/null 2>&1; then
-        echo "LocalMusic is still running ($pattern). Quit it first — a reset" >&2
+        echo "LocalMusicGen is still running ($pattern). Quit it first — a reset" >&2
         echo "underneath a live process is silently undone." >&2
         exit 1
     fi
@@ -57,7 +57,7 @@ KEEP=(engine-src uv-cache python)
 
 size_of() { du -sh "$1" 2>/dev/null | cut -f1; }
 
-bold "Reset LocalMusic to a first-run install"
+bold "Reset LocalMusicGen to a first-run install"
 echo
 echo "  REMOVES"
 printf '    %-14s %s\n' "preferences" "defaults domain $DOMAIN"
@@ -80,7 +80,7 @@ echo
 if [[ "$ASSUME_YES" != "1" ]]; then
     if [[ ! -t 0 ]]; then
         echo "Refusing to reset without a terminal to confirm at." >&2
-        echo "Pass --yes (or set LOCALMUSIC_RESET_YES=1) if you meant it." >&2
+        echo "Pass --yes (or set LOCALMUSICGEN_RESET_YES=1) if you meant it." >&2
         exit 1
     fi
     # The library is the one thing here that cannot be re-fetched.

@@ -4,11 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-RUN_DIR="${TMPDIR:-/tmp}/localmusic-stub"
+RUN_DIR="${TMPDIR:-/tmp}/localmusicgen-stub"
 mkdir -p "$RUN_DIR"
 
 # Deterministic dev token so the app's attach mode can connect without plumbing.
-export LOCALMUSIC_AUTH_TOKEN="${LOCALMUSIC_AUTH_TOKEN:-localmusic-dev}"
+export LOCALMUSICGEN_AUTH_TOKEN="${LOCALMUSICGEN_AUTH_TOKEN:-localmusicgen-dev}"
 
 ARGS=(--handshake-file "$RUN_DIR/handshake.json" \
       --data-dir "$RUN_DIR/data" \

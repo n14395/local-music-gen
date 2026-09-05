@@ -101,7 +101,7 @@ async def run(settings: Settings) -> None:
 
 
 def cli() -> None:
-    ap = argparse.ArgumentParser(prog="local-music-engine")
+    ap = argparse.ArgumentParser(prog="local-music-gen-engine")
     ap.add_argument("--handshake-file", required=True)
     ap.add_argument("--parent-pid", type=int, default=None)
     ap.add_argument("--data-dir", required=True)
@@ -109,10 +109,10 @@ def cli() -> None:
     ap.add_argument("--log-level", default="info")
     args = ap.parse_args()
 
-    token = os.environ.get("LOCALMUSIC_AUTH_TOKEN") or ""
+    token = os.environ.get("LOCALMUSICGEN_AUTH_TOKEN") or ""
     if not token:
         token = secrets.token_hex(16)
-        print(f"LOCALMUSIC_AUTH_TOKEN not set; using {token}", file=sys.stderr)
+        print(f"LOCALMUSICGEN_AUTH_TOKEN not set; using {token}", file=sys.stderr)
 
     settings = Settings(data_dir=args.data_dir, output_dir=args.output_dir,
                         handshake_file=args.handshake_file,

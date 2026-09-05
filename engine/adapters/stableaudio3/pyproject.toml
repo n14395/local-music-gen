@@ -1,7 +1,7 @@
 [project]
 name = "adapter-stableaudio3"
 version = "0.1.0"
-description = "Stable Audio 3 Small adapter (text-to-audio, audio-to-audio, inpaint, extend) for the LocalMusic engine"
+description = "Stable Audio 3 Small adapter (text-to-audio, audio-to-audio, inpaint, extend) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "stable-audio-3",

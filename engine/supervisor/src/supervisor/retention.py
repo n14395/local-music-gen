@@ -7,7 +7,7 @@ takes from app sessions that crashed mid-ingest. This sweeps them by age, at
 startup and then daily.
 
 The app owns the knob (Settings → Engine) and passes it as
-LOCALMUSIC_OUTPUTS_RETENTION_DAYS; 0 keeps everything forever.
+LOCALMUSICGEN_OUTPUTS_RETENTION_DAYS; 0 keeps everything forever.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ DEFAULT_RETENTION_DAYS = 14
 
 
 def outputs_retention_days() -> int:
-    env = os.environ.get("LOCALMUSIC_OUTPUTS_RETENTION_DAYS")
+    env = os.environ.get("LOCALMUSICGEN_OUTPUTS_RETENTION_DAYS")
     if env is None:
         return DEFAULT_RETENTION_DAYS
     try:

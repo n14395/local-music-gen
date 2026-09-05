@@ -1,7 +1,7 @@
 [project]
 name = "adapter-audiocraft"
 version = "0.1.0"
-description = "audiocraft adapter (MAGNeT + audiocraft-format MusicGen/Style) for the LocalMusic engine"
+description = "audiocraft adapter (MAGNeT + audiocraft-format MusicGen/Style) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "audiocraft",

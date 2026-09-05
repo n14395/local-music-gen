@@ -38,7 +38,7 @@
    "likes": 164,
    "lastModified": "2023-11-17T15:25:23.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official"
   },
@@ -54,7 +54,7 @@
    "likes": 506,
    "lastModified": "2023-11-17T13:56:10.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official"
   },
@@ -70,7 +70,7 @@
    "likes": 537,
    "lastModified": "2023-11-17T15:25:38.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official"
   },
@@ -86,7 +86,7 @@
    "likes": 256,
    "lastModified": "2024-04-24T12:27:39.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official melody"
   },
@@ -102,7 +102,7 @@
    "likes": 2,
    "lastModified": "2024-02-06T12:41:49.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "transformers port"
   },
@@ -118,7 +118,7 @@
    "likes": 100,
    "lastModified": "2024-03-06T14:53:14.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official stereo"
   },
@@ -134,7 +134,7 @@
    "likes": 45,
    "lastModified": "2024-03-06T14:41:16.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official stereo"
   },
@@ -150,7 +150,7 @@
    "likes": 35,
    "lastModified": "2024-03-06T14:47:27.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official stereo"
   },
@@ -166,7 +166,7 @@
    "likes": 0,
    "lastModified": "2024-02-06T12:32:46.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "transformers port"
   },
@@ -182,7 +182,7 @@
    "likes": 11,
    "lastModified": "2024-04-24T12:28:28.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official stereo melody"
   },
@@ -198,7 +198,7 @@
    "likes": 31,
    "lastModified": "2024-02-21T10:34:31.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official melody"
   },
@@ -214,7 +214,7 @@
    "likes": 76,
    "lastModified": "2024-04-24T12:28:06.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "official stereo melody"
   },
@@ -246,7 +246,7 @@
    "likes": 0,
    "lastModified": "2026-08-10T21:45:35.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "finetune"
   },
@@ -262,7 +262,7 @@
    "likes": 1,
    "lastModified": "2026-07-26T21:28:46.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "re-upload?"
   },
@@ -278,7 +278,7 @@
    "likes": 22,
    "lastModified": "2024-04-23T12:41:47.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "micro-musicgen jungle; Aaron Abebe micro-musicgen (fast, weird-audio niche); transformers config verified"
   },
@@ -294,7 +294,7 @@
    "likes": 0,
    "lastModified": "2026-07-26T21:25:23.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "re-upload?"
   },
@@ -310,7 +310,7 @@
    "likes": 0,
    "lastModified": "2023-08-15T07:48:18.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "finetune"
   },
@@ -326,7 +326,7 @@
    "likes": 0,
    "lastModified": "2024-02-15T05:51:10.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "community"
   },
@@ -342,7 +342,7 @@
    "likes": 0,
    "lastModified": "2023-08-29T02:13:37.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "finetune"
   },
@@ -358,7 +358,7 @@
    "likes": 0,
    "lastModified": "2023-10-22T12:03:42.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "community"
   },
@@ -374,7 +374,7 @@
    "likes": 4,
    "lastModified": "2023-08-02T16:57:47.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "fp16 re-upload"
   },
@@ -390,7 +390,7 @@
    "likes": 3,
    "lastModified": "2024-05-03T18:03:46.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "transformers (LocalMusic musicgen adapter)",
+   "runtime": "transformers (LocalMusicGen musicgen adapter)",
    "macos_notes": "Runs on MPS via transformers; fp32 default, use fp16/bf16 with care (occasional MPS numerics issues reported).",
    "notes": "community"
   },
@@ -406,7 +406,7 @@
    "likes": 1559,
    "lastModified": "2025-06-19T21:53:23.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "official; Also ships diffusers layout (model_index.json StableAudioPipeline) alongside model_config.json; gated=auto (accept license)"
   },
@@ -422,7 +422,7 @@
    "likes": 270,
    "lastModified": "2025-05-27T14:47:23.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "official small (ARM-friendly); 341M SAO-small (ARM-optimized); gated=auto"
   },
@@ -438,7 +438,7 @@
    "likes": 0,
    "lastModified": "2026-01-09T07:23:48.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "ungated mirror; Ungated mirror incl. diffusers layout + model_config.json"
   },
@@ -454,7 +454,7 @@
    "likes": 5,
    "lastModified": "2024-11-25T01:00:36.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "finetune; Community music finetune of SAO 1.0; model_config.json verified present"
   },
@@ -470,7 +470,7 @@
    "likes": 0,
    "lastModified": "2025-07-22T15:33:23.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "mirror; Ungated mirror incl. diffusers layout"
   },
@@ -486,7 +486,7 @@
    "likes": 12,
    "lastModified": "2024-06-05T18:02:08.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "stable-audio-tools (LocalMusic stableaudio adapter)",
+   "runtime": "stable-audio-tools (LocalMusicGen stableaudio adapter)",
    "macos_notes": "stable-audio-tools works on MPS; -small tuned for Arm/edge.",
    "notes": "mirror; Ungated mirror, model_config.json present"
   },
@@ -502,7 +502,7 @@
    "likes": 832,
    "lastModified": "2026-02-03T11:37:37.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "core package; Core repo: DiT + VAE + text encoder package; 832 likes"
   },
@@ -518,7 +518,7 @@
    "likes": 53,
    "lastModified": "2026-02-03T06:30:44.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "LM 4B"
   },
@@ -534,7 +534,7 @@
    "likes": 18,
    "lastModified": "2026-02-03T06:30:22.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "LM 0.6B"
   },
@@ -550,7 +550,7 @@
    "likes": 92,
    "lastModified": "2026-04-07T06:22:59.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT xl sft"
   },
@@ -566,7 +566,7 @@
    "likes": 200,
    "lastModified": "2026-04-07T12:39:26.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT xl turbo"
   },
@@ -582,7 +582,7 @@
    "likes": 67,
    "lastModified": "2026-02-06T10:10:16.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT base"
   },
@@ -598,7 +598,7 @@
    "likes": 52,
    "lastModified": "2026-02-07T05:26:15.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT sft"
   },
@@ -614,7 +614,7 @@
    "likes": 100,
    "lastModified": "2026-04-07T06:16:08.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT xl base"
   },
@@ -630,7 +630,7 @@
    "likes": 13,
    "lastModified": "2026-02-03T06:30:59.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT turbo shift3"
   },
@@ -646,7 +646,7 @@
    "likes": 18,
    "lastModified": "2026-02-03T06:34:34.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT turbo continuous"
   },
@@ -662,7 +662,7 @@
    "likes": 14,
    "lastModified": "2026-02-03T06:34:16.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "DiT turbo shift1"
   },
@@ -678,7 +678,7 @@
    "likes": 9,
    "lastModified": "2026-02-22T22:29:43.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "community LoRA eurobeat; Community LoRA (eurobeat); requires base"
   },
@@ -694,7 +694,7 @@
    "likes": 15,
    "lastModified": "2026-02-03T15:38:08.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "v1.5 LoRA; Official v1.5 LoRA (PEFT); requires base DiT"
   },
@@ -710,7 +710,7 @@
    "likes": 0,
    "lastModified": "2026-02-14T10:10:11.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "LM 1.7B (mirror; no official repo); Community mirror; no official ACE-Step/acestep-5Hz-lm-1.7B repo exists on HF"
   },
@@ -726,7 +726,7 @@
    "likes": 18,
    "lastModified": "2026-02-12T07:16:34.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "ACE-Step 1.5 package (LocalMusic acestep adapter)",
+   "runtime": "ACE-Step 1.5 package (LocalMusicGen acestep adapter)",
    "macos_notes": "ACE-Step 1.5 supports macOS/MPS officially.",
    "notes": "community LoRA dnb; Community LoRA (dnb); requires base"
   },
@@ -742,7 +742,7 @@
    "likes": 819,
    "lastModified": "2026-08-14T10:51:40.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "diffusers ModularPipeline (LocalMusic minimax adapter)",
+   "runtime": "diffusers ModularPipeline (LocalMusicGen minimax adapter)",
    "macos_notes": "bf16 weights ~29GB + encoders; needs 64GB+ Mac for comfort on MPS; MLX/GGUF ports are the practical Apple Silicon route.",
    "notes": "official; untagged license (LICENSE file in repo); modular_model_index.json verified: MiniMaxMusic3ModularPipeline"
   },
@@ -758,7 +758,7 @@
    "likes": 457,
    "lastModified": "2025-03-12T07:07:19.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 EN chain-of-thought"
   },
@@ -774,7 +774,7 @@
    "likes": 61,
    "lastModified": "2025-03-12T07:10:21.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage2"
   },
@@ -790,7 +790,7 @@
    "likes": 23,
    "lastModified": "2025-03-12T07:09:08.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 JP/KR"
   },
@@ -806,7 +806,7 @@
    "likes": 55,
    "lastModified": "2025-03-12T07:08:21.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 EN in-context"
   },
@@ -822,7 +822,7 @@
    "likes": 40,
    "lastModified": "2025-03-12T07:09:46.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 ZH"
   },
@@ -838,7 +838,7 @@
    "likes": 17,
    "lastModified": "2025-03-12T07:10:01.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 ZH"
   },
@@ -854,7 +854,7 @@
    "likes": 3,
    "lastModified": "2025-03-18T13:45:02.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "small stage1"
   },
@@ -870,7 +870,7 @@
    "likes": 11,
    "lastModified": "2025-03-12T07:09:21.000Z",
    "vocals_or_instrumental": "vocals(lyrics-to-song)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "stage1 JP/KR"
   },
@@ -886,7 +886,7 @@
    "likes": 25,
    "lastModified": "2025-03-12T07:12:41.000Z",
    "vocals_or_instrumental": "n/a (upsampler component)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "upsampler"
   },
@@ -902,7 +902,7 @@
    "likes": 14,
    "lastModified": "2025-01-27T13:27:17.000Z",
    "vocals_or_instrumental": "n/a (codec component)",
-   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusic yue adapter)",
+   "runtime": "YuE repo: transformers stage1+stage2 + xcodec (LocalMusicGen yue adapter)",
    "macos_notes": "Experimental/slow on MPS (7B AR stage1); GGUF stage1 can go via llama.cpp but codec pipeline stays torch.",
    "notes": "xcodec codec (YuE dependency)"
   },
@@ -918,7 +918,7 @@
    "likes": 71,
    "lastModified": "2024-04-16T10:02:08.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM2"
   },
@@ -934,7 +934,7 @@
    "likes": 22,
    "lastModified": "2024-04-16T10:01:31.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM"
   },
@@ -950,7 +950,7 @@
    "likes": 20,
    "lastModified": "2024-04-16T10:02:18.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM2 large"
   },
@@ -966,7 +966,7 @@
    "likes": 23,
    "lastModified": "2024-04-16T10:01:53.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM"
   },
@@ -982,7 +982,7 @@
    "likes": 29,
    "lastModified": "2024-04-16T10:02:30.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM2 music; Music-specialized AudioLDM2"
   },
@@ -998,7 +998,7 @@
    "likes": 31,
    "lastModified": "2024-04-16T10:01:04.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM"
   },
@@ -1014,7 +1014,7 @@
    "likes": 2,
    "lastModified": "2026-04-12T01:08:24.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "diffusers re-upload?; Ungated diffusers-format StableAudioPipeline copy of SAO 1.0 \u2014 runnable today via generic diffusers adapter"
   },
@@ -1030,7 +1030,7 @@
    "likes": 34,
    "lastModified": "2024-04-16T10:01:43.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "AudioLDM original"
   },
@@ -1046,7 +1046,7 @@
    "likes": 7,
    "lastModified": "2023-09-22T15:18:54.000Z",
    "vocals_or_instrumental": "instrumental",
-   "runtime": "diffusers (LocalMusic generic diffusers adapter)",
+   "runtime": "diffusers (LocalMusicGen generic diffusers adapter)",
    "macos_notes": "AudioLDM/MusicLDM/StableAudio diffusers pipelines run on MPS.",
    "notes": "MusicLDM"
   },
@@ -1158,7 +1158,7 @@
    "likes": 22,
    "lastModified": "2026-05-01T09:36:31.000Z",
    "vocals_or_instrumental": null,
-   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusic allowlist)",
+   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusicGen allowlist)",
    "macos_notes": null,
    "notes": "diffusers export"
   },
@@ -1238,7 +1238,7 @@
    "likes": 8,
    "lastModified": "2026-06-03T06:09:45.000Z",
    "vocals_or_instrumental": null,
-   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusic allowlist)",
+   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusicGen allowlist)",
    "macos_notes": null,
    "notes": "diffusers export"
   },
@@ -1574,7 +1574,7 @@
    "likes": 5,
    "lastModified": "2026-06-03T06:09:44.000Z",
    "vocals_or_instrumental": null,
-   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusic allowlist)",
+   "runtime": "diffusers (AceStepPipeline; needs recent diffusers, not in LocalMusicGen allowlist)",
    "macos_notes": null,
    "notes": "diffusers export"
   },
@@ -2504,7 +2504,7 @@
    "vocals_or_instrumental": null,
    "runtime": "diffusers StableDiffusionPipeline + spectrogram-to-audio postprocess (riffusion repo)",
    "macos_notes": "SD pipeline runs fine on MPS; extra Griffin-Lim/vocoder step needed.",
-   "notes": "riffusion SD spectrogram; Verified model_index: StableDiffusionPipeline \u2014 NOT in LocalMusic diffusers allowlist; needs spectrogram decode adapter"
+   "notes": "riffusion SD spectrogram; Verified model_index: StableDiffusionPipeline \u2014 NOT in LocalMusicGen diffusers allowlist; needs spectrogram decode adapter"
   },
   {
    "repo_id": "declare-lab/TangoFlux",
@@ -3160,7 +3160,7 @@
    "vocals_or_instrumental": null,
    "runtime": "original ACE-Step v1 pipeline (ace-step package v1 / ComfyUI); diffusers class ACEStepPipeline not in allowlist",
    "macos_notes": null,
-   "notes": "ACE-Step v1 (old pipeline); Old v1 (3.5B). LocalMusic acestep adapter targets 1.5 only"
+   "notes": "ACE-Step v1 (old pipeline); Old v1 (3.5B). LocalMusicGen acestep adapter targets 1.5 only"
   },
   {
    "repo_id": "ASLP-lab/DiffRhythm-vae",

@@ -1,4 +1,4 @@
-"""LocalMusic stub engine.
+"""LocalMusicGen stub engine.
 
 Implements docs/api-contract.md completely with simulated downloads and jobs, so the
 SwiftUI app can be built and tested before the real inference engine exists. Simulated
@@ -51,10 +51,10 @@ ASSIST_KINDS = ("interview", "interview_finish", "flesh_out", "lyrics",
 
 # ---------------------------------------------------------------- catalog
 
-DOWNLOAD_SECONDS = float(os.environ.get("LOCALMUSIC_STUB_DOWNLOAD_S", "20"))
-PROVISION_SECONDS = float(os.environ.get("LOCALMUSIC_STUB_PROVISION_S", "3"))
+DOWNLOAD_SECONDS = float(os.environ.get("LOCALMUSICGEN_STUB_DOWNLOAD_S", "20"))
+PROVISION_SECONDS = float(os.environ.get("LOCALMUSICGEN_STUB_PROVISION_S", "3"))
 
-# LOCALMUSIC_STUB_DOWNLOAD_S=0 means "advance only when told to", via the
+# LOCALMUSICGEN_STUB_DOWNLOAD_S=0 means "advance only when told to", via the
 # test-only POST /v1/downloads/{id}/_step registered at the bottom of this file.
 #
 # Every timed transfer is a stopwatch race for the test watching it. The app's
@@ -70,21 +70,21 @@ PROVISION_SECONDS = float(os.environ.get("LOCALMUSIC_STUB_PROVISION_S", "3"))
 # test asserts against a download that cannot finish behind its back.
 MANUAL_DOWNLOADS = DOWNLOAD_SECONDS == 0
 MANUAL_TICKS = 4
-JOB_SPEED = float(os.environ.get("LOCALMUSIC_STUB_JOB_SPEED", "1"))  # >1 = faster
+JOB_SPEED = float(os.environ.get("LOCALMUSICGEN_STUB_JOB_SPEED", "1"))  # >1 = faster
 
 # Mirrors supervisor.jobqueue: small models run in a transient slot, never
 # displacing the resident model nor staying resident themselves.
-SMALL_MODEL_BYTES = int(os.environ.get("LOCALMUSIC_SMALL_MODEL_BYTES")
+SMALL_MODEL_BYTES = int(os.environ.get("LOCALMUSICGEN_SMALL_MODEL_BYTES")
                         or 1_500_000_000)
 
 # Mirrors supervisor.downloader: downloads transfer one at a time and the rest
 # report `queued`.
 MAX_ACTIVE_DOWNLOADS = max(
-    1, int(os.environ.get("LOCALMUSIC_MAX_ACTIVE_DOWNLOADS") or 1))
+    1, int(os.environ.get("LOCALMUSICGEN_MAX_ACTIVE_DOWNLOADS") or 1))
 
 
-SMALL_WARM_SLOTS = int(os.environ.get("LOCALMUSIC_SMALL_WARM_SLOTS") or 2)
-SMALL_WARM_TTL_S = float(os.environ.get("LOCALMUSIC_SMALL_WARM_TTL_S") or 600)
+SMALL_WARM_SLOTS = int(os.environ.get("LOCALMUSICGEN_SMALL_WARM_SLOTS") or 2)
+SMALL_WARM_TTL_S = float(os.environ.get("LOCALMUSICGEN_SMALL_WARM_TTL_S") or 600)
 
 
 def is_small(model: dict) -> bool:
@@ -1734,8 +1734,8 @@ LIBRARY_ROOT = os.path.expanduser("~/.cache/huggingface")
 # The two roots the engine owns outright (contract 4.4). Simulated like the
 # rest: fixed directories with fixed sizes, so a client draws the "also ours"
 # row and the move/clear sheets list something.
-AUX_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusic/aux-cache")
-MS_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusic/ms-cache")
+AUX_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusicGen/aux-cache")
+MS_ROOT = os.path.expanduser("~/Library/Application Support/LocalMusicGen/ms-cache")
 AUX_DIRS_STUB = [("msst-weights", 3_800_000_000, False),
                  ("torch-cache", 440_000_000, False),
                  ("localmusic-soundfonts", 148_000_000, False),
@@ -2437,10 +2437,10 @@ async def main() -> None:
     ap.add_argument("--log-level", default="info")
     args = ap.parse_args()
 
-    AUTH_TOKEN = os.environ.get("LOCALMUSIC_AUTH_TOKEN") or ""
+    AUTH_TOKEN = os.environ.get("LOCALMUSICGEN_AUTH_TOKEN") or ""
     if not AUTH_TOKEN:
         AUTH_TOKEN = secrets.token_hex(16)
-        print(f"LOCALMUSIC_AUTH_TOKEN not set; using {AUTH_TOKEN}", file=sys.stderr)
+        print(f"LOCALMUSICGEN_AUTH_TOKEN not set; using {AUTH_TOKEN}", file=sys.stderr)
 
     os.makedirs(args.data_dir, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)

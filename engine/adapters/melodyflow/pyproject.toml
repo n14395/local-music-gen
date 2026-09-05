@@ -1,7 +1,7 @@
 [project]
 name = "adapter-melodyflow"
 version = "0.1.0"
-description = "MelodyFlow adapter (flow-matching text-to-music + text-guided editing) for the LocalMusic engine"
+description = "MelodyFlow adapter (flow-matching text-to-music + text-guided editing) for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "audiocraft",

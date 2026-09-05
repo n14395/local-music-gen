@@ -512,7 +512,7 @@ class LibraryManager:
     def _probe_writable(self, path: str) -> None:
         try:
             os.makedirs(path, exist_ok=True)
-            probe = os.path.join(path, ".localmusic-write-test")
+            probe = os.path.join(path, ".localmusicgen-write-test")
             with open(probe, "w") as f:
                 f.write("")
             os.unlink(probe)

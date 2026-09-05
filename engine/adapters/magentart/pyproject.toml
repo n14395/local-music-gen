@@ -1,7 +1,7 @@
 [project]
 name = "adapter-magentart"
 version = "0.1.0"
-description = "Magenta RealTime 2 (MLX) adapter for the LocalMusic engine"
+description = "Magenta RealTime 2 (MLX) adapter for the LocalMusicGen engine"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "magenta-rt[mlx]>=2.0.3,<3",

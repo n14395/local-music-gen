@@ -27,4 +27,4 @@ check-supervisor: ## fast checks for the supervisor's pure logic (no engine, no 
 	python3 scripts/check_supervisor.py
 
 app-test:
-	DEVELOPER_DIR=$(DEVELOPER_DIR) xcodebuild -project app/LocalMusic.xcodeproj -scheme LocalMusic -destination 'platform=macOS' test
+	DEVELOPER_DIR=$(DEVELOPER_DIR) xcodebuild -project app/LocalMusicGen.xcodeproj -scheme LocalMusicGen -destination 'platform=macOS' test

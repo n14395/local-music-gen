@@ -1,7 +1,7 @@
 [project]
-name = "localmusic-stub"
+name = "localmusicgen-stub"
 version = "0.1.0"
-description = "Contract stub for the LocalMusic engine"
+description = "Contract stub for the LocalMusicGen engine"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.115",
