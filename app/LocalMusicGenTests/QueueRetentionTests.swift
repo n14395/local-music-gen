@@ -239,16 +239,24 @@ final class QueueRetentionTests: XCTestCase {
     // MARK: - Where the button sends you
 
     /// A finished row does not assume it made a generated track. The same row
-    /// shape carries a recombination, and sending the user to Generated with a
-    /// render selected shows an empty pane over a list it is not in.
+    /// shape carries an import, and sending the user to Generated with an
+    /// import selected shows an empty pane over a list it is not in.
+    ///
+    /// A render needs no such care since the shelves were folded — it lands on
+    /// the Generated shelf beside the takes — but the mapping still goes
+    /// through the origin rather than guessing.
     func testTheScopeForATrackFollowsItsOrigin() {
         XCTAssertEqual(LibraryScope(origin: .generated), .songs)
+        XCTAssertEqual(LibraryScope(origin: .recombined), .songs)
         XCTAssertEqual(LibraryScope(origin: .imported), .imported)
-        XCTAssertEqual(LibraryScope(origin: .recombined), .renders)
         // The inverse of the mapping that was already there, so the two cannot
-        // drift apart.
+        // drift apart: whatever scope an origin is sent to has to be a scope
+        // that lists that origin.
         for origin in SongOrigin.allCases {
-            XCTAssertEqual(LibraryScope(origin: origin).origin, origin)
+            let shelf = LibraryScope(origin: origin).shelf
+            XCTAssertEqual(shelf, SongShelf(origin: origin))
+            XCTAssertEqual(shelf?.origins.contains(origin), true,
+                           "\(origin.rawValue) was sent to a list without it")
         }
     }
 }

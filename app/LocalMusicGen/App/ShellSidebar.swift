@@ -54,7 +54,7 @@ struct ShellSidebar: View {
                                         glyph: glyph(for: item),
                                         count: count(for: item),
                                         isBusy: isBusy(item),
-                                        selection: $destination)
+                                        selection: navigation)
                         // The Library's scopes live under it rather than in the
                         // screen, and stay open from every destination: they
                         // are five places you can go, and a list that only
@@ -63,8 +63,11 @@ struct ShellSidebar: View {
                         // Library rather than quietly re-aiming a screen you
                         // are not looking at — which is also why none of them
                         // reads as selected until you are on it.
+                        //
+                        // `sidebarScopes`, not `allCases`: the sixth scope is
+                        // All, and All is the Library row itself.
                         if item == .library {
-                            ForEach(LibraryScope.allCases) { scope in
+                            ForEach(LibraryScope.sidebarScopes) { scope in
                                 BenchSidebarSubRow(
                                     scope: scope, title: scope.title,
                                     symbol: scope.symbol,
@@ -82,6 +85,24 @@ struct ShellSidebar: View {
                 }
             }
         .padding(.horizontal, 10).padding(.top, 4)
+    }
+
+    /// The destination rows write through here rather than straight to the
+    /// binding, because one of them has somewhere to be as well as something to
+    /// select.
+    ///
+    /// Clicking **Library** means the whole library. It used to mean nothing at
+    /// all once you were already in it — the row was a lid over five scopes,
+    /// and pressing it returned you to whichever slice you had last opened, so
+    /// the one view it could never give you was all of it. Now it goes to
+    /// `.all`, exactly as the scopes below it go to theirs, and it reads as
+    /// selected with no sub-row lit beneath it.
+    private var navigation: Binding<Destination> {
+        Binding(get: { destination },
+                set: { next in
+                    if next == .library { libraryScope = .all }
+                    destination = next
+                })
     }
 
     /// The one scope whose size is what it is for: how many tracks carry
@@ -117,12 +138,12 @@ struct ShellSidebar: View {
             let total: Int
             switch libraryScope {
             case .parts: total = env.partsStore.results.count
-            // Favourites is one view over two tables, so its count is both.
-            // The parts half is the store's cached count — asking
-            // `favorites()` here was a query per render pass.
-            case .favourites: total = env.library.results.count
-                + env.partsStore.favouriteCount
-            case .songs, .imported, .renders, .edited:
+            // All and Favourites are one view over two tables, so the count is
+            // both halves. Off the stores' own published results — asking the
+            // repository here was a query per render pass.
+            case .all, .favourites:
+                total = env.library.results.count + env.partsStore.results.count
+            case .songs, .imported, .edited:
                 total = env.library.results.count
             }
             return total > 0 ? "\(total)" : nil

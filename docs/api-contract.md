@@ -331,7 +331,8 @@ ParamSpec = {
   // all types, all optional — see "Grouping" below:
   "group": "sampling",                // which named section of the form this belongs in
   "group_label": "Sampling",          // display text for that section
-  "applies_when": {"param": "task_type", "values": ["cover", "repaint"]}
+  "applies_when": {"param": "task_type", "values": ["cover", "repaint"]},
+  "required_when": {"param": "task_type", "values": ["cover", "repaint"]}
 }
 ```
 
@@ -369,6 +370,18 @@ Conditions that a string cannot express — Stable Audio 3 picking its mode from
 > source blend, while the control that caused it was drawn dimmed with "only
 > applies to Cover" underneath. A false `applies_when` is worse than none: it
 > tells the user a control is inert *and* the app keeps sending it.
+
+`required_when` is the other half of `nullable`, in the same shape and with the
+same limits: **this input is mandatory while `param` holds one of `values`**. It
+is for a slot whose necessity is decided by another control rather than fixed by
+the model — ACE-Step's `src_audio` is optional under `text2music` (a FlowEdit
+morph takes a source; plain text-to-music does not) and required by `cover` and
+`repaint`. Declare it only on a `nullable: true` param; on a non-nullable one it
+is at best a restatement and at worst a contradiction. Submit enforces it for
+**every** task, generate included, and a job that trips it fails with `422
+VALIDATION` naming the key and the value that made it necessary. Without it, a
+cover with no source is a full model load followed by whatever the pipeline
+happens to assert — which is how it read to the user before this field existed.
 
 `"audio"` and `"midi"` params (e.g. MusicGen Melody's `melody_audio`,
 MusicGen-Style's `style_audio`, a render job's note file) carry an **upload id**

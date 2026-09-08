@@ -77,6 +77,12 @@ enum ShellCommandRouting {
     ///    switch — deliberately, so going Parts → Generated → Parts does not
     ///    lose your place — which means "the selected row" is only meaningful
     ///    once you say which list is showing.
+    ///
+    ///    A scope that lists *both* kinds — All, Favourites — takes whichever
+    ///    is picked, because in those scopes picking one clears the other, so
+    ///    there is no ambiguity to resolve. Without this the Track menu was
+    ///    dead over every part in Favourites: it fell through to a song
+    ///    selection that choosing the part had just cleared.
     /// 3. **Nothing.** Every item dims. Note what this is *not*: a fallback to
     ///    whatever was selected last. A menu that acted on a row from a list
     ///    that is not on screen is worse than one that is greyed out.
@@ -96,6 +102,9 @@ enum ShellCommandRouting {
         guard destination == .library else { return .none }
         if scope == .parts {
             return selectedPartId.map { MenuTarget.part(id: $0) } ?? .none
+        }
+        if scope.spansBothTables, let id = selectedPartId {
+            return .part(id: id)
         }
         return selectedSongId.map { MenuTarget.song(id: $0) } ?? .none
     }

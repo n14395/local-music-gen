@@ -177,7 +177,23 @@ class DiffSynthAceAdapter(ModelAdapter):
         task_type = str(params.get("task_type") or "text2music").strip()
         kwargs["task_type"] = task_type
         src_path = params.get("src_audio")
-        if src_path and os.path.isfile(src_path):
+        src_path = src_path if src_path and os.path.isfile(src_path) else None
+        codes = str(params.get("audio_codes") or "").strip()
+        # The same guard the two sibling ACE-Step adapters carry, and for the
+        # same reason: without it a source task reaches DiffSynth's own
+        # assertion ("For cover task, either src_audio or audio_code_string
+        # must be provided"), which fires *after* the ~23 s pipeline load and
+        # names wire keys the user never typed.
+        #
+        # Codes stand in for the file on a cover, because upstream accepts
+        # either — a captured plan is a source of a different kind. Not on a
+        # repaint, which masks a span of the source's own latent and so has
+        # nothing to mask without one.
+        has_source = bool(src_path) or (task_type == "cover" and bool(codes))
+        if task_type != "text2music" and not has_source:
+            raise RuntimeError(
+                f"'{task_type}' works on existing audio — add a source file")
+        if src_path:
             progress_cb(None, "reading the source audio",
                         phase="prompt_encode")
             src, _sr = self._read_audio(src_path)
@@ -193,7 +209,6 @@ class DiffSynthAceAdapter(ModelAdapter):
                         phase="prompt_encode")
             ref, _sr = self._read_audio(ref_path)
             kwargs["reference_audios"] = [ref]
-        codes = str(params.get("audio_codes") or "").strip()
         if codes:
             # A plan's token string from an ACE-Step LM, re-rendered through
             # the XL SFT + LoRA — same token format, shared upstream.
@@ -215,6 +230,14 @@ class DiffSynthAceAdapter(ModelAdapter):
                 if params.get("repainting_strength") is not None:
                     kwargs["repainting_strength"] = float(
                         params["repainting_strength"])
+        # Upstream asserts a non-empty range for repaint, so a window that was
+        # never set — or that ends before it starts — is the same dead end as a
+        # missing source, one dialog further in. Said here, in seconds, with
+        # the names of the two controls that fix it.
+        if task_type == "repaint" and "repainting_ranges" not in kwargs:
+            raise RuntimeError(
+                "repaint needs a window to repaint — set a start and an end, "
+                "with the end after the start")
 
         def stepper(timesteps):
             total = len(timesteps)

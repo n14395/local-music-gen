@@ -576,6 +576,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -2392,6 +2399,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -2775,6 +2789,13 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint"
               ]
@@ -3173,6 +3194,16 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint",
                 "extract",
@@ -3649,6 +3680,16 @@
                 "lego",
                 "complete"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
             }
           },
           {
@@ -4104,6 +4145,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -4487,6 +4535,13 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint"
               ]
@@ -4901,6 +4956,16 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint",
                 "extract",
@@ -5420,6 +5485,16 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint",
                 "extract",
@@ -8540,6 +8615,16 @@
                 "lego",
                 "complete"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
             }
           },
           {
@@ -9133,6 +9218,16 @@
                 "lego",
                 "complete"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
             }
           },
           {
@@ -9711,6 +9806,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -10229,6 +10331,16 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint",
                 "extract",
@@ -10828,6 +10940,16 @@
                 "lego",
                 "complete"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint",
+                "extract",
+                "lego",
+                "complete"
+              ]
             }
           },
           {
@@ -11395,6 +11517,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -11680,6 +11809,13 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint"
               ]
@@ -11971,6 +12107,13 @@
                 "cover",
                 "repaint"
               ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
+                "cover",
+                "repaint"
+              ]
             }
           },
           {
@@ -12256,6 +12399,13 @@
               "param": "task_type",
               "values": [
                 "text2music",
+                "cover",
+                "repaint"
+              ]
+            },
+            "required_when": {
+              "param": "task_type",
+              "values": [
                 "cover",
                 "repaint"
               ]

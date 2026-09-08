@@ -128,6 +128,28 @@ enum ParameterGroups {
         return condition.values.contains(value)
     }
 
+    /// Whether an input has to be filled in, given the form's values.
+    ///
+    /// Two rules, and the second is the one worth having. A non-nullable param
+    /// is always required — that is what `nullable: false` means. A nullable
+    /// param that declares `required_when` is required only while the control
+    /// it names sits on one of the listed values: ACE-Step's source audio is
+    /// optional under Generate and mandatory under Cover and Repaint, and the
+    /// difference is one menu away.
+    ///
+    /// Mirrors `isApplicable` in what it does when it cannot judge — an absent
+    /// or non-string controlling value means the condition is not in force, so
+    /// a form the app cannot read never blocks itself.
+    static func isRequired(_ spec: ParamSpec,
+                           values: [String: JSONValue]) -> Bool {
+        if !spec.nullable { return true }
+        guard let condition = spec.requiredWhen else { return false }
+        guard case .string(let value)? = values[condition.param] else {
+            return false
+        }
+        return condition.values.contains(value)
+    }
+
     /// The footnote under a group that contains dimmed controls, e.g.
     /// "Dimmed fields belong to the Repaint and Cover tasks".
     static func dimmedFootnote(for specs: [ParamSpec],

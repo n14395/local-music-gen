@@ -26,7 +26,10 @@ final class ShellState {
     // MARK: - Where we are
 
     var destination: Destination = .launch
-    var libraryScope: LibraryScope = .songs
+    /// The whole library, because that is what the Library row is: arriving
+    /// there for the first time in a session should show what you have, not the
+    /// slice a previous version of this app happened to open on.
+    var libraryScope: LibraryScope = .all
 
     /// A track the shell wants the Library to open on — set by the queue's
     /// "Show in library", cleared by the Library once it has acted.
@@ -63,6 +66,13 @@ final class ShellState {
     /// carries the toggle, and a `Commands` body cannot reach a view's state.
     /// Not persisted — it is a way of reading one list, not a way of working.
     var libraryGroupsParts = true
+
+    /// Which of those groups are open, by song id. Out here with the toggle
+    /// above and the selection below, because the screen is rebuilt on every
+    /// navigation and a set it owned would close every group on the way to the
+    /// Editor and back. Not persisted either: a launch opens on the clean list
+    /// of songs, which is what the closed groups are for.
+    var libraryExpandedPartGroups: Set<String> = []
 
     // MARK: - What is picked
 

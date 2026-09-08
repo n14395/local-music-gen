@@ -21,19 +21,27 @@ struct LibraryRepository: Sendable {
         /// the mark, not `editsJSON` — a pending program is not an edit the
         /// track carries yet.
         var hasEdits = false
-        /// Songs and Renders are the same table read two ways — see `Origin`.
+        /// Generated and Imported are the same table read two ways — see
+        /// `Origin`.
         var origin: Origin = .any
         var sort: Sort = .newest
     }
 
-    /// The library screen shows Generated Songs, Imported and Renders as
-    /// separate scopes, but they are one table split on `origin`. Expressed as
-    /// a filter rather than three queries so every scope shares the rest of the
-    /// filter set.
+    /// The library screen shows Generated and Imported as separate scopes, but
+    /// they are one table split on `origin`. Expressed as a filter rather than
+    /// two queries so every scope shares the rest of the filter set.
+    ///
+    /// A *set* of origins rather than one, because a scope is a `SongShelf` and
+    /// the made shelf spans two of them — a generated take and a render are
+    /// both audio this app produced, and asking the user which list a mix went
+    /// into was the point of folding them together.
     enum Origin: Equatable, Sendable {
         case any
-        case only(String)
-        case excluding(String)
+        case anyOf(Set<String>)
+
+        /// The one-origin case, kept as a name because that is how most callers
+        /// read: `.only("imported")`.
+        static func only(_ origin: String) -> Origin { .anyOf([origin]) }
     }
 
     enum Sort: String, CaseIterable, Equatable, Sendable {
@@ -144,10 +152,12 @@ struct LibraryRepository: Sendable {
             switch filters.origin {
             case .any:
                 break
-            case .only(let origin):
-                request = request.filter(Column("origin") == origin)
-            case .excluding(let origin):
-                request = request.filter(Column("origin") != origin)
+            case .anyOf(let origins):
+                // Sorted so one shelf produces one statement whatever order the
+                // set happens to iterate in — the same reason the ticked ids in
+                // `LibrarySelection` are sorted before they are used.
+                request = request.filter(origins.sorted()
+                    .contains(Column("origin")))
             }
             if filters.hasEdits {
                 request = request.filter(Column("editedAt") != nil)

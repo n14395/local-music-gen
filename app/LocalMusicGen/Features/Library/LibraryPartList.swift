@@ -15,16 +15,32 @@ struct LibraryPartGroup: Identifiable {
         case song(title: String, meta: String)
         /// `NOTES & MIDI PARTS · 5`
         case caption(String)
+
+        /// The notes-and-features heading. It is not a song, and it sits apart
+        /// from the ones that are, so it keeps a little more air above it.
+        var isCaption: Bool {
+            if case .caption = self { return true }
+            return false
+        }
     }
 }
 
 /// The Parts scope. Same shell and the same row rhythm as Songs, but the rows
 /// are grouped under the song they were cut from, because a flat list of forty
 /// stems named Vocals / Drums / Bass reads as repetition rather than material.
+///
+/// The groups are closed until asked for, so the scope opens as a list of the
+/// songs that have parts rather than as every stem the library holds — forty
+/// rows of Vocals / Drums / Bass is the same repetition again, just sorted.
 struct LibraryPartList: View {
     let groups: [LibraryPartGroup]
     let analyses: [String: AnalysisRecord]
     let playback: PlaybackController
+    /// Which groups are open, by `LibraryPartGroup.id`. Held by the window,
+    /// like the selection and the scroll position and for the same reason:
+    /// this screen is rebuilt on every navigation, so a set owned here would
+    /// close every group the moment you stepped out to the Editor and back.
+    @Binding var expanded: Set<String>
     @Binding var selectedId: String?
     /// Ticked rows, shared with the songs list: one selection spans both
     /// kinds, because Favourites shows both and "delete these" means the same
@@ -37,8 +53,23 @@ struct LibraryPartList: View {
     /// Where this list files its scroll position — see `LibraryScrollMemory`.
     var scroll: LibraryScrollSlot?
 
-    /// Flattened once so arrow keys can step across group boundaries.
-    private var flat: [PartRecord] { groups.flatMap(\.parts) }
+    /// The heading under the pointer, if any. One id rather than a flag per
+    /// header: only one of them can be hovered.
+    @State private var hovered: String?
+
+    /// Flattened once so arrow keys can step across group boundaries. Only
+    /// what is on screen: an arrow key that walked into a closed group would
+    /// move the selection somewhere the eye cannot follow it.
+    private var flat: [PartRecord] {
+        groups.filter { isOpen($0) }.flatMap(\.parts)
+    }
+
+    /// A group with no header is the ungrouped list — "Group by song" is off,
+    /// there is no heading to click and nothing to gather the rows under, so
+    /// it is always open.
+    private func isOpen(_ group: LibraryPartGroup) -> Bool {
+        group.header == nil || expanded.contains(group.id)
+    }
 
     var body: some View {
         // Measured once for the whole list — see `LibraryRowMetrics`.
@@ -47,26 +78,36 @@ struct LibraryPartList: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(groups) { group in
-                        if let header = group.header { headerView(header) }
-                        ForEach(Array(group.parts.enumerated()),
-                                id: \.element.id) { index, part in
-                            LibraryPartRow(
-                                part: part,
-                                contentWidth: LibraryRowMetrics
-                                    .contentWidth(pane: pane.size.width),
-                                analysis: analyses[part.id],
-                                isZebra: index.isMultiple(of: 2),
-                                isSelected: part.id == selectedId,
-                                isChecked: checked.contains(part.id),
-                                showsCheckbox: true,
-                                playback: playback,
-                                onToggleCheck: { toggleCheck(part) },
-                                onPlay: { onPlay(part) },
-                                onSelect: { selectedId = part.id },
-                                onSeek: { onSeek(part, $0) })
-                                .id(part.id)
-                                .libraryScrollAnchor(part.id)
-                                .contextMenu { menu(for: part) }
+                        if let header = group.header {
+                            headerView(header, group: group)
+                                .id(group.id)
+                                // Anchored like a row: closed, the headings
+                                // are the only thing in the list, and without
+                                // this the scroll memory would have nothing to
+                                // remember the Parts scope by.
+                                .libraryScrollAnchor(group.id)
+                        }
+                        if isOpen(group) {
+                            ForEach(Array(group.parts.enumerated()),
+                                    id: \.element.id) { index, part in
+                                LibraryPartRow(
+                                    part: part,
+                                    contentWidth: LibraryRowMetrics
+                                        .contentWidth(pane: pane.size.width),
+                                    analysis: analyses[part.id],
+                                    isZebra: index.isMultiple(of: 2),
+                                    isSelected: part.id == selectedId,
+                                    isChecked: checked.contains(part.id),
+                                    showsCheckbox: true,
+                                    playback: playback,
+                                    onToggleCheck: { toggleCheck(part) },
+                                    onPlay: { onPlay(part) },
+                                    onSelect: { selectedId = part.id },
+                                    onSeek: { onSeek(part, $0) })
+                                    .id(part.id)
+                                    .libraryScrollAnchor(part.id)
+                                    .contextMenu { menu(for: part) }
+                            }
                         }
                     }
                 }
@@ -120,8 +161,59 @@ struct LibraryPartList: View {
         }
     }
 
+    /// The heading, and the control that opens what is under it. The whole
+    /// width is the target rather than the chevron alone — the heading *is*
+    /// the row while the group is closed, and a list you have to hit a
+    /// 9-point glyph to read is a list you fight.
+    private func headerView(_ header: LibraryPartGroup.Header,
+                            group: LibraryPartGroup) -> some View {
+        let isOpen = expanded.contains(group.id)
+        let pad = Self.headerPadding(isCaption: header.isCaption, isOpen: isOpen)
+        return Button {
+            toggle(group.id)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Bench.Palette.textQuaternary)
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    // The chevron turns, the rows do not slide: animating the
+                    // insertion of forty lazy rows costs a great deal more
+                    // than the turn is worth.
+                    .animation(.easeOut(duration: 0.15), value: isOpen)
+                    .frame(width: 11, alignment: .leading)
+                headerLabel(header, count: group.parts.count, isOpen: isOpen)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, pad.top).padding(.bottom, pad.bottom)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // A plain button says nothing on hover, and a closed list is
+            // nothing but these — without a lit row the headings read as
+            // titles printed over the list rather than as the way into it.
+            .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.row,
+                                         style: .continuous)
+                .fill(hovered == group.id ? Bench.Palette.rowZebra : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 ? group.id : (hovered == group.id ? nil : hovered) }
+        .help(isOpen ? "Hide these parts" : "Show these parts")
+        .contextMenu { headerMenu(group) }
+    }
+
+    /// Open, a heading is the top of a block and takes its air above it.
+    /// Closed, the headings *are* the list, and even padding is what makes
+    /// them read as rows to walk down rather than as a stack of titles.
+    private static func headerPadding(isCaption: Bool, isOpen: Bool)
+        -> (top: CGFloat, bottom: CGFloat) {
+        guard isOpen else { return (isCaption ? 11 : 7, 7) }
+        return isCaption ? (16, 4) : (12, 6)
+    }
+
     @ViewBuilder
-    private func headerView(_ header: LibraryPartGroup.Header) -> some View {
+    private func headerLabel(_ header: LibraryPartGroup.Header,
+                             count: Int, isOpen: Bool) -> some View {
         switch header {
         case .song(let title, let meta):
             HStack(spacing: 10) {
@@ -129,19 +221,50 @@ struct LibraryPartList: View {
                     .font(Bench.Typo.secondaryEmphasis)
                     .foregroundStyle(Bench.Palette.textSecondary)
                     .lineLimit(1).truncationMode(.tail)
-                Text(meta)
+                Text(isOpen ? meta : Self.closedMeta(meta, count: count))
                     .metaLine()
                     .lineLimit(1)
                     .fixedSize()
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12).padding(.bottom, 6)
         case .caption(let text):
+            // The caption counts its own parts — `NOTES & MIDI PARTS · 5` —
+            // so it needs nothing added when it closes.
             Text(text)
                 .font(Bench.Typo.mono(11))
                 .foregroundStyle(Bench.Palette.textFaintest)
-                .padding(.horizontal, 12)
-                .padding(.top, 16).padding(.bottom, 4)
+        }
+    }
+
+    /// What a closed group is holding, on the end of its meta line. Open, the
+    /// rows say it themselves; closed, the heading is otherwise all about the
+    /// song and says nothing about how much is folded under it.
+    private static func closedMeta(_ meta: String, count: Int) -> String {
+        let held = "\(count) PART\(count == 1 ? "" : "S")"
+        return meta.isEmpty ? held : "\(meta) · \(held)"
+    }
+
+    @ViewBuilder
+    private func headerMenu(_ group: LibraryPartGroup) -> some View {
+        Button(expanded.contains(group.id) ? "Collapse" : "Expand") {
+            toggle(group.id)
+        }
+        Divider()
+        // Opening fifty groups one at a time is not a gesture anyone should
+        // have to make, and neither is closing them again.
+        Button("Expand All") { expanded = Set(headed.map(\.id)) }
+        Button("Collapse All") { expanded = [] }
+    }
+
+    /// The groups a heading can open. The ungrouped list has none.
+    private var headed: [LibraryPartGroup] {
+        groups.filter { $0.header != nil }
+    }
+
+    private func toggle(_ id: String) {
+        if expanded.contains(id) {
+            expanded.remove(id)
+        } else {
+            expanded.insert(id)
         }
     }
 
@@ -154,15 +277,29 @@ struct LibraryPartList: View {
     }
 
     private func move(_ direction: MoveCommandDirection) {
-        let parts = flat
-        guard !parts.isEmpty else { return }
-        let current = parts.firstIndex { $0.id == selectedId }
         switch direction {
-        case .down:
-            selectedId = parts[current.map { min($0 + 1, parts.count - 1) } ?? 0].id
-        case .up:
-            selectedId = parts[current.map { max($0 - 1, 0) } ?? parts.count - 1].id
-        default:
+        // The sideways pair open and close the group the selection is in,
+        // which is what they do in every outline on the system.
+        case .left, .right:
+            guard let selectedId,
+                  let group = headed.first(where: { group in
+                      group.parts.contains { $0.id == selectedId }
+                  }) else { return }
+            if direction == .right {
+                expanded.insert(group.id)
+            } else {
+                expanded.remove(group.id)
+            }
+        case .up, .down:
+            let parts = flat
+            guard !parts.isEmpty else { return }
+            let current = parts.firstIndex { $0.id == selectedId }
+            if direction == .down {
+                selectedId = parts[current.map { min($0 + 1, parts.count - 1) } ?? 0].id
+            } else {
+                selectedId = parts[current.map { max($0 - 1, 0) } ?? parts.count - 1].id
+            }
+        @unknown default:
             return
         }
     }

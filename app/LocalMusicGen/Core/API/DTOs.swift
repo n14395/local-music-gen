@@ -386,6 +386,20 @@ struct ParamSpec: Codable, Identifiable, Equatable, Sendable {
     /// `values`." The app dims the row to 45% and explains why rather than
     /// hiding it — a control that vanishes teaches you nothing.
     let appliesWhen: AppliesWhen?
+    /// "This input is **mandatory** while `param` holds one of `values`" — the
+    /// other half of `nullable`, for a slot whose necessity is decided by
+    /// another control rather than fixed by the model.
+    ///
+    /// ACE-Step's source audio is the case it exists for: optional under
+    /// Generate, required by Cover and Repaint, and a `nullable: true` spec is
+    /// all the form could see. So the pre-flight check passed a Cover with no
+    /// source, and the refusal arrived twenty seconds later from inside the
+    /// pipeline, naming a wire key the user never typed.
+    ///
+    /// Same shape and same limits as `appliesWhen`: `param` names another spec
+    /// of the same model, and the comparison is against its current string
+    /// value, so only `enum` and `string` params can gate.
+    let requiredWhen: AppliesWhen?
 
     struct AppliesWhen: Codable, Equatable, Sendable {
         let param: String
@@ -394,7 +408,8 @@ struct ParamSpec: Codable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case key, type, label, help, `default`, nullable, min, max, step,
-             placeholder, choices, resolveUploads, group, groupLabel, appliesWhen
+             placeholder, choices, resolveUploads, group, groupLabel,
+             appliesWhen, requiredWhen
         case isInternal = "internal"
     }
 
@@ -407,7 +422,8 @@ struct ParamSpec: Codable, Identifiable, Equatable, Sendable {
          placeholder: String? = nil, choices: [EnumChoice]? = nil,
          isInternal: Bool? = nil, resolveUploads: Bool? = nil,
          group: String? = nil, groupLabel: String? = nil,
-         appliesWhen: AppliesWhen? = nil) {
+         appliesWhen: AppliesWhen? = nil,
+         requiredWhen: AppliesWhen? = nil) {
         self.key = key
         self.type = type
         self.label = label
@@ -424,6 +440,7 @@ struct ParamSpec: Codable, Identifiable, Equatable, Sendable {
         self.group = group
         self.groupLabel = groupLabel
         self.appliesWhen = appliesWhen
+        self.requiredWhen = requiredWhen
     }
 }
 

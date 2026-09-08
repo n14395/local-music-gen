@@ -497,7 +497,8 @@ struct MainWindow: View {
                           selectedSongId: $shell.selectedSongId,
                           selectedPartId: $shell.selectedPartId,
                           checked: $shell.checked,
-                          groupBySong: $shell.libraryGroupsParts)
+                          groupBySong: $shell.libraryGroupsParts,
+                          expandedGroups: $shell.libraryExpandedPartGroups)
         case .styleTransfer:
             StyleTransferScreen(model: env.styleTransfer, catalog: env.catalog,
                                 library: env.library, parts: env.partsStore,
@@ -795,7 +796,7 @@ struct MainWindow: View {
 /// "Open the Library here, on this track."
 ///
 /// Carries the scope as well as the id because the two have to move together:
-/// selecting a render while the Generated list is showing selects a row that
+/// selecting an import while the Generated list is showing selects a row that
 /// list does not contain, and the pane behind it would stay empty.
 struct LibraryReveal: Equatable {
     var songId: String
@@ -803,49 +804,77 @@ struct LibraryReveal: Equatable {
 }
 
 enum LibraryScope: String, CaseIterable, Identifiable, Codable {
-    // Declaration order is sidebar order: the two kinds of whole track first,
-    // then their parts, then what was built from them.
-    case songs, imported, parts, renders, edited, favourites
+    /// Everything the library holds — every track of every origin, and every
+    /// part — in one list. What the sidebar's **Library** row itself shows,
+    /// which is why it has no sub-row of its own and why it is declared first.
+    ///
+    /// The row used to be a lid: a heading you could click that took you to
+    /// whichever slice you happened to be in last, so the one thing it could
+    /// not do was show you the library. Favourites already proved the shape —
+    /// two tables, one scroll — and this is that view without the filter on it.
+    case all
+    // Then the slices, in sidebar order: whole tracks by shelf, their parts,
+    // and the two adjectives that cut across everything.
+    case songs, imported, parts, edited, favourites
+
     var id: String { rawValue }
+
+    /// The sub-rows drawn under the Library row. `all` is not among them: it is
+    /// the Library row.
+    static let sidebarScopes: [LibraryScope] =
+        allCases.filter { $0 != .all }
+
     var title: String {
         switch self {
-        // "Songs" while imports had nowhere else to go; now that they do, the
-        // distinction has to be on the label rather than implied by absence.
-        // The noun is dropped because the column of scopes supplies it — every
-        // one of these is a kind of thing in the library, and only this one was
-        // saying so.
-        case .songs: "Generated"
-        case .imported: "Imported"
+        case .all: "All"
+        // The shelf names its own list, so "Generated" is written once — see
+        // `SongShelf.title` for why the word survived the fold that put
+        // renders on this shelf.
+        case .songs: SongShelf.made.title
+        case .imported: SongShelf.imported.title
         case .parts: "Parts"
-        case .renders: "Renders"
         case .edited: "Edited"
         case .favourites: "Favourites"
         }
     }
 
-    /// Where a song of this origin lives — the inverse of `origin`, for
-    /// anything sending the user to a track it already has in hand.
+    /// Where a song of this origin lives — the inverse of `shelf`, for anything
+    /// sending the user to a track it already has in hand.
+    ///
+    /// A render lands in Generated now rather than in a list of its own, which
+    /// is the whole of the change as far as a caller revealing a track is
+    /// concerned: it still names the scope that contains the row.
     init(origin: SongOrigin) {
-        switch origin {
-        case .generated: self = .songs
-        case .imported: self = .imported
-        case .recombined: self = .renders
+        self = SongShelf(origin: origin) == .imported ? .imported : .songs
+    }
+
+    /// The shelf of whole tracks this scope lists, or nil for the scopes that
+    /// aren't one (Parts comes from another table; All, Edited and Favourites
+    /// span everything).
+    var shelf: SongShelf? {
+        switch self {
+        case .songs: .made
+        case .imported: .imported
+        // Edited spans every origin — a generated take, an import and a
+        // render are all editable, and all land here once applied.
+        case .all, .parts, .edited, .favourites: nil
         }
     }
 
-    /// The slice of the `song` table this scope reads, or nil for the scopes
-    /// that aren't a single origin (Parts comes from another table; Favourites
-    /// spans everything).
-    var origin: SongOrigin? {
-        switch self {
-        case .songs: .generated
-        case .imported: .imported
-        case .renders: .recombined
-        // Edited spans every origin — a generated take, an import and a
-        // render are all editable, and all land here once applied.
-        case .parts, .edited, .favourites: nil
-        }
+    /// What this scope puts on `Filters.origin`.
+    var originFilter: LibraryRepository.Origin {
+        guard let shelf else { return .any }
+        return .anyOf(Set(shelf.origins.map(\.rawValue)))
     }
+
+    /// Whether this scope lists tracks *and* parts, so it draws the two-section
+    /// list and can have either kind selected.
+    ///
+    /// Favourites was the only one until All arrived, and everything it needed
+    /// — a composed list, a selection that can be of either kind, a search that
+    /// has to reach both stores — All needs identically. Asking this rather
+    /// than naming the two scopes is what keeps the next one honest.
+    var spansBothTables: Bool { self == .all || self == .favourites }
 
     /// The mark drawn to the left of the title. Every scope has one, so they
     /// read as a set you can pick from by shape — a heart on its own with four
@@ -853,16 +882,20 @@ enum LibraryScope: String, CaseIterable, Identifiable, Codable {
     /// five places to go.
     ///
     /// Chosen to differ in silhouette as well as in meaning, because at 11 pt
-    /// that is all you get: a note, a tray, a divided rectangle, a wave, a
-    /// heart. Imported deliberately does *not* reuse the download arrow the
-    /// model catalogue uses — bringing a file in from your disk is not the same
-    /// act as fetching a model, and the sidebar should not imply it is.
+    /// that is all you get: a note, a tray, a divided rectangle, a heart.
+    /// Imported deliberately does *not* reuse the download arrow the model
+    /// catalogue uses — bringing a file in from your disk is not the same act
+    /// as fetching a model, and the sidebar should not imply it is.
+    ///
+    /// `all` carries one for completeness rather than for display: it is drawn
+    /// by the Library row, which has the navigation glyph every destination
+    /// has. The Go menu lists it by name.
     var symbol: String {
         switch self {
+        case .all: "square.stack"
         case .songs: "music.note"
         case .imported: "tray.and.arrow.down"
         case .parts: "rectangle.split.3x1"
-        case .renders: "waveform"
         case .edited: "scissors"
         case .favourites: "heart.fill"
         }

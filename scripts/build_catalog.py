@@ -831,20 +831,36 @@ ACE_TASK_SCOPE = {
     "negative_prompt": ("text2music",),
 }
 
+# `applies_when` says a control is *live*; this says it is not *optional*.
+#
+# The source is genuinely optional under Generate — a FlowEdit morph takes one,
+# plain text-to-music does not — and mandatory the moment the task is one that
+# transforms audio. Nothing said so, so Studio's pre-flight check (which only
+# knows `nullable`) let a Cover with no source through, and the failure landed
+# twenty-odd seconds later as an assertion from inside the pipeline: "For cover
+# task, either src_audio or audio_code_string must be provided." A scope rather
+# than a flag, and intersected with what each variant offers, for the same
+# reason ACE_TASK_SCOPE is.
+ACE_TASK_REQUIRED = {
+    "src_audio": ("cover", "repaint", "extract", "lego", "complete"),
+}
+
 
 def apply_groups(entry: dict) -> None:
-    """Set `group` on every param, and `applies_when` where a task selector
-    genuinely gates the control.
+    """Set `group` on every param, `applies_when` where a task selector
+    genuinely gates the control, and `required_when` where it makes an
+    otherwise-optional input mandatory.
 
     Generation models only. Task-only entries have a handful of controls each,
     render on their own screens, and are left to the app's key-name classifier
     — the design's three group names do not describe a stem separator's form.
-    Idempotent: both keys are dropped and rebuilt.
+    Idempotent: all three keys are dropped and rebuilt.
     """
     caps = entry["capabilities"]
     for param in caps["params"]:
         param.pop("group", None)
         param.pop("applies_when", None)
+        param.pop("required_when", None)
     if "generate" not in (caps.get("tasks") or ["generate"]):
         return
     offered = {choice["value"] for param in caps["params"]
@@ -868,6 +884,11 @@ def apply_groups(entry: dict) -> None:
             scope = []
         if scope:
             param["applies_when"] = {"param": "task_type", "values": scope}
+        # Same intersection, and for the same reason: requiring an input under
+        # a task the variant cannot select would be a rule nothing can trip.
+        needed = [t for t in ACE_TASK_REQUIRED.get(key, ()) if t in offered]
+        if needed:
+            param["required_when"] = {"param": "task_type", "values": needed}
 
 
 def task_caps(tasks, params, est_realtime_factor=None):

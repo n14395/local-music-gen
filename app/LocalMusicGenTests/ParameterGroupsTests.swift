@@ -148,4 +148,58 @@ final class ParameterGroupsTests: XCTestCase {
         XCTAssertNil(ParameterGroups.dimmedFootnote(
             for: specs, values: ["task_type": .string("cover")]))
     }
+
+    // MARK: required_when
+
+    /// An optional audio slot that a task selector can make mandatory —
+    /// ACE-Step's `src_audio`, the shape this whole rule exists for.
+    private func sourceSlot(requiredFor values: [String]?) -> ParamSpec {
+        let list = (values ?? []).map { "\"\($0)\"" }.joined(separator: ", ")
+        let requiredJSON = values.map {
+            _ in "\"required_when\": {\"param\": \"task_type\", "
+                + "\"values\": [\(list)]},"
+        } ?? ""
+        let json = """
+        {"key": "src_audio", "type": "audio", "label": "Source audio",
+         \(requiredJSON) "default": null, "nullable": true}
+        """
+        // swiftlint:disable:next force_try — fixture is a compile-time constant
+        return try! BackendClient.decoder.decode(ParamSpec.self, from: Data(json.utf8))
+    }
+
+    /// The bug this pins: a Cover with no source used to pass the form's
+    /// pre-flight check — `nullable: true` was all it could see — and failed
+    /// twenty seconds later inside the pipeline.
+    func testANullableInputIsRequiredUnderTheTasksThatNameIt() {
+        let source = sourceSlot(requiredFor: ["cover", "repaint"])
+        XCTAssertTrue(ParameterGroups.isRequired(
+            source, values: ["task_type": .string("cover")]))
+        XCTAssertTrue(ParameterGroups.isRequired(
+            source, values: ["task_type": .string("repaint")]))
+        XCTAssertFalse(ParameterGroups.isRequired(
+            source, values: ["task_type": .string("text2music")]))
+    }
+
+    /// Nullable and unconditional stays optional — the ordinary case, and the
+    /// one a wrong rule here would break for every model in the catalog.
+    func testANullableInputWithNoConditionIsNeverRequired() {
+        XCTAssertFalse(ParameterGroups.isRequired(
+            sourceSlot(requiredFor: nil),
+            values: ["task_type": .string("cover")]))
+    }
+
+    /// `nullable: false` is the model's own answer and outranks the form's.
+    func testANonNullableInputIsAlwaysRequired() {
+        XCTAssertTrue(ParameterGroups.isRequired(spec("steps"), values: [:]))
+    }
+
+    /// Same posture as `isApplicable`: a controlling value the form does not
+    /// hold is not a condition in force. Blocking the button over a rule we
+    /// cannot evaluate would strand a user with nothing to change.
+    func testAnUnreadableConditionDoesNotBlock() {
+        let source = sourceSlot(requiredFor: ["cover"])
+        XCTAssertFalse(ParameterGroups.isRequired(source, values: [:]))
+        XCTAssertFalse(ParameterGroups.isRequired(
+            source, values: ["task_type": .int(3)]))
+    }
 }

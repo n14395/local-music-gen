@@ -45,7 +45,10 @@ final class MenuCommandTests: XCTestCase {
     }
 
     func testLibraryScopesTakeTheirOwnDigits() {
-        XCTAssertEqual(LibraryScope.songs.menuIndex, 1)
+        // All leads: it is the Library row itself, and the row heads the column
+        // the rest of them are drawn in.
+        XCTAssertEqual(LibraryScope.all.menuIndex, 1)
+        XCTAssertEqual(LibraryScope.songs.menuIndex, 2)
         XCTAssertEqual(LibraryScope.favourites.menuIndex, 6)
         XCTAssertEqual(Set(LibraryScope.allCases.compactMap(\.menuKey)).count,
                        LibraryScope.allCases.count)
@@ -98,14 +101,38 @@ final class MenuCommandTests: XCTestCase {
         XCTAssertEqual(parts, .part(id: "stem-7"))
     }
 
-    func testEveryNonPartsScopeMeansTheSongSelection() {
-        for scope in LibraryScope.allCases where scope != .parts {
+    /// A scope that lists one kind means that kind, whatever else is lying
+    /// around from the last list you were in.
+    func testEverySingleKindScopeMeansTheSongSelection() {
+        for scope in LibraryScope.allCases
+        where scope != .parts && !scope.spansBothTables {
             let target = ShellCommandRouting.target(
                 destination: .library, scope: scope,
                 selectedSongId: "track042", selectedPartId: "stem-7",
                 editorMaterialId: nil, editorMaterialIsPart: false)
             XCTAssertEqual(target, .song(id: "track042"),
                            "\(scope.title) aimed at the wrong kind")
+        }
+    }
+
+    /// All and Favourites list both kinds, and picking one clears the other —
+    /// so the menu takes whichever is picked. Without this the Track menu was
+    /// dead over every part in Favourites: it fell through to a song selection
+    /// that choosing the part had just cleared.
+    func testASpanningScopeTakesWhicheverKindIsPicked() {
+        for scope in LibraryScope.allCases where scope.spansBothTables {
+            XCTAssertEqual(
+                ShellCommandRouting.target(
+                    destination: .library, scope: scope,
+                    selectedSongId: nil, selectedPartId: "stem-7",
+                    editorMaterialId: nil, editorMaterialIsPart: false),
+                .part(id: "stem-7"), "\(scope.title) lost the part")
+            XCTAssertEqual(
+                ShellCommandRouting.target(
+                    destination: .library, scope: scope,
+                    selectedSongId: "track042", selectedPartId: nil,
+                    editorMaterialId: nil, editorMaterialIsPart: false),
+                .song(id: "track042"), "\(scope.title) lost the song")
         }
     }
 

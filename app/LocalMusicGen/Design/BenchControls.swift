@@ -119,7 +119,7 @@ extension ButtonStyle where Self == BenchSecondaryButtonStyle {
 
 // MARK: - Segmented
 
-/// `Rows | Timeline`, `Songs | Parts | Renders`, `Simple | Full control`.
+/// `Rows | Timeline`, `Generated | Imported | Parts`, `Simple | Full control`.
 ///
 /// Not `Picker(.segmented)`: the design's selected segment is a lighter fill
 /// inside a bordered container with 2 pt padding, and several instances carry
@@ -219,9 +219,9 @@ struct BenchSegmented<Value: Hashable>: View {
 ///
 /// The alternative — `maxWidth: .infinity` on each — divides the row equally,
 /// which is only right when the labels are the same length. A strip reading
-/// `All 128 · Generated 96 · Imported 30 · Renders 2 · Parts 3 · Edited 2 ·
-/// Loved 4` is not: equal columns are set by the longest label, so the long
-/// one truncates while `Parts 3` sits in twice the room it needs.
+/// `All 128 · Generated 98 · Imported 30 · Parts 3 · Edited 2 · Loved 4` is
+/// not: equal columns are set by the longest label, so the long one truncates
+/// while `Parts 3` sits in twice the room it needs.
 ///
 /// Slack is shared equally rather than in proportion to width, so the padding
 /// around each label stays even and the tabs read as one control.

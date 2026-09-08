@@ -316,9 +316,20 @@ private struct GoItems: View {
     var body: some View {
         Group {
             ForEach(Destination.allCases) { destination in
-                Button(destination.title) { shell.go(to: destination) }
-                    .keyboardShortcut(shortcut(destination.menuKey,
-                                               modifiers: .command))
+                Button(destination.title) {
+                    // Library is the one destination with places inside it, and
+                    // going *there* means all of it — the same thing clicking
+                    // the sidebar row does, so the key and the row cannot
+                    // disagree about where they land. Anything wanting a slice
+                    // asks for the slice, from the submenu below or the row.
+                    if destination == .library {
+                        shell.go(to: LibraryScope.all)
+                    } else {
+                        shell.go(to: destination)
+                    }
+                }
+                .keyboardShortcut(shortcut(destination.menuKey,
+                                           modifiers: .command))
             }
             Menu("Library") {
                 ForEach(LibraryScope.allCases) { scope in

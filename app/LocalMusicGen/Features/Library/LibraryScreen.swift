@@ -1,18 +1,24 @@
 import SwiftUI
 
-/// Library — one screen for Generated Songs, Imported, Parts and Renders.
+/// Library — one screen for All, Generated, Imported, Parts, Edited and
+/// Favourites.
 ///
-/// The three scopes share a shell, a row grammar and an inspector slot, and
-/// that is the point: browsing stems used to be a different screen inside Split
-/// & Recombine with its own list, its own filters and its own detail pane, so
-/// the same material read as two unrelated things depending on how you arrived.
+/// The scopes share a shell, a row grammar and an inspector slot, and that is
+/// the point: browsing stems used to be a different screen inside Split &
+/// Recombine with its own list, its own filters and its own detail pane, so the
+/// same material read as two unrelated things depending on how you arrived.
 /// Here a scope is a filter over the same furniture.
 ///
-/// The three whole-track scopes are one table read three ways — they differ
-/// only in `origin` — so switching between them only moves
+/// The two whole-track scopes are one table read two ways — they differ only in
+/// which `SongShelf` they name — so switching between them only moves
 /// `LibraryRepository.Filters.origin`. Parts come from a different table, which
 /// is why the Parts scope swaps the whole list and inspector rather than just
 /// the query.
+///
+/// Two scopes span both tables (`spansBothTables`): Favourites, and All — the
+/// view the sidebar's Library row itself opens. They compose the two row types
+/// into one scroll rather than handing off to either dedicated list, and they
+/// are the reason the search box writes to both stores.
 struct LibraryScreen: View {
     let library: LibraryStore
     let parts: PartsStore
@@ -56,6 +62,10 @@ struct LibraryScreen: View {
     /// the View menu carries the toggle, and a `Commands` body cannot reach a
     /// view's `@State`.
     @Binding var groupBySong: Bool
+    /// Which song groups are open in the Parts scope. Held by the shell for
+    /// the same reason as the selection above — a set owned by this screen
+    /// would close every group on the way to the Editor and back.
+    @Binding var expandedGroups: Set<String>
     @State private var ownCompare = LibraryCompare()
 
     // Derived database reads, refreshed when the stores change rather than on
@@ -73,6 +83,13 @@ struct LibraryScreen: View {
     @State private var models: [ModelChoice] = []
     @State private var camelotCodes: Set<String> = []
     @State private var partGroups: [LibraryPartGroup] = []
+    /// Whether the last rebuild found the parts list narrowed by a filter —
+    /// see `syncExpansion`.
+    @State private var wasNarrowed = false
+    /// The part whose group has already been opened for it, so that opening
+    /// happens once per selection rather than on every publish — see
+    /// `revealSelectedPart`.
+    @State private var revealedPartId: String?
     /// Whether the Edited scope is what set the "recently edited" sort — as
     /// opposed to the user picking it.
     @State private var promotedSort = false
@@ -137,20 +154,33 @@ struct LibraryScreen: View {
             }
             next.artist = nil
             library.filters = next
-            parts.filters.favoritesOnly = false
+            var nextParts = parts.filters
+            nextParts.favoritesOnly = false
+            // A spanning scope's search text belongs to the shared box, not to
+            // the parts list — left set, every parts picker in the app would
+            // open pre-filtered by something typed on a screen you have left.
+            if scope.spansBothTables { nextParts.query = "" }
+            parts.filters = nextParts
         }
         // `initial` because the reveal is usually set in the same turn that
         // switches to this screen, so the first body evaluation is already
         // carrying it and there is no change left to observe.
         .onChange(of: reveal, initial: true) { consumeReveal() }
-        .onChange(of: scope) {
-            applyScope()
+        .onChange(of: scope) { previous, _ in
+            applyScope(leaving: previous)
             resetSelection()
         }
         .onChange(of: library.results) { refreshDerived() }
         .onChange(of: parts.results) { refreshDerived() }
         .onChange(of: groupBySong) { rebuildGroups() }
-        .onChange(of: selectedPartId) { refreshSiblings() }
+        // Filters the results do not move — narrowing to a kind that was
+        // already the whole list — still change what the list *is*, and the
+        // groups follow that rather than the rows.
+        .onChange(of: parts.filters) { syncExpansion(partGroups) }
+        .onChange(of: selectedPartId) {
+            refreshSiblings()
+            revealSelectedPart()
+        }
         .onChange(of: checked) {
             // A comparison is exactly the ticked pair; untick one and there is
             // nothing left to compare.
@@ -174,22 +204,25 @@ struct LibraryScreen: View {
                 .foregroundStyle(Bench.Palette.textPrimary)
             // Which scope you are in is chosen (and shown) in the sidebar; the
             // title says which one you are looking at rather than repeating
-            // the switch here.
-            Text(scope.title.uppercased())
-                .font(Bench.Typo.counter)
-                .foregroundStyle(Bench.Palette.textFaintest)
-                .padding(.leading, 2)
+            // the switch here. All says nothing, because "Library" already
+            // did — an eyebrow reading "LIBRARY ALL" is the word twice.
+            if scope != .all {
+                Text(scope.title.uppercased())
+                    .font(Bench.Typo.counter)
+                    .foregroundStyle(Bench.Palette.textFaintest)
+                    .padding(.leading, 2)
+            }
         } trailing: {
             HStack(spacing: 9) {
                 BenchSearchField(text: searchText,
                                  placeholder: searchPlaceholder,
                                  width: scope == .parts ? 230 : 250,
                                  focused: $searchFocused)
-                // Offered from Generated Songs too: that is where you are when
-                // it occurs to you to bring something in, and hiding the button
-                // until you have already found the Imported scope makes the
-                // feature discoverable only to someone who knows it exists.
-                if scope == .songs || scope == .imported {
+                // Offered from All and Generated too: that is where you are
+                // when it occurs to you to bring something in, and hiding the
+                // button until you have already found the Imported scope makes
+                // the feature discoverable only to someone who knows it exists.
+                if scope == .all || scope == .songs || scope == .imported {
                     Button("Import audio…") { showImporter = true }
                         .buttonStyle(.benchSecondary)
                         .help("Import audio files as library songs")
@@ -205,17 +238,27 @@ struct LibraryScreen: View {
         switch scope {
         case .parts: "Search parts…"
         case .imported: "Search titles, artists, notes…"
+        case .all, .favourites: "Search tracks and parts…"
         default: "Search prompts, lyrics, notes…"
         }
     }
 
     /// One field, two stores: the search box means "search what is on screen".
+    ///
+    /// A scope that spans both tables writes to both, which Favourites did not
+    /// and should have: typing there narrowed the tracks and left every part
+    /// standing, so the list appeared to ignore half of what you typed. It
+    /// matters more now that All is the library's front door.
     private var searchText: Binding<String> {
-        scope == .parts
-            ? Binding(get: { parts.filters.query },
-                      set: { parts.filters.query = $0 })
-            : Binding(get: { library.filters.query },
-                      set: { library.filters.query = $0 })
+        if scope == .parts {
+            return Binding(get: { parts.filters.query },
+                           set: { parts.filters.query = $0 })
+        }
+        return Binding(get: { library.filters.query },
+                       set: { text in
+                           library.filters.query = text
+                           if scope.spansBothTables { parts.filters.query = text }
+                       })
     }
 
     // MARK: - Filter bar
@@ -299,11 +342,22 @@ struct LibraryScreen: View {
             }
         }
         if library.filters != scopeBaseline {
-            Button("Clear") { library.filters = scopeBaseline }
+            Button("Clear") { clearFilters() }
                 .buttonStyle(.bench(.quiet))
         }
         Spacer(minLength: 8)
         selectionControls
+    }
+
+    /// Back to the scope's own starting filters.
+    ///
+    /// The parts half has to be cleared with it wherever the two share a search
+    /// box, or "Clear" empties the field and leaves the parts list narrowed by
+    /// a word that is no longer written anywhere on screen.
+    private func clearFilters() {
+        library.filters = scopeBaseline
+        guard scope.spansBothTables, !parts.filters.query.isEmpty else { return }
+        parts.filters.query = ""
     }
 
     @ViewBuilder
@@ -447,16 +501,11 @@ struct LibraryScreen: View {
 
     @ViewBuilder
     private var scopeList: some View {
-        if scope == .favourites {
+        if scope.spansBothTables {
             if songs.isEmpty && parts.results.isEmpty {
-                LibraryEmptyState(
-                    title: library.filters == scopeBaseline
-                        ? "Nothing hearted yet" : "No matches",
-                    message: library.filters == scopeBaseline
-                        ? "Tap the heart on a track or a part and it lands here."
-                        : "Try different search terms or filters.")
+                LibraryEmptyState(title: emptyTitle, message: emptyMessage)
             } else {
-                favouritesList
+                combinedList
             }
         } else if scope == .parts {
             if partGroups.isEmpty {
@@ -468,7 +517,8 @@ struct LibraryScreen: View {
             } else {
                 LibraryPartList(
                     groups: partGroups, analyses: parts.analyses,
-                    playback: playback, selectedId: $selectedPartId,
+                    playback: playback, expanded: $expandedGroups,
+                    selectedId: $selectedPartId,
                     checked: $checked,
                     onPlay: playPart, onSeek: seekPart,
                     onAddToWorkbench: onAddToWorkbench,
@@ -495,15 +545,15 @@ struct LibraryScreen: View {
         scrollMemory.map { LibraryScrollSlot(memory: $0, scope: scope) }
     }
 
-    /// Favourites is the one scope that spans both tables, so it composes the
-    /// two row types itself instead of handing off to one of the lists — two
-    /// scroll views stacked would each scroll on their own.
-    private var favouritesList: some View {
+    /// The two scopes that span both tables compose the row types themselves
+    /// instead of handing off to one of the dedicated lists — two scroll views
+    /// stacked would each scroll on their own.
+    private var combinedList: some View {
         // Measured once for the whole list, as the two dedicated lists do —
         // see `LibraryRowMetrics`.
         GeometryReader { pane in
             ScrollViewReader { proxy in
-                favouritesScroll(
+                combinedScroll(
                     contentWidth: LibraryRowMetrics
                         .contentWidth(pane: pane.size.width))
                     .remembersLibraryScroll(scrollSlot, proxy: proxy)
@@ -511,7 +561,7 @@ struct LibraryScreen: View {
         }
     }
 
-    private func favouritesScroll(contentWidth: CGFloat) -> some View {
+    private func combinedScroll(contentWidth: CGFloat) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if !songs.isEmpty {
@@ -573,9 +623,9 @@ struct LibraryScreen: View {
                                 selectedSongId = nil
                             },
                             onSeek: { seekPart(part, $0) })
-                            // Favourites composes the two row types itself,
-                            // so it carries the parts menu too — the same one
-                            // `LibraryPartList` puts on its rows.
+                            // A spanning scope composes the two row types
+                            // itself, so it carries the parts menu too — the
+                            // same one `LibraryPartList` puts on its rows.
                             .contextMenu {
                                 Button("Add to Workbench") {
                                     onAddToWorkbench(part)
@@ -601,9 +651,10 @@ struct LibraryScreen: View {
     private var emptyTitle: String {
         if library.filters != scopeBaseline { return "No matches" }
         switch scope {
-        case .renders: return "No renders yet"
+        case .all: return "Nothing here yet"
         case .imported: return "Nothing imported yet"
         case .edited: return "Nothing edited yet"
+        case .favourites: return "Nothing hearted yet"
         default: return "No songs yet"
         }
     }
@@ -613,14 +664,19 @@ struct LibraryScreen: View {
             return "Try different search terms or filters."
         }
         switch scope {
-        case .renders:
-            return "Combine parts in the Workbench and the mix lands here."
+        case .all:
+            return "Everything you generate, import, render or split lands "
+                + "here — this is the whole library."
         case .imported:
             return "Import audio files, or drag them onto this list."
         case .edited:
             return "Trim, cut or level a track in the Editor and it "
                 + "lands here once you apply."
+        case .favourites:
+            return "Tap the heart on a track or a part and it lands here."
         default:
+            // The Generated shelf: takes from Studio, mixes from the Workbench
+            // and selections from the Editor all arrive on it.
             return "Generate something and it will land here."
         }
     }
@@ -652,7 +708,8 @@ struct LibraryScreen: View {
                     selectedSongId = nil
                     selectedPartId = nil
                 })
-        } else if scope == .parts || (scope == .favourites && selectedPartId != nil) {
+        } else if scope == .parts
+                    || (scope.spansBothTables && selectedPartId != nil) {
             if let part = selectedPart {
                 PartInspector(
                     part: part, analysis: parts.analysis(for: part.id),
@@ -790,9 +847,9 @@ struct LibraryScreen: View {
     /// a row ran the search — an FTS match, a tag read and a count, inline on
     /// this actor — five times for one scope change, and four of those against
     /// a half-applied filter set whose results were thrown away.
-    private func applyScope() {
+    private func applyScope(leaving previous: LibraryScope? = nil) {
         var next = library.filters
-        next.origin = scope.origin.map { .only($0.rawValue) } ?? .any
+        next.origin = scope.originFilter
         next.favoritesOnly = scope == .favourites
         next.hasEdits = scope == .edited
         // The Edited scope is a list of edits, so it leads with the newest
@@ -815,7 +872,19 @@ struct LibraryScreen: View {
         }
         if scope != .imported { next.artist = nil }
         library.filters = next
-        parts.filters.favoritesOnly = scope == .favourites
+        // One assignment for the parts store too, and for the same reason.
+        var nextParts = parts.filters
+        nextParts.favoritesOnly = scope == .favourites
+        if scope.spansBothTables {
+            // One box over two lists — see `searchText`.
+            nextParts.query = next.query
+        } else if previous?.spansBothTables == true {
+            // Leaving the shared box: what is in it was never this list's.
+            // Only on the way *out* of a spanning scope, so a Parts search
+            // still survives a trip to Generated and back.
+            nextParts.query = ""
+        }
+        if nextParts != parts.filters { parts.filters = nextParts }
     }
 
     /// Drop what was picked under the scope being left.
@@ -833,20 +902,20 @@ struct LibraryScreen: View {
         checked = []
         switch scope {
         case .parts: selectedSongId = nil
-        // Favourites can hold either kind, so it starts with neither picked
-        // rather than inheriting a row the new list may not contain.
-        case .favourites: selectedSongId = nil; selectedPartId = nil
-        case .songs, .imported, .renders, .edited: selectedPartId = nil
+        // All and Favourites hold either kind, so they start with neither
+        // picked rather than inheriting a row the new list may not contain.
+        case .all, .favourites: selectedSongId = nil; selectedPartId = nil
+        case .songs, .imported, .edited: selectedPartId = nil
         }
     }
 
     /// The filter set this scope starts from, which is what "Clear" restores
     /// and what the empty state compares against — `.init()` alone would read a
-    /// freshly opened Renders scope as "filtered".
+    /// freshly opened Imported scope as "filtered".
     private var scopeBaseline: LibraryRepository.Filters {
         var baseline = LibraryRepository.Filters()
         baseline.sort = settings.libraryDefaultSort
-        baseline.origin = scope.origin.map { .only($0.rawValue) } ?? .any
+        baseline.origin = scope.originFilter
         baseline.favoritesOnly = scope == .favourites
         baseline.hasEdits = scope == .edited
         if scope == .edited { baseline.sort = .recentlyEdited }
@@ -857,8 +926,13 @@ struct LibraryScreen: View {
         // Ticks only mean anything while you can see them. A filter that hides
         // one half of a pair has to end the comparison too, or the transport
         // bar keeps offering an A|B over a row the list no longer contains.
+        // A scope that lists both kinds has to count both as visible, or every
+        // ticked part is unticked again the moment either store publishes —
+        // which in Favourites it was, so a bulk action over hearted stems could
+        // never be assembled.
         if scope != .parts {
-            let visible = Set(songs.map(\.id))
+            var visible = Set(songs.map(\.id))
+            if scope.spansBothTables { visible.formUnion(parts.results.map(\.id)) }
             if !checked.isSubset(of: visible) { checked.formIntersection(visible) }
         }
         refreshBadgeCounts()
@@ -951,6 +1025,57 @@ struct LibraryScreen: View {
                 parts: rest))
         }
         partGroups = groups
+        syncExpansion(groups)
+        revealSelectedPart()
+    }
+
+    /// A narrowed list opens itself.
+    ///
+    /// The groups are closed by default, which is the point of them — but a
+    /// filter is a search *for parts*, and answering "vocal" with fifty closed
+    /// song headings reads as no matches at all. So while anything is filtering
+    /// the list, every group in it is open; clear the filters and it goes back
+    /// to the list of songs it started as.
+    private func syncExpansion(_ groups: [LibraryPartGroup]) {
+        guard parts.filters != .init() else {
+            // Only on the way out of a filtered list, so this never closes
+            // groups the user opened by hand on an unfiltered one.
+            if wasNarrowed {
+                expandedGroups = []
+                wasNarrowed = false
+            }
+            return
+        }
+        wasNarrowed = true
+        let ids = Set(groups.filter { $0.header != nil }.map(\.id))
+        // Checked rather than written every time: this runs on every publish
+        // of either store, and an unconditional write to the shell would
+        // invalidate the screen on each one.
+        guard !expandedGroups.isSuperset(of: ids) else { return }
+        expandedGroups.formUnion(ids)
+    }
+
+    /// Open the group holding the inspected part.
+    ///
+    /// "Show now playing" can land on this screen with a stem selected and the
+    /// song it came from closed, which would otherwise be a list with nothing
+    /// visibly picked and an inspector describing a row you cannot see.
+    ///
+    /// Once per part: closing a group whose stem you are listening to has to
+    /// stay closed, or the group springs open again on the next publish.
+    private func revealSelectedPart() {
+        guard let id = selectedPartId else {
+            revealedPartId = nil
+            return
+        }
+        guard id != revealedPartId else { return }
+        guard let group = partGroups.first(where: { group in
+            group.header != nil && group.parts.contains { $0.id == id }
+        }) else { return }
+        revealedPartId = id
+        if !expandedGroups.contains(group.id) {
+            expandedGroups.insert(group.id)
+        }
     }
 
     /// `201 S · 107 BPM · 8B · DEMUCS 6-STEM` — the source's shape and the

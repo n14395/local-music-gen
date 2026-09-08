@@ -4,34 +4,34 @@ import XCTest
 /// The picker's strip: which tabs exist, and what each one counts. Pure, so
 /// the rules can be read without a library, a sheet or a slot behind them.
 final class PickerTabTests: XCTestCase {
-    private func strip(_ counts: [SongOrigin: Int], songs: Bool = true,
+    private func strip(_ counts: [SongShelf: Int], songs: Bool = true,
                        parts: Int?, edited: Int = 0,
                        loved: Int = 0) -> [(tab: PickerTab, count: Int)] {
         PickerTab.strip(songCounts: counts, showsSongs: songs, partCount: parts,
                         editedCount: edited, lovedCount: loved)
     }
 
-    private let library: [SongOrigin: Int] = [.generated: 96, .imported: 30,
-                                              .recombined: 2]
+    /// 96 takes and 2 renders share the made shelf — see `SongShelf`.
+    private let library: [SongShelf: Int] = [.made: 98, .imported: 30]
 
-    func testPartsJoinsTheOriginsWhenTheSlotTakesThem() {
+    func testPartsJoinsTheShelvesWhenTheSlotTakesThem() {
         let tabs = strip(library, parts: 4).map(\.tab)
-        XCTAssertEqual(tabs, [.all, .songs(.generated), .songs(.imported),
-                              .songs(.recombined), .parts, .edited, .loved])
+        XCTAssertEqual(tabs, [.all, .songs(.made), .songs(.imported),
+                              .parts, .edited, .loved])
     }
 
     /// A slot that would never take a part gets no tab for them — as opposed
     /// to a tab reading 0, which means "none yet".
     func testNoPartsTabWhereTheSlotTakesNone() {
         XCTAssertEqual(strip(library, parts: nil).map(\.tab),
-                       [.all, .songs(.generated), .songs(.imported),
-                        .songs(.recombined), .edited, .loved])
+                       [.all, .songs(.made), .songs(.imported),
+                        .edited, .loved])
     }
 
     func testAPartsTabSurvivesHavingNothingInIt() {
         let tabs = strip(library, parts: 0)
-        XCTAssertEqual(tabs[4].tab, .parts)
-        XCTAssertEqual(tabs[4].count, 0)
+        XCTAssertEqual(tabs[3].tab, .parts)
+        XCTAssertEqual(tabs[3].count, 0)
     }
 
     /// All counts what All lists, which is both halves of the sheet.
@@ -40,14 +40,13 @@ final class PickerTabTests: XCTestCase {
         XCTAssertEqual(strip(library, parts: nil).first?.count, 128)
     }
 
-    /// The origins are fixed rather than earned: a strip that reshuffles as
+    /// The shelves are fixed rather than earned: a strip that reshuffles as
     /// the library fills up is one you cannot learn.
-    func testEmptyOriginsStillGetTheirTab() {
-        let tabs = strip([.generated: 3], parts: nil)
-        XCTAssertEqual(tabs.map(\.tab), [.all, .songs(.generated),
-                                         .songs(.imported), .songs(.recombined),
-                                         .edited, .loved])
-        XCTAssertEqual(tabs.map(\.count), [3, 3, 0, 0, 0, 0])
+    func testEmptyShelvesStillGetTheirTab() {
+        let tabs = strip([.made: 3], parts: nil)
+        XCTAssertEqual(tabs.map(\.tab), [.all, .songs(.made),
+                                         .songs(.imported), .edited, .loved])
+        XCTAssertEqual(tabs.map(\.count), [3, 3, 0, 0, 0])
     }
 
     /// With no songs listed the only tabs left would be All and Parts — one
@@ -179,11 +178,11 @@ final class PickerTabTests: XCTestCase {
                        + "which list a row is on is decided elsewhere")
     }
 
-    /// The strip is five places and two adjectives, so All is the union of the
+    /// The strip is four places and two adjectives, so All is the union of the
     /// slices and not the sum of every tab. The marks are what say so.
     func testTheFilterTabsAreMarkedAndTheSlicesAreNot() {
         XCTAssertNil(PickerTab.all.symbol)
-        XCTAssertNil(PickerTab.songs(.generated).symbol)
+        XCTAssertNil(PickerTab.songs(.made).symbol)
         XCTAssertNil(PickerTab.parts.symbol)
         XCTAssertEqual(PickerTab.edited.symbol, LibraryScope.edited.symbol)
         XCTAssertEqual(PickerTab.loved.symbol, LibraryScope.favourites.symbol)
@@ -197,10 +196,19 @@ final class PickerTabTests: XCTestCase {
         XCTAssertFalse(PickerTab.songs(.imported).isMerged)
     }
 
+    /// One name per place, across both surfaces. The picker used to carry a
+    /// Renders tab of its own; both it and the sidebar now read their slices
+    /// off `SongShelf`, so neither can start calling a list something the
+    /// other does not.
     func testTitlesMatchTheLibraryScopes() {
-        XCTAssertEqual(PickerTab.songs(.generated).title, LibraryScope.songs.title)
+        XCTAssertEqual(PickerTab.songs(.made).title, LibraryScope.songs.title)
         XCTAssertEqual(PickerTab.songs(.imported).title, LibraryScope.imported.title)
-        XCTAssertEqual(PickerTab.songs(.recombined).title, LibraryScope.renders.title)
         XCTAssertEqual(PickerTab.parts.title, LibraryScope.parts.title)
+        XCTAssertEqual(PickerTab.all.title, LibraryScope.all.title)
+        XCTAssertEqual(PickerTab.strip(songCounts: [:], showsSongs: true,
+                                       partCount: 1, editedCount: 0,
+                                       lovedCount: 0).map(\.tab.title),
+                       ["All", "Generated", "Imported", "Parts", "Edited",
+                        "Loved"])
     }
 }

@@ -361,9 +361,17 @@ struct LibrarySongRow: View {
     ///
     /// An imported row leads with its artist instead of its model, since
     /// "IMPORTED" repeated down a list of imports says nothing.
+    ///
+    /// A render leads with `RENDER`, which is what is left of the scope it used
+    /// to have to itself. Renders and generated takes share the Generated shelf
+    /// now — one list, because both are audio this app made — and the word here
+    /// is how you can still tell a Workbench mix from a take at a glance
+    /// without a second entry in the sidebar to go and look in.
     static func metaLine(for song: SongRecord, partCount: Int) -> String {
-        var fields = [song.sourceLabel.uppercased(),
-                      "\(LibraryFormat.seconds(song.durationS)) S"]
+        var fields: [String] = []
+        if let mark = song.originKind.rowMark { fields.append(mark.uppercased()) }
+        fields += [song.sourceLabel.uppercased(),
+                   "\(LibraryFormat.seconds(song.durationS)) S"]
         if partCount > 0 {
             fields.append("\(partCount) PART" + (partCount == 1 ? "" : "S"))
         }

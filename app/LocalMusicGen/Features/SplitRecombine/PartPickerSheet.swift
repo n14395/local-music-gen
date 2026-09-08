@@ -140,24 +140,29 @@ struct MaterialStrip: View {
 /// One strip over both halves of the sheet rather than one over each: the
 /// question it answers is "which of my stuff?", and the answer "a drum stem I
 /// made this morning" is not a different kind of question from "one of my
-/// imports". Parts joins the origins as a peer for that reason, even though it
+/// imports". Parts joins the shelves as a peer for that reason, even though it
 /// is a different table underneath.
+///
+/// The slices are `SongShelf`s, not `SongOrigin`s: the strip used to carry
+/// Generated, Imported *and* Renders, so picking a mix you had made meant
+/// knowing which of two tabs the app had filed it under. It names the same
+/// shelves the Library's sidebar does, from the same enum, so the two surfaces
+/// cannot drift into disagreeing about where a track lives.
 enum PickerTab: Hashable {
     case all
-    case songs(SongOrigin)
+    case songs(SongShelf)
     case parts
     /// Not a slice of the list like the ones above, but a filter across all of
-    /// it: a song is generated *or* imported *or* a render, and any of the
-    /// three — or a part — may also have been edited or hearted. They carry a
-    /// mark for that reason, so a strip of five places and two adjectives does
-    /// not read as seven places.
+    /// it: a song is on one shelf or the other, and either — or a part — may
+    /// also have been edited or hearted. They carry a mark for that reason, so
+    /// a strip of four places and two adjectives does not read as six places.
     case edited
     case loved
 
     var title: String {
         switch self {
         case .all: "All"
-        case .songs(let origin): origin.title
+        case .songs(let shelf): shelf.title
         case .parts: "Parts"
         case .edited: "Edited"
         case .loved: "Loved"
@@ -189,7 +194,7 @@ enum PickerTab: Hashable {
     var noun: String {
         switch self {
         case .all: "material"
-        case .songs(let origin): origin.title.lowercased()
+        case .songs(let shelf): shelf.noun
         case .parts: "parts"
         case .edited: "edited material"
         case .loved: "loved material"
@@ -222,18 +227,18 @@ enum PickerTab: Hashable {
     ///
     /// `partCount` is nil where the slot takes no parts at all, which is the
     /// difference between a tab reading "Parts 0" — there are none *yet* — and
-    /// no tab, meaning this slot would not take one anyway. The origins are
+    /// no tab, meaning this slot would not take one anyway. The shelves are
     /// listed even at zero for the same reason the library's scopes are: a
     /// fixed strip you can learn beats one that reshuffles itself as the
     /// library fills up.
     ///
     /// No songs to show means no strip at all: the only tabs left would be All
     /// and Parts, which is one list and a synonym for it.
-    static func strip(songCounts: [SongOrigin: Int], showsSongs: Bool,
+    static func strip(songCounts: [SongShelf: Int], showsSongs: Bool,
                       partCount: Int?, editedCount: Int,
                       lovedCount: Int) -> [(tab: PickerTab, count: Int)] {
         guard showsSongs else { return [] }
-        let songs = SongOrigin.allCases.map { ($0, songCounts[$0] ?? 0) }
+        let songs = SongShelf.allCases.map { ($0, songCounts[$0] ?? 0) }
         let total = songs.reduce(0) { $0 + $1.1 } + (partCount ?? 0)
         var strip: [(tab: PickerTab, count: Int)] = [(.all, total)]
         strip += songs.map { (PickerTab.songs($0.0), $0.1) }
@@ -365,19 +370,21 @@ struct PartPickerSheet: View {
         return (try? library.repository.search(filters)) ?? []
     }
 
-    /// `matchingSongs`, narrowed by the origin tab when one is showing.
+    /// `matchingSongs`, narrowed by the shelf tab when one is showing.
     /// Takes the search results rather than reaching for them, because the
     /// pass that draws this list has already paid for them once.
     private func songsOnTab(_ matched: [SongRecord]) -> [SongRecord] {
-        guard case .songs(let origin) = tab else { return matched }
-        return matched.filter { $0.originKind == origin }
+        guard case .songs(let shelf) = tab else { return matched }
+        return matched.filter { SongShelf(origin: $0.originKind) == shelf }
     }
 
-    /// `All 132 · Generated 96 · Imported 30 · Renders 2 · Parts 4`.
+    /// `All 132 · Generated 98 · Imported 30 · Parts 4`.
     private func tabs(_ rows: [Listed]) -> [BenchSegmented<PickerTab>.Option] {
-        var counts: [SongOrigin: Int] = [:]
+        var counts: [SongShelf: Int] = [:]
         for row in rows {
-            if let origin = row.origin { counts[origin, default: 0] += 1 }
+            if let origin = row.origin {
+                counts[SongShelf(origin: origin), default: 0] += 1
+            }
         }
         return PickerTab.strip(
             songCounts: counts, showsSongs: showsSongs,

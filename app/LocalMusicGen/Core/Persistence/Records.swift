@@ -1,7 +1,8 @@
 import Foundation
 import GRDB
 
-/// Where a song came from — the one axis the library's scopes are cut along.
+/// Where a song came from. Three origins, filed on two shelves — see
+/// `SongShelf`, which is the axis the library's lists are actually cut along.
 ///
 /// Stored as a string so the column stays readable in a SQL browser and an
 /// older build never chokes on a value it doesn't know; this enum is the typed
@@ -9,8 +10,12 @@ import GRDB
 enum SongOrigin: String, CaseIterable, Codable, Sendable {
     case generated, imported, recombined
 
-    /// How the scope, the picker tab and the empty state name this kind —
-    /// a collection of them.
+    /// How the empty state names this kind — a collection of them.
+    ///
+    /// No longer the name of a *place*: Renders stopped being a list of its own
+    /// when the shelves arrived, and `SongShelf.title` is what a list is called
+    /// now. This is still the honest plural of one origin, which is what an
+    /// empty state and a diagnostic want.
     var title: String {
         switch self {
         case .generated: "Generated"
@@ -23,6 +28,68 @@ enum SongOrigin: String, CaseIterable, Codable, Sendable {
     /// thing: "RENDER · 3:31", not "RENDERS · 3:31".
     var rowLabel: String {
         self == .recombined ? "Render" : title
+    }
+
+    /// The mark a row carries in a list that mixes the origins, or nil where
+    /// the row needs none.
+    ///
+    /// Only a render carries one. A generated take is the ordinary case and
+    /// would be labelling every second row with the name of the list it is in;
+    /// an import already leads its meta line with the artist, which says more
+    /// than the word "imported" does.
+    var rowMark: String? { self == .recombined ? rowLabel : nil }
+}
+
+/// Which shelf of the library a whole track sits on.
+///
+/// Two shelves over three origins, and the fold is the point. A Workbench mix
+/// and an Editor selection are stored as `recombined`, and for a while they had
+/// a sidebar entry of their own — "Renders", directly under "Generated" — so
+/// finding a track you had made meant first remembering which of two lists the
+/// app had decided it belonged to. Both are audio this app produced. The shelf
+/// says that much; the row says which kind, through `SongOrigin.rowMark`.
+///
+/// The shelves are declared here rather than inside the sidebar because two
+/// surfaces read them — the Library's scopes and the material picker's tab
+/// strip — and a fold defined twice is a fold that comes apart.
+enum SongShelf: String, CaseIterable, Identifiable, Hashable, Codable, Sendable {
+    /// Generated takes and renders: everything the app made.
+    case made
+    /// Files you brought in.
+    case imported
+
+    var id: String { rawValue }
+
+    var origins: [SongOrigin] {
+        switch self {
+        case .made: [.generated, .recombined]
+        case .imported: [.imported]
+        }
+    }
+
+    /// Which shelf an origin is filed on. Total, so a row is always somewhere —
+    /// the same promise `originKind` makes for a value from the future.
+    init(origin: SongOrigin) {
+        self = origin == .imported ? .imported : .made
+    }
+
+    /// "Generated" for the made shelf, deliberately keeping the word the
+    /// sidebar has always used: the shelf grew to include renders, and a
+    /// renamed row would read as a different place rather than a wider one.
+    var title: String {
+        switch self {
+        case .made: "Generated"
+        case .imported: "Imported"
+        }
+    }
+
+    /// Plural and lowercase, for an empty state — "No generated material
+    /// matches “kick”."
+    var noun: String {
+        switch self {
+        case .made: "generated material"
+        case .imported: "imports"
+        }
     }
 }
 

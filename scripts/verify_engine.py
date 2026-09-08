@@ -636,6 +636,23 @@ def main() -> int:
                     <= _choices_of(m, p["applies_when"]["param"])]
         check("applies_when only names values its param offers", not bad_gate,
               str(bad_gate[:5]))
+        # Same rule for required_when, where getting it wrong is louder: a
+        # value the selector cannot reach is a requirement nothing can satisfy,
+        # and submit refuses the job outright rather than merely dimming a row.
+        bad_need = [(m["id"], p["key"]) for m in gen
+                    for p in m["capabilities"]["params"]
+                    if p.get("required_when")
+                    and not set(p["required_when"]["values"])
+                    <= _choices_of(m, p["required_when"]["param"])]
+        check("required_when only names values its param offers", not bad_need,
+              str(bad_need[:5]))
+        # A non-nullable param is required unconditionally; saying it twice
+        # means one of the two is a lie waiting to be believed.
+        both = [(m["id"], p["key"]) for m in gen
+                for p in m["capabilities"]["params"]
+                if p.get("required_when") and not p.get("nullable", True)]
+        check("required_when is only declared on optional inputs", not both,
+              str(both[:5]))
         check("catalog install states resolve",
               all(m["install_state"] in
                   ("not_installed", "partial", "installed", "downloading")

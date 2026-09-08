@@ -300,6 +300,7 @@ class JobQueue:
             raw_dur = body.get("duration_s")
             dur = float(raw_dur) if raw_dur is not None else None
         known = {p["key"] for p in caps["params"]}
+        defaults = {p["key"]: p.get("default") for p in caps["params"]}
         raw = body.get("params") or {}
         params = {k: v for k, v in raw.items() if k in known}
         dropped = set(raw) - known
@@ -333,6 +334,24 @@ class JobQueue:
                         and params.get(spec["key"]) is None):
                     raise SubmitError(422, "VALIDATION",
                                       f"missing required input '{spec['key']}'")
+        # `required_when`: an input that is optional under one setting and
+        # mandatory under another. Checked for generate jobs too, unlike the
+        # nullable rule above — ACE-Step's source audio is optional for
+        # text2music and required for cover, and a cover submitted without one
+        # was 23 seconds of model load followed by an assertion from inside the
+        # pipeline, which reaches the caller as a failed job and no advice.
+        for spec in caps["params"]:
+            cond = spec.get("required_when")
+            if not cond:
+                continue
+            # The controlling param may be absent from the request, in which
+            # case its declared default is what the worker will see.
+            current = params.get(cond["param"], defaults.get(cond["param"]))
+            if current in cond["values"] and params.get(spec["key"]) is None:
+                raise SubmitError(
+                    422, "VALIDATION",
+                    f"'{spec['key']}' is required when "
+                    f"{cond['param']} is '{current}'")
         with self.lock:
             # `count: 4` is four jobs, not one job that loops four times.
             # They share the group_id and differ by take_index, so every take

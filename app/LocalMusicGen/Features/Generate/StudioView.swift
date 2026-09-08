@@ -702,8 +702,7 @@ struct StudioView: View {
                     // Said here rather than by the engine twenty seconds in:
                     // this model transforms audio it is given, and the form
                     // has not been given any.
-                    Text("NEEDS \(missing.label.uppercased()) — PICK IT "
-                         + "UNDER FULL CONTROL")
+                    Text(missingAudioNote(missing))
                         .font(Bench.Typo.mono(12))
                         .foregroundStyle(Bench.Palette.warn)
                 } else if needsWords {
@@ -725,12 +724,37 @@ struct StudioView: View {
     /// VampNet's source loop, vocals2music's vocal take. The engine would
     /// only refuse after loading the model; the button refuses first, and
     /// says why.
+    ///
+    /// "Cannot run without" is read from the form as it currently stands, not
+    /// from `nullable` alone: ACE-Step's source is optional until the Task menu
+    /// is moved to Cover or Repaint, at which point it is the whole job. That
+    /// case used to sail past this check and die inside the pipeline a model
+    /// load later.
     private func missingRequiredAudio(_ model: ModelInfo) -> ParamSpec? {
         model.capabilities.params.first {
-            ($0.type == .audio || $0.type == .midi) && !$0.nullable
+            ($0.type == .audio || $0.type == .midi)
                 && $0.isInternal != true
+                && ParameterGroups.isRequired($0, values: formState.values)
                 && formState.audioSelections[$0.key] == nil
         }
+    }
+
+    /// Why the button is refusing, in one line.
+    ///
+    /// A requirement the *model* imposes has one answer — go and pick the
+    /// file. A requirement a *setting* imposes has two, so it names the
+    /// setting: "NEEDS SOURCE AUDIO — COVER / RESTYLE WORKS ON A FILE" says
+    /// both what to attach and which menu asked for it, and leaves changing
+    /// the menu back as the other way out.
+    private func missingAudioNote(_ spec: ParamSpec) -> String {
+        let need = "NEEDS \(spec.label.uppercased())"
+        guard spec.nullable, let condition = spec.requiredWhen,
+              case .string(let value)? = formState.values[condition.param],
+              let choice = formState.specs
+                  .first(where: { $0.key == condition.param })?
+                  .choices?.first(where: { $0.value == value })
+        else { return "\(need) — PICK IT UNDER FULL CONTROL" }
+        return "\(need) — \(choice.label.uppercased()) WORKS ON A FILE"
     }
 
     /// `≈ 15 S ON THIS MAC` — from the model's declared throughput, so it is a

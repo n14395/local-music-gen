@@ -2,10 +2,15 @@ import GRDB
 import XCTest
 @testable import LocalMusicGen
 
-/// The Library's scopes are three disjoint reads of one table. These pin the
+/// The Library's shelves are two disjoint reads of one table. These pin the
 /// split itself — the regression that matters is an imported track showing up
-/// under Generated Songs, which is exactly what the old
-/// `origin != "recombined"` definition did.
+/// under Generated, which is exactly what the old `origin != "recombined"`
+/// definition did.
+///
+/// There are three origins and two shelves: a render shares the Generated shelf
+/// with the takes, because both are audio the app made and a second sidebar
+/// entry for one of them only asked the user to guess which list a mix went
+/// into. The origin survives on the row — see `SongOrigin.rowMark`.
 final class LibraryOriginTests: XCTestCase {
     private func makeRepo() throws -> LibraryRepository {
         LibraryRepository(db: try DatabaseManager.inMemory())
@@ -40,16 +45,16 @@ final class LibraryOriginTests: XCTestCase {
 
     // MARK: scopes
 
-    func testEachScopeSeesOnlyItsOwnOrigin() throws {
+    func testEachOriginFilterSeesOnlyItsOwnRows() throws {
         let repo = try seeded()
         XCTAssertEqual(try ids(repo, .generated), ["g1", "g2"])
         XCTAssertEqual(try ids(repo, .imported), ["i1"])
         XCTAssertEqual(try ids(repo, .recombined), ["r1"])
     }
 
-    /// The three scopes partition the table: nothing is in two of them, and
-    /// nothing falls between them into no scope at all.
-    func testScopesArePartition() throws {
+    /// The three origins partition the table: nothing is in two of them, and
+    /// nothing falls between them into no origin at all.
+    func testOriginsArePartition() throws {
         let repo = try seeded()
         let generated = try ids(repo, .generated)
         let imported = try ids(repo, .imported)
@@ -69,7 +74,7 @@ final class LibraryOriginTests: XCTestCase {
         XCTAssertFalse(try ids(repo, .generated).contains("i1"))
     }
 
-    func testCountsByOriginMatchTheScopes() throws {
+    func testCountsByOriginMatchTheRows() throws {
         let repo = try seeded()
         let counts = try repo.countsByOrigin()
         XCTAssertEqual(counts[SongOrigin.generated.rawValue], 2)
@@ -77,19 +82,93 @@ final class LibraryOriginTests: XCTestCase {
         XCTAssertEqual(counts[SongOrigin.recombined.rawValue], 1)
     }
 
-    /// Every scope maps to the origin its list is meant to show. Guards the
+    /// Every scope maps to the shelf its list is meant to show. Guards the
     /// wiring between the sidebar enum and the query.
-    func testScopeOriginMapping() {
-        XCTAssertEqual(LibraryScope.songs.origin, .generated)
-        XCTAssertEqual(LibraryScope.imported.origin, .imported)
-        XCTAssertEqual(LibraryScope.renders.origin, .recombined)
-        XCTAssertNil(LibraryScope.parts.origin)
-        XCTAssertNil(LibraryScope.favourites.origin)
+    func testScopeShelfMapping() {
+        XCTAssertEqual(LibraryScope.songs.shelf, .made)
+        XCTAssertEqual(LibraryScope.imported.shelf, .imported)
+        XCTAssertNil(LibraryScope.all.shelf)
+        XCTAssertNil(LibraryScope.parts.shelf)
+        XCTAssertNil(LibraryScope.favourites.shelf)
+    }
+
+    /// The Generated scope asks for both of its origins, and All asks for no
+    /// narrowing at all — the two ends of the fold, stated as a query.
+    func testScopeOriginFilters() {
+        XCTAssertEqual(LibraryScope.songs.originFilter,
+                       .anyOf(["generated", "recombined"]))
+        XCTAssertEqual(LibraryScope.imported.originFilter, .only("imported"))
+        XCTAssertEqual(LibraryScope.all.originFilter, .any)
+        XCTAssertEqual(LibraryScope.favourites.originFilter, .any)
+    }
+
+    /// The shelf a render is on, which is the behaviour change: a Workbench mix
+    /// and a Studio take are found in the same list.
+    func testARenderSharesTheGeneratedShelf() throws {
+        let repo = try seeded()
+        var filters = LibraryRepository.Filters()
+        filters.origin = LibraryScope.songs.originFilter
+        XCTAssertEqual(Set(try repo.search(filters).map(\.id)),
+                       ["g1", "g2", "r1"])
+        XCTAssertEqual(SongShelf(origin: .recombined), .made)
+        XCTAssertEqual(SongShelf(origin: .generated), .made)
+        XCTAssertEqual(SongShelf(origin: .imported), .imported)
+    }
+
+    /// …and the shelves still partition the table: nothing is on both, nothing
+    /// is on neither.
+    func testShelvesArePartition() throws {
+        let repo = try seeded()
+        func ids(_ shelf: SongShelf) throws -> Set<String> {
+            var filters = LibraryRepository.Filters()
+            filters.origin = .anyOf(Set(shelf.origins.map(\.rawValue)))
+            return Set(try repo.search(filters).map(\.id))
+        }
+        let made = try ids(.made)
+        let imported = try ids(.imported)
+        XCTAssertTrue(made.isDisjoint(with: imported))
+        XCTAssertEqual(made.union(imported),
+                       Set(try repo.search(.init()).map(\.id)))
     }
 
     func testGeneratedScopeIsLabelledAsSuch() {
         XCTAssertEqual(LibraryScope.songs.title, "Generated")
         XCTAssertEqual(LibraryScope.imported.title, "Imported")
+    }
+
+    /// The Library row is a place, not a lid: `all` is a scope of its own and
+    /// deliberately absent from the rows drawn under it.
+    func testAllIsTheLibraryRowAndNotASubRow() {
+        XCTAssertTrue(LibraryScope.allCases.contains(.all))
+        XCTAssertFalse(LibraryScope.sidebarScopes.contains(.all))
+        XCTAssertEqual(LibraryScope.sidebarScopes,
+                       [.songs, .imported, .parts, .edited, .favourites])
+    }
+
+    /// Both scopes that list tracks *and* parts have to say so — the composed
+    /// list, the either-kind selection and the two-store search all hang off it.
+    func testTheSpanningScopesAreAllAndFavourites() {
+        XCTAssertEqual(LibraryScope.allCases.filter(\.spansBothTables),
+                       [.all, .favourites])
+    }
+
+    /// A render is marked on its row, which is what is left of the scope it
+    /// used to have. Nothing else is: a mark on every second row would be
+    /// labelling the list from inside it.
+    func testOnlyARenderMarksItsRow() {
+        XCTAssertEqual(SongOrigin.recombined.rowMark, "Render")
+        XCTAssertNil(SongOrigin.generated.rowMark)
+        XCTAssertNil(SongOrigin.imported.rowMark)
+    }
+
+    @MainActor
+    func testTheMetaLineLeadsWithTheRenderMark() {
+        let render = LibrarySongRow.metaLine(
+            for: song(id: "r", origin: .recombined), partCount: 0)
+        let take = LibrarySongRow.metaLine(
+            for: song(id: "g", origin: .generated), partCount: 0)
+        XCTAssertTrue(render.hasPrefix("RENDER · M · "), render)
+        XCTAssertTrue(take.hasPrefix("M · "), take)
     }
 
     // MARK: origin typing

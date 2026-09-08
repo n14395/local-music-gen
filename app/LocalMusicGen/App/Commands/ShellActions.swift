@@ -485,9 +485,9 @@ struct ShellActions {
         let parts = env.partsStore.results.map(\.id)
         switch shell.libraryScope {
         case .parts: shell.checked = Set(parts)
-        // Favourites lists both kinds, so both are taken.
-        case .favourites: shell.checked = Set(songs + parts)
-        case .songs, .imported, .renders, .edited: shell.checked = Set(songs)
+        // All and Favourites list both kinds, so both are taken.
+        case .all, .favourites: shell.checked = Set(songs + parts)
+        case .songs, .imported, .edited: shell.checked = Set(songs)
         }
     }
 
@@ -632,19 +632,20 @@ struct ShellActions {
     /// Put the filters back to what this scope starts from.
     ///
     /// Mirrors `LibraryScreen.scopeBaseline`: a scope *is* a filter set, so
-    /// "clear" cannot mean an empty one — clearing inside Renders must leave
-    /// you in Renders.
+    /// "clear" cannot mean an empty one — clearing inside Imported must leave
+    /// you in Imported.
     func clearLibraryFilters() {
         var baseline = LibraryRepository.Filters()
         baseline.sort = env.settings.libraryDefaultSort
         let scope = shell.libraryScope
-        baseline.origin = scope.origin.map { .only($0.rawValue) } ?? .any
+        baseline.origin = scope.originFilter
         baseline.favoritesOnly = scope == .favourites
         baseline.hasEdits = scope == .edited
         if scope == .edited { baseline.sort = .recentlyEdited }
         env.library.filters = baseline
-        env.partsStore.filters = PartsRepository.Filters()
-        env.partsStore.filters.favoritesOnly = scope == .favourites
+        var parts = PartsRepository.Filters()
+        parts.favoritesOnly = scope == .favourites
+        env.partsStore.filters = parts
     }
 
     // MARK: - Playback
@@ -924,11 +925,13 @@ struct ShellActions {
 
     /// Take the user to the track the queue just made.
     ///
-    /// The scope comes from the song's own origin rather than being assumed to
-    /// be Generated: the same row shape carries a recombination, and dropping
-    /// the user on the Generated list with a render selected shows an empty
-    /// pane over a list the track is not in. The same rule `MainWindow`'s
-    /// "Show in library" follows.
+    /// The scope comes from the song's own origin rather than being assumed:
+    /// the same row shape carries an import, and dropping the user on the
+    /// Generated shelf with an import selected shows an empty pane over a list
+    /// the track is not in. A render needs no such care any more — it shares
+    /// the Generated shelf with the takes — but the rule is written against the
+    /// origin rather than against which origins happen to share a shelf today.
+    /// The same rule `MainWindow`'s "Show in library" follows.
     func showLatestRender() {
         guard let id = latestRenderedSongId,
               let song = env.library.song(id: id) else { return }

@@ -19,11 +19,12 @@ final class PartsStore {
     /// dictionary, so a measurement that lands later still arrives with the
     /// publish that carries it.
     private var analysedIds: Set<String> = []
-    /// How many parts are hearted — the sidebar's "Favourites" count, which
-    /// spans both tables and so cannot be read off `results`. Cached for the
-    /// reason `LibraryStore.editedCount` is: the sidebar was running the
-    /// query from inside its body.
-    private(set) var favouriteCount = 0
+    // `favouriteCount` used to live here, a whole-table `COUNT(*)` on every
+    // publish, for the parts half of the sidebar's Favourites badge. The badge
+    // reads `results` now — the Favourites scope already filters this store to
+    // the hearted rows, and since the search box reaches both tables the
+    // narrowed list is the honest number while you are typing, which a
+    // whole-table count never was.
     var filters = PartsRepository.Filters() {
         didSet { filtersChanged(from: oldValue) }
     }
@@ -75,12 +76,10 @@ final class PartsStore {
     /// there is nothing here that wanted the main thread in the first place.
     nonisolated private static func read(filters: PartsRepository.Filters,
                                          from repo: PartsRepository)
-        -> (parts: [PartRecord], analyses: [String: AnalysisRecord],
-            favourites: Int) {
+        -> (parts: [PartRecord], analyses: [String: AnalysisRecord]) {
         let parts = (try? repo.parts(filters)) ?? []
         let analyses = (try? repo.analyses(ownerIds: parts.map(\.id))) ?? [:]
-        let favourites = (try? repo.favoriteCount()) ?? 0
-        return (parts, analyses, favourites)
+        return (parts, analyses)
     }
 
     /// Whether deletions send the user's files to the Trash — see
@@ -108,8 +107,8 @@ final class PartsStore {
     /// Re-read because rows changed underneath us — the counterpart to
     /// `LibraryStore.refreshRecentSoon`, and for the same reason.
     ///
-    /// `refresh()` is synchronous and unbounded: every part, every analysis
-    /// attachment for them, and the favourites count. It runs on init, on
+    /// `refresh()` is synchronous and unbounded: every part and every analysis
+    /// attachment for them. It runs on init, on
     /// every star, rating, rename, delete and update, and on every parts
     /// ingest — so a split landing six stems used to pay for the whole list
     /// six times over on the main actor. Ingest paths use this instead;
@@ -133,14 +132,10 @@ final class PartsStore {
     }
 
     private func publish(_ answer: (parts: [PartRecord],
-                                    analyses: [String: AnalysisRecord],
-                                    favourites: Int)) {
+                                    analyses: [String: AnalysisRecord])) {
         results = answer.parts
         analyses = answer.analyses
         analysedIds = Set(answer.parts.map(\.id))
-        if favouriteCount != answer.favourites {
-            favouriteCount = answer.favourites
-        }
     }
 
     /// As `LibraryStore.noteEdits` — keep the cached rows in step with the
