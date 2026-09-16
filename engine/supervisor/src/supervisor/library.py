@@ -47,7 +47,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from engine_protocol.adapter import AUX_DIRS, AUX_KEPT_DIRS
+from engine_protocol.adapter import AUX_DIRS, AUX_KEPT_DIRS, AUX_LEGACY_DIRS
 from engine_protocol.staging import INCOMPLETE_MARKER
 
 from .events import EventBus
@@ -186,7 +186,7 @@ class LibraryManager:
         apart.
         """
         out = []
-        for name in sorted(AUX_DIRS + AUX_KEPT_DIRS):
+        for name in sorted(AUX_DIRS + AUX_KEPT_DIRS + AUX_LEGACY_DIRS):
             path = os.path.join(self.aux_root, name)
             if not os.path.isdir(path):
                 continue

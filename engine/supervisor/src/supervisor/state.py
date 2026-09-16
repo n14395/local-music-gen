@@ -23,6 +23,13 @@ class EngineState:
         self.downloads = DownloadManager(self.registry, bus, lambda: self.hf_token)
         self.queue = JobQueue(self.registry, bus, settings)
         self.library = LibraryManager(self.registry, bus, self)
+        # Models whose removal is running right now. A delete is an rmtree of
+        # the weights (and often the family venv) that runs off the event loop,
+        # so the loop is free to accept a download for the very tree being
+        # removed — the download would write into it mid-removal and end up
+        # partial. The download and runtime endpoints refuse while an id is in
+        # here; `models_delete` holds it for exactly the duration of the work.
+        self.deleting: set[str] = set()
         # Last working set any worker reported. It describes the Mac, not the
         # process, so it stays true after that worker exits — which is the only
         # way an idle engine can report a ceiling at all.

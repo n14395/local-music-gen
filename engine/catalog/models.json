@@ -12545,8 +12545,18 @@
       "variant_of": null,
       "display_name": "Magenta RealTime 2",
       "description": "Google's streaming music engine, running natively on MLX — audio decodes faster than it plays (4 s of music in under 2 s once loaded, in 1.7 GB of memory). Prompt with words or with a reference clip whose vibe it should hold.",
-      "hf_repos": [],
-      "size_bytes": 1750000000,
+      "hf_repos": [
+        {
+          "repo_id": "google/magenta-realtime-2",
+          "gated": false,
+          "allow_patterns": [
+            "resources/musiccoca/*",
+            "resources/spectrostream/*",
+            "models/mrt2_small/*"
+          ]
+        }
+      ],
+      "size_bytes": 1840072891,
       "capabilities": {
         "supports_lyrics": false,
         "instrumental_only": true,
@@ -12704,7 +12714,7 @@
       },
       "requirements": {
         "min_ram_bytes": 8589934592,
-        "disk_bytes": 1750000000,
+        "disk_bytes": 1840072891,
         "speed_tier": "fast"
       },
       "license": {
@@ -12713,7 +12723,7 @@
         "requires_hf_token": false,
         "url": "https://github.com/magenta/magenta-realtime"
       },
-      "notes": "Weights (~1.75 GB: MusicCoCa + SpectroStream resources and the exported MLX model) fetch from Google's own hosting on first run. A streaming design (~200 ms control latency) — the natural engine for a live-jam surface later. Python 3.12 runtime; mlx pinned below 0.32 (the exported model fails to deserialise there).",
+      "notes": "Weights are Google's official Hugging Face release (google/magenta-realtime-2), scoped to the shared MusicCoCa + SpectroStream resources (~1.4 GB) plus this size's exported MLX model; the base model shares the resources. A streaming design (~200 ms control latency) — the natural engine for a live-jam surface later. Python 3.12 runtime; mlx pinned below 0.32 (the exported model fails to deserialise there).",
       "settings": {
         "size": "mrt2_small"
       },
@@ -12731,8 +12741,18 @@
       "variant_of": "magenta-rt2-small",
       "display_name": "Magenta RealTime 2 (base)",
       "description": "The larger Magenta RT 2 model: the same streaming engine with more capacity — richer texture at a slower (unmeasured on this hardware) decode. The small model is the proven fast one; try this when its sound feels thin.",
-      "hf_repos": [],
-      "size_bytes": 3700000000,
+      "hf_repos": [
+        {
+          "repo_id": "google/magenta-realtime-2",
+          "gated": false,
+          "allow_patterns": [
+            "resources/musiccoca/*",
+            "resources/spectrostream/*",
+            "models/mrt2_base/*"
+          ]
+        }
+      ],
+      "size_bytes": 4164096058,
       "capabilities": {
         "supports_lyrics": false,
         "instrumental_only": true,
@@ -12890,7 +12910,7 @@
       },
       "requirements": {
         "min_ram_bytes": 12884901888,
-        "disk_bytes": 3700000000,
+        "disk_bytes": 4164096058,
         "speed_tier": "medium"
       },
       "license": {
@@ -12899,7 +12919,7 @@
         "requires_hf_token": false,
         "url": "https://github.com/magenta/magenta-realtime"
       },
-      "notes": "Speed on Apple Silicon is unmeasured — the est is a conservative guess, the small model the safe default. Weights fetch from Google's hosting on first run (mrt models download mrt2_base).",
+      "notes": "Speed on Apple Silicon is unmeasured — the est is a conservative guess, the small model the safe default. Same Hugging Face release as the small model (google/magenta-realtime-2): the shared resources are downloaded once and this entry adds the 2.8 GB base export.",
       "settings": {
         "size": "mrt2_base"
       },

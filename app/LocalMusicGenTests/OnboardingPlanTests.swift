@@ -72,6 +72,21 @@ final class OnboardingPlanTests: XCTestCase {
         XCTAssertTrue(OnboardingPlan.generatorIds.contains("melodyflow-t24"))
     }
 
+    func testTheReferenceClipGeneratorIsOffered() {
+        // Magenta RT 2 is the one model that holds a reference clip's
+        // character, morphs between two, or plays a MIDI part — the "Style
+        // morph" card is dimmed without it. The small build only: the base
+        // is its variant, unmeasured on Apple Silicon, and nests under it.
+        XCTAssertTrue(OnboardingPlan.generatorIds.contains("magenta-rt2-small"))
+        XCTAssertFalse(OnboardingPlan.generatorIds.contains("magenta-rt2-base"))
+    }
+
+    func testTheRowsWhoseNamesUndersellThemSayWhatTheyUnlock() {
+        XCTAssertNotNil(OnboardingPlan.unlocks("acestep-15-dit-base"))
+        XCTAssertNotNil(OnboardingPlan.unlocks("magenta-rt2-small"))
+        XCTAssertNil(OnboardingPlan.unlocks("musicgen-small"))
+    }
+
     // MARK: - Gated models
 
     /// The sheet may offer a gated model, but it must never start a download

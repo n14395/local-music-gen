@@ -1067,7 +1067,8 @@ private struct WorkbenchRowsLens: View {
                             onRemove: {
                                 model.registerUndo(undoManager)
                                 model.removeLane(lane.id)
-                            })
+                            },
+                            onEdit: { model.registerUndo(undoManager, name: $0) })
                     }
                     HStack(spacing: 10) {
                         WorkbenchDashedAction(title: "＋ Add a part from the Library",
@@ -1224,6 +1225,19 @@ private struct WorkbenchLaneCard: View {
     let onSelect: () -> Void
     let onOpenTimeline: () -> Void
     let onRemove: () -> Void
+    /// About to change the lane or its clip, named for the Undo menu. The
+    /// card's controls bind straight to the model, so they used to register
+    /// nothing: ⌘Z after a fader move undid the *previous* edit instead,
+    /// which is worse than doing nothing. A slider reports once per drag, a
+    /// switch or a stepper click once per change.
+    let onEdit: (String) -> Void
+
+    /// A binding whose every write is an undoable edit.
+    private func edited(_ name: String,
+                        _ binding: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { binding.wrappedValue },
+                set: { onEdit(name); binding.wrappedValue = $0 })
+    }
 
     private var single: Binding<WorkbenchModel.Clip>? {
         clips.count == 1 ? clips[0] : nil
@@ -1275,8 +1289,8 @@ private struct WorkbenchLaneCard: View {
             }
             badges
             Spacer(minLength: 8)
-            WorkbenchToggleBadge(kind: .solo, isOn: $lane.solo)
-            WorkbenchToggleBadge(kind: .mute, isOn: $lane.muted)
+            WorkbenchToggleBadge(kind: .solo, isOn: edited("Solo", $lane.solo))
+            WorkbenchToggleBadge(kind: .mute, isOn: edited("Mute", $lane.muted))
             WorkbenchRemoveButton(help: "Remove from bench", action: onRemove)
         }
     }
@@ -1367,7 +1381,8 @@ private struct WorkbenchLaneCard: View {
                     .font(Bench.Typo.small)
                     .foregroundStyle(Bench.Palette.textQuaternary)
                 BenchSlider(value: $lane.gainDb, range: -24...6, tint: stem,
-                            knobSize: Bench.Metrics.Slider.knobSmall)
+                            knobSize: Bench.Metrics.Slider.knobSmall,
+                            onEditingBegan: { onEdit("Change Gain") })
                 Text(String(format: "%+.1f dB", lane.gainDb))
                     .font(Bench.Typo.mono(11, .semibold))
                     .foregroundStyle(Bench.Palette.textSecondary)
@@ -1380,7 +1395,8 @@ private struct WorkbenchLaneCard: View {
                     .font(Bench.Typo.small)
                     .foregroundStyle(Bench.Palette.textQuaternary)
                 BenchSlider(value: $lane.pan, range: -1...1, tint: stem,
-                            knobSize: Bench.Metrics.Slider.knobSmall)
+                            knobSize: Bench.Metrics.Slider.knobSmall,
+                            onEditingBegan: { onEdit("Change Pan") })
                 Text(Bench.panLabel(lane.pan))
                     .font(Bench.Typo.mono(11, .semibold))
                     .foregroundStyle(Bench.Palette.textSecondary)
@@ -1395,7 +1411,8 @@ private struct WorkbenchLaneCard: View {
                         .foregroundStyle(Bench.Palette.textQuaternary)
                     BenchStepper(value: Binding(
                         get: { barNumber(clip.wrappedValue) + 1 },
-                        set: { clip.wrappedValue.startBeats =
+                        set: { onEdit("Move Clip")
+                               clip.wrappedValue.startBeats =
                                 TimelineMath.clampStart(
                                     Double($0 - 1) * beatsPerBar) }),
                                  range: 1...513, width: 18)
@@ -1457,6 +1474,7 @@ private struct WorkbenchLaneCard: View {
                       stroke: Bench.Palette.cardStroke,
                       radius: Bench.Metrics.Radius.control) {
                 Button("Whole part") {
+                    onEdit("Change Region")
                     clip.wrappedValue.sectionStartS = nil
                     clip.wrappedValue.sectionEndS = nil
                 }
@@ -1464,6 +1482,7 @@ private struct WorkbenchLaneCard: View {
                         id: \.offset) { i, s in
                     Button("\(s.label ?? s.group ?? "Section \(i + 1)")  "
                            + timeRange(s)) {
+                        onEdit("Change Region")
                         clip.wrappedValue.sectionStartS = s.startS
                         clip.wrappedValue.sectionEndS = s.endS
                     }

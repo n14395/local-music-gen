@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "engine/supervisor/src"))
 sys.path.insert(0, str(ROOT / "engine/protocol/src"))
 
-from engine_protocol.adapter import AUX_DIRS        # noqa: E402
+from engine_protocol.adapter import AUX_DIRS, AUX_LEGACY_DIRS  # noqa: E402
 from engine_protocol.staging import INCOMPLETE_MARKER  # noqa: E402
 from supervisor import envs                         # noqa: E402
 from supervisor.config import Settings              # noqa: E402
@@ -161,6 +161,13 @@ def check_aux_dirs() -> None:
           "unused: " + ", ".join(unused))
     check("no adapter still derives its cache from HF_HOME", not legacy,
           ", ".join(legacy))
+    # A retired directory is counted and cleared but never written again;
+    # an adapter naming one would be resurrecting a route on the quiet.
+    revived = sorted(used & set(AUX_LEGACY_DIRS))
+    check("no adapter writes a legacy aux dir", not revived,
+          "revived: " + ", ".join(revived))
+    check("legacy aux dirs are not also current ones",
+          not set(AUX_LEGACY_DIRS) & set(AUX_DIRS))
 
 
 # MARK: - runtime provisioning
@@ -273,6 +280,52 @@ def check_relocate_tombstone() -> None:
                 os.environ["HF_HOME"] = saved_hf
 
 
+def check_snapshot_twin() -> None:
+    """On an ExFAT library volume macOS keeps extended attributes in an
+    AppleDouble `._<rev>` file beside the snapshot directory. The registry's
+    "latest snapshot" pick listed the folder and sorted by mtime, so the twin
+    could win — a 4 KB file handed to workers as the snapshot, and an install
+    check that found no files under it (Magenta RT 2, 2026-09-16)."""
+    saved_hf = os.environ.get("HF_HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HF_HOME"] = os.path.join(tmp, "library")
+        try:
+            settings = Settings(data_dir=os.path.join(tmp, "data"),
+                                output_dir=os.path.join(tmp, "out"),
+                                handshake_file=os.path.join(tmp, "hs.json"),
+                                parent_pid=None, auth_token="t")
+            os.makedirs(settings.data_dir, exist_ok=True)
+            registry = Registry(settings)
+            model_id = next(
+                (mid for mid, m in sorted(registry.models.items())
+                 if len(m.get("hf_repos") or []) == 1
+                 and not m["hf_repos"][0].get("allow_patterns")
+                 and not m.get("ms_repos")), None)
+            if model_id is None:
+                check("a single-repo catalog entry to test with", False)
+                return
+            repo_id = registry.models[model_id]["hf_repos"][0]["repo_id"]
+            repo = _tombstone_fixture(Path(settings.hf_cache_dir) / "hub",
+                                      repo_id)
+            snap = repo / "snapshots" / "rev1"
+            twin = repo / "snapshots" / "._rev1"
+            twin.write_bytes(b"\x00\x05\x16\x07" + b"\x00" * 60)
+            # Newer than the directory, which is how the twin won.
+            later = os.path.getmtime(snap) + 60
+            os.utime(twin, (later, later))
+            registry.write_marker(model_id, 1)
+            check("an AppleDouble twin beside the snapshot is not the snapshot",
+                  registry.hf_snapshot_dirs(model_id).get(repo_id) == str(snap),
+                  str(registry.hf_snapshot_dirs(model_id)))
+            check("and the model still reads installed",
+                  registry.is_installed(model_id))
+        finally:
+            if saved_hf is None:
+                os.environ.pop("HF_HOME", None)
+            else:
+                os.environ["HF_HOME"] = saved_hf
+
+
 def check_required_inputs() -> None:
     """Submit now presence-checks non-nullable audio/midi/json params for
     every task, generate included. That is only safe while `nullable: false`
@@ -297,6 +350,7 @@ if __name__ == "__main__":
     check_aux_dirs()
     check_envs_husk()
     check_relocate_tombstone()
+    check_snapshot_twin()
     check_required_inputs()
     print()
     if FAILURES:

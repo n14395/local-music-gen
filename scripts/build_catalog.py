@@ -379,8 +379,6 @@ PIPELINES = {
 # original catalog research. These entries either self-download from the named
 # provider, ship with a package, or have no catalogued HF repository.
 SOURCE_HOMEPAGES = {
-    "magenta-rt2-small": "https://huggingface.co/google/magenta-realtime-2",
-    "magenta-rt2-base": "https://huggingface.co/google/magenta-realtime-2",
     "separation-htdemucs": "https://github.com/adefossez/demucs",
     "separation-htdemucs-ft": "https://github.com/adefossez/demucs",
     "separation-htdemucs-6s": "https://github.com/adefossez/demucs",
@@ -1071,6 +1069,22 @@ def entry(id_, family, repos, name, desc, caps, min_ram_gib, tier, license_,
     if settings:
         e["settings"] = settings
     return e
+
+
+def magenta_rt2_repo(size: str) -> dict:
+    """Google's official release holds both Magenta RT 2 sizes in one repo:
+    the shared MusicCoCa + SpectroStream resources (~1.4 GB) and one exported
+    MLX model per size. Each entry scopes its download to the resources plus
+    its own export, so the two share the resources on disk (pattern-scoped
+    repos refcount per file, as the GGUF stacks do) and neither pulls the
+    other's model. Until 2026-09-16 these entries had no repo at all and the
+    adapter ran the package's own `mrt` CLI at first load — a "download" that
+    transferred nothing, then an unannounced 1.8 GB fetch on the first job.
+    """
+    return {"repo_id": "google/magenta-realtime-2", "gated": False,
+            "allow_patterns": ["resources/musiccoca/*",
+                               "resources/spectrostream/*",
+                               f"models/{size}/*"]}
 
 
 CC_NC = {"name": "CC-BY-NC-4.0", "commercial_use": False,
@@ -2327,7 +2341,7 @@ NEW_ENTRIES = [
     ]
 ] + [
     # ---- Magenta RealTime 2 (MLX) ----------------------------------------
-    entry("magenta-rt2-small", "magentart", [],
+    entry("magenta-rt2-small", "magentart", [magenta_rt2_repo("mrt2_small")],
           "Magenta RealTime 2",
           "Google's streaming music engine, running natively on MLX — "
           "audio decodes faster than it plays (4 s of music in under 2 s "
@@ -2412,17 +2426,16 @@ NEW_ENTRIES = [
           {"name": "Apache-2.0 (code) / CC BY 4.0 (weights)",
            "commercial_use": True, "requires_hf_token": False,
            "url": "https://github.com/magenta/magenta-realtime"},
-          notes="Weights (~1.75 GB: MusicCoCa + SpectroStream resources and "
-                "the exported MLX model) fetch from Google's own hosting on "
-                "first run. A streaming design (~200 ms control latency) — "
-                "the natural engine for a live-jam surface later. Python "
-                "3.12 runtime; mlx pinned below 0.32 (the exported model "
-                "fails to deserialise there).",
-          settings={"size": "mrt2_small"},
-          # Route-B weights (Google's own CLI fetches them), so HF cannot
-          # size this entry — preset what the CLI downloads.
-          size_hint_bytes=1_750_000_000),
-    entry("magenta-rt2-base", "magentart", [],
+          notes="Weights are Google's official Hugging Face release "
+                "(google/magenta-realtime-2), scoped to the shared MusicCoCa "
+                "+ SpectroStream resources (~1.4 GB) plus this size's "
+                "exported MLX model; the base model shares the resources. A "
+                "streaming design (~200 ms control latency) — the natural "
+                "engine for a live-jam surface later. Python 3.12 runtime; "
+                "mlx pinned below 0.32 (the exported model fails to "
+                "deserialise there).",
+          settings={"size": "mrt2_small"}),
+    entry("magenta-rt2-base", "magentart", [magenta_rt2_repo("mrt2_base")],
           "Magenta RealTime 2 (base)",
           "The larger Magenta RT 2 model: the same streaming engine with "
           "more capacity — richer texture at a slower (unmeasured on this "
@@ -2509,11 +2522,11 @@ NEW_ENTRIES = [
            "url": "https://github.com/magenta/magenta-realtime"},
           variant_of="magenta-rt2-small", format_="base",
           notes="Speed on Apple Silicon is unmeasured — the est is a "
-                "conservative guess, the small model the safe default. "
-                "Weights fetch from Google's hosting on first run "
-                "(mrt models download mrt2_base).",
-          settings={"size": "mrt2_base"},
-          size_hint_bytes=3_700_000_000),
+                "conservative guess, the small model the safe default. Same "
+                "Hugging Face release as the small model "
+                "(google/magenta-realtime-2): the shared resources are "
+                "downloaded once and this entry adds the 2.8 GB base export.",
+          settings={"size": "mrt2_base"}),
     # ---- The song-generation spikes (CPU-honest estimates) ---------------
     #
     # Decision recorded 2026-09-03 (audit §7): SongGen's reference-CODE

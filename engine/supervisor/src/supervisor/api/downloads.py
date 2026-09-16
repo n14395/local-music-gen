@@ -18,6 +18,12 @@ async def download_start(request: Request, model_id: str):
     st = _engine(request)
     if model_id not in st.registry.models:
         return err(404, "NOT_FOUND", f"unknown model {model_id}")
+    if model_id in st.deleting:
+        # The removal runs off the event loop and takes seconds on a large
+        # entry; a download started inside that window wrote into the tree
+        # being removed and came out partial.
+        return err(409, "DELETE_ACTIVE",
+                   "this model is being deleted — wait for that to finish")
     try:
         download_id = st.downloads.start(model_id)
     except DownloadError as e:
@@ -37,6 +43,13 @@ async def runtime_install(request: Request, model_id: str):
     st = _engine(request)
     if model_id not in st.registry.models:
         return err(404, "NOT_FOUND", f"unknown model {model_id}")
+    # The family's, not just this model's: deleting the last model of a family
+    # removes the family venv, which is exactly what this would be building.
+    family = st.registry.models[model_id]["family"]
+    if any(st.registry.models[m]["family"] == family for m in st.deleting):
+        return err(409, "DELETE_ACTIVE",
+                   "a model of this family is being deleted — wait for that "
+                   "to finish")
     try:
         download_id = st.downloads.start_runtime(model_id)
     except DownloadError as e:

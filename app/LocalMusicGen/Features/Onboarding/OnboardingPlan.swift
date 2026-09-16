@@ -63,6 +63,15 @@ struct OnboardingPlan: Equatable {
     /// with an 8 GB floor and MPS rendering (10 s in ~3 s) it is the
     /// smallest and fastest real generator on the sheet.
     ///
+    /// `magenta-rt2-small` is the one model here that takes a reference
+    /// clip: it holds a clip's character, morphs from one clip (or
+    /// description) to another over the take, and plays a MIDI part — so
+    /// the "Style morph" card is dimmed without it. At 1.7 GB with an 8 GB
+    /// floor and a decode faster than realtime on MLX it is the cheapest
+    /// generator on the sheet. The small build, not the base: the base is a
+    /// variant of it, unmeasured on Apple Silicon, and nests under it in
+    /// Models once either is installed.
+    ///
     /// `stableaudio3-medium` is the one gated entry offered here. A gated
     /// model cannot be demanded of someone in their first minute, so it is
     /// never ticked without a token already in the Keychain — the row still
@@ -75,23 +84,32 @@ struct OnboardingPlan: Equatable {
         "minimax-music3-mlx-small",  // a second, different full-song model
         "musicgen-small",            // instrumental, runs on an 8 GB Mac
         "melodyflow-t24",            // fast instrumental + edits audio with words
+        "magenta-rt2-small",         // reference clips, style morphs, plays MIDI
         "stableaudio3-medium",       // the Stable Audio lineage (gated)
     ]
 
     /// What a generator buys that its description does not already say.
     ///
-    /// Only `acestep-15-dit-base` has anything to add, and it needs it: at
-    /// 13.9 GB it is the largest single item the sheet offers, and what it buys
-    /// is invisible from its name. The Turbo DiT that `acestep-base` runs can
-    /// cover and repaint but **cannot** extract a stem, add a layer or complete
-    /// an arrangement — the pipeline does not refuse a wrong DiT, it just
-    /// produces garbage — so without this entry three of the Style Transfer
-    /// modes are dimmed on a fresh install with no obvious way to light them.
+    /// Two rows need it. `acestep-15-dit-base`: at 13.9 GB it is the largest
+    /// single item the sheet offers, and what it buys is invisible from its
+    /// name. The Turbo DiT that `acestep-base` runs can cover and repaint but
+    /// **cannot** extract a stem, add a layer or complete an arrangement — the
+    /// pipeline does not refuse a wrong DiT, it just produces garbage — so
+    /// without this entry three of the Style Transfer modes are dimmed on a
+    /// fresh install with no obvious way to light them. `magenta-rt2-small`:
+    /// its description says "reference clip" and stops, and the morph and the
+    /// MIDI channel are what set it apart from every other row.
     static func unlocks(_ id: String) -> String? {
-        id == "acestep-15-dit-base"
-            ? "Unlocks extracting a stem, adding a layer and completing an "
+        switch id {
+        case "acestep-15-dit-base":
+            "Unlocks extracting a stem, adding a layer and completing an "
                 + "arrangement — the Turbo model cannot do any of the three."
-            : nil
+        case "magenta-rt2-small":
+            "Unlocks Style morph — the only model here that travels from one "
+                + "clip's character to another's, or plays a MIDI part."
+        default:
+            nil
+        }
     }
 
     // MARK: - Items

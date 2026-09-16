@@ -15,8 +15,8 @@ seconds; ids are strings (`job_<uuid>`, `dl_<uuid>`, `grp_<uuid>`). Errors are n
 
 Error codes used in this document: `UNAUTHORIZED`, `NOT_FOUND`, `VALIDATION`,
 `MODEL_NOT_INSTALLED`, `INSUFFICIENT_DISK`, `INSUFFICIENT_RAM`, `MODEL_IN_USE`,
-`DOWNLOAD_ACTIVE`, `JOB_NOT_CANCELABLE`, `ENGINE_BUSY`, `OOM`, `WORKER_CRASHED`,
-`UNSUPPORTED_MODEL`, `INTERNAL`.
+`DOWNLOAD_ACTIVE`, `DELETE_ACTIVE`, `JOB_NOT_CANCELABLE`, `ENGINE_BUSY`, `OOM`,
+`WORKER_CRASHED`, `UNSUPPORTED_MODEL`, `INTERNAL`.
 
 Memory warning: workers report their Metal/accelerator memory every 2 s. When
 usage crosses the warning level (default 90% of physical RAM;
@@ -194,9 +194,12 @@ ModelInfo = {
                                       // each repo may carry "allow_patterns":
                                       // [glob, ...] — download (and require on
                                       // disk) only matching files. Used for
-                                      // multi-quant GGUF stacks and shared
-                                      // helper repos (t5-base); every pattern
-                                      // must match ≥1 file or the entry stays
+                                      // multi-quant GGUF stacks, shared
+                                      // helper repos (t5-base) and Google's
+                                      // Magenta RT 2 release, where both
+                                      // sizes share one repo and its
+                                      // resources; every pattern must match
+                                      // ≥1 file or the entry stays
                                       // uninstalled.
   "ms_repos": [{"repo_id": "iic/InspireMusic-1.5B-Long"}],
                                       // optional; ModelScope-hosted weights,
@@ -407,6 +410,10 @@ JSON-encoded **string** (the params dict itself stays flat scalars on the wire).
 - `GET /v1/models/{id}` → `ModelInfo` (404 `NOT_FOUND`)
 - `DELETE /v1/models/{id}` → `202 {}`. Refused with `409 MODEL_IN_USE` if a queued or
   running job references it; `409 DOWNLOAD_ACTIVE` while downloading (cancel first).
+  The removal runs off the event loop and can take seconds on a large entry; until it
+  returns, a second `DELETE` of the same model, a download of it, and a runtime install
+  for its family are refused `409 DELETE_ACTIVE`. (The stub's delete is instantaneous,
+  so it never returns that code.)
   **Deletes the family runtime too** once no downloaded model of that family is
   left. The runtime is the larger half of some families — ACE-Step's is 1.4 GB of
   PyTorch — so leaving it behind would keep most of the space the delete was for.
@@ -430,7 +437,8 @@ JSON-encoded **string** (the params dict itself stays flat scalars on the wire).
 
 - `POST /v1/models/{id}/download` → `202 {"download_id": "dl_..."}`
   - Idempotent: re-POST while active/paused returns the same id.
-  - `409 INSUFFICIENT_DISK` when free disk < 1.2 × `disk_bytes`.
+  - `409 INSUFFICIENT_DISK` when free disk < 1.2 × `disk_bytes` on the library volume.
+  - `409 DELETE_ACTIVE` while the model is being deleted (4.1).
   - First install of a family also provisions its venv; provisioning progress arrives on
     the same download events with `stage: "provisioning"`. It runs **before** the
     weights, so a family whose runtime cannot be built fails in seconds instead of
@@ -568,6 +576,8 @@ engine owns the folder or borrows it:
 | Hugging Face cache | `~/.cache/huggingface` by default | `HF_HOME` | only what the catalog names | yes |
 | auxiliary cache | `<data-dir>/aux-cache` by default | `LOCALMUSICGEN_AUX_CACHE` | all of it | yes, with the library folder |
 | ModelScope cache | `<data-dir>/ms-cache` | — | all of it | no |
+
+A root whose volume is not mounted at startup no longer stops the engine: it comes up, prints the reason to stderr, emits one `engine.warning` naming the folder once a client is listening, and every model under that root reads `not_installed` until the drive returns or Settings points at another folder. (It used to die on the `makedirs` before the handshake, which locked the user out of the one screen that could fix it.)
 
 The Hugging Face folder is **shared**: other Hugging Face tooling on the machine
 reads and writes the same cache, and repositories the app never asked for are
@@ -996,6 +1006,8 @@ the object the app renders, and its shape follows `kind`:
 | `more_like_this` | `{"variations": [{"prompt": str, "differs": str}]}` |
 | `name_and_tag` | `{"title": str, "tags": [str]}` |
 
+An `interview` whose `questions` is `[]` is a *finished* interview — the model knows enough to write the brief — and is returned `ok: true` like any other complete answer; `ready` says the same thing explicitly when the model remembers to.
+
 **`plan`** runs only ACE-Step's 5 Hz language-model half and returns the plans
 it wrote, so the user can choose one before paying for the DiT render.
 `plan_caption` / `plan_lyrics` (string params) carry the inputs, `plan_count`
@@ -1395,7 +1407,7 @@ buffer of the last 500 events (best effort); after any reconnect the app also re
 | `library.failed`     | `LibraryOperation` with `state: "failed"` and `error` |
 | `worker.state`       | `{"state":"loading"\|"loaded"\|"stopped","model_id","family"}` — what the warm worker holds (drives the app's titlebar) |
 | `system.telemetry`   | the `usage` object from `/v1/system` — every 2 s while a worker is alive, every 10 s idle, so the sidebar readout is live without polling. Same nullability rules; skipped entirely while no client is subscribed |
-| `engine.warning`     | `{"message"}` (e.g. MPS CPU-fallback, RAM > 85 %) |
+| `engine.warning`     | `{"message"}` (e.g. MPS CPU-fallback, RAM > 85 %, a library root that could not be created at startup because its volume is not mounted — the engine comes up anyway and those models read `not_installed` until it is) |
 
 ### 6.1 What `job.log` mirrors
 

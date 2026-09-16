@@ -527,7 +527,8 @@ struct ClipTimelineView: View {
                               onRemove: {
                                   registerUndo()
                                   model.removeLane(lane.id)
-                              })
+                              },
+                              onEdit: { registerUndo($0) })
             }
             Button(action: onAddPart) {
                 Text("＋ Add track")
@@ -692,8 +693,8 @@ struct ClipTimelineView: View {
     /// Snapshot before every mutation — dragging clips around without undo is
     /// miserable. The implementation moved onto `WorkbenchModel` so the rows
     /// lens and the menubar's bench commands register the same thing.
-    private func registerUndo() {
-        model.registerUndo(undoManager)
+    private func registerUndo(_ name: String = "Edit Timeline") {
+        model.registerUndo(undoManager, name: name)
     }
 
     private func clock(_ seconds: Double) -> String {
@@ -734,6 +735,18 @@ struct LaneHeaderRow: View {
     let clipCount: Int
     let isSelected: Bool
     let onRemove: () -> Void
+    /// About to change the lane, named for the Undo menu. The header's four
+    /// controls bind straight to the model, so they used to register nothing:
+    /// ⌘Z after a fader move undid the *previous* edit instead, which is worse
+    /// than doing nothing. A slider reports once per drag, a switch per tap.
+    let onEdit: (String) -> Void
+
+    /// A binding whose every write is an undoable edit.
+    private func edited(_ name: String,
+                        _ binding: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { binding.wrappedValue },
+                set: { onEdit(name); binding.wrappedValue = $0 })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -749,18 +762,20 @@ struct LaneHeaderRow: View {
                 WorkbenchRemoveButton(help: "Remove lane", action: onRemove)
             }
             HStack(spacing: 6) {
-                WorkbenchToggleBadge(kind: .solo, isOn: $lane.solo)
-                WorkbenchToggleBadge(kind: .mute, isOn: $lane.muted)
+                WorkbenchToggleBadge(kind: .solo, isOn: edited("Solo", $lane.solo))
+                WorkbenchToggleBadge(kind: .mute, isOn: edited("Mute", $lane.muted))
                 BenchSlider(value: $lane.gainDb, range: -24...6,
                             tint: Bench.Palette.stem(kind),
-                            knobSize: Bench.Metrics.Slider.knobSmall)
+                            knobSize: Bench.Metrics.Slider.knobSmall,
+                            onEditingBegan: { onEdit("Change Gain") })
                     .padding(.leading, 4)
                     .help("Lane gain")
                 // Beside the gain rather than on a fourth row: the header is
                 // 100 pt for three rows and the lane it heads is 100 pt tall.
                 BenchSlider(value: $lane.pan, range: -1...1,
                             tint: Bench.Palette.stem(kind),
-                            knobSize: Bench.Metrics.Slider.knobSmall)
+                            knobSize: Bench.Metrics.Slider.knobSmall,
+                            onEditingBegan: { onEdit("Change Pan") })
                     .help("Lane pan")
             }
             HStack(spacing: 8) {

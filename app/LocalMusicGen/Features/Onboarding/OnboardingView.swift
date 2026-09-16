@@ -413,9 +413,12 @@ struct OnboardingView: View {
                 .font(Bench.Typo.caption)
                 .foregroundStyle(Bench.Palette.textFaint)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Weights are downloaded from Hugging Face under your own "
-                 + "acceptance of each model's license; nothing is "
-                 + "redistributed by this app.")
+            // "From Hugging Face" used to be the claim, and it was not true
+            // of the sheet: Demucs, SQUIM and the Essentia tags come from
+            // their authors' own hosting.
+            Text("Weights are downloaded from each model's own source — "
+                 + "Hugging Face for most — under your own acceptance of its "
+                 + "license; nothing is redistributed by this app.")
                 .font(Bench.Typo.caption)
                 .foregroundStyle(Bench.Palette.textFaintest)
                 .fixedSize(horizontal: false, vertical: true)

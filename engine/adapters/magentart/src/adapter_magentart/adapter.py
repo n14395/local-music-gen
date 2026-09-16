@@ -1,12 +1,16 @@
 """Magenta RealTime 2 on MLX — the most Mac-native generator of the 2026
 triage (4 s of audio in ~6 s including model load, 1.7 GB peak).
 
-Weights are Google's own distribution: the `mrt` CLI that ships with the
-package fetches resources (MusicCoCa + SpectroStream, ~1.3 GB) and the
-exported .mlxfn model (~450 MB) from GCS into MAGENTA_HOME. The adapter
-points MAGENTA_HOME inside the engine cache and runs those exact commands at
-first load (route B) — MAGENTA_HOME is read when magenta_rt is imported, so
-it is set before any import of the package.
+Weights are Google's official Hugging Face release, `google/magenta-realtime-2`,
+which the engine downloads like any other catalog entry — scoped by
+`allow_patterns` to the shared resources (MusicCoCa + SpectroStream, ~1.4 GB)
+plus this size's exported .mlxfn model, so the two sizes share one repo and
+one copy of the resources. The snapshot has exactly the layout the package
+expects under its home (`resources/`, `models/<size>/`), so the adapter hands
+the snapshot to `magenta_rt.paths` as that home; nothing is staged or copied.
+Until 2026-09-16 the adapter ran the package's own `mrt` CLI at first load
+instead, which meant a "download" that transferred nothing and a first job
+that fetched 1.8 GB unannounced.
 
 Generation is chunked (the model is a streaming design, 25 frames/s, with
 explicit state chaining), which is what gives this adapter real per-chunk
@@ -17,15 +21,34 @@ from __future__ import annotations
 
 import os
 import secrets
-import subprocess
-import sys
 
 import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir)
+                                     ProgressCb)
+
+REPO_ID = "google/magenta-realtime-2"
+
+# What a usable snapshot holds besides the model, relative to its root — the
+# files `magenta_rt.musiccoca` and the SpectroStream codec open by name.
+RESOURCE_FILES = (
+    "resources/musiccoca/spm.model",
+    "resources/musiccoca/text_encoder.tflite",
+    "resources/musiccoca/audio_preprocessor.tflite",
+    "resources/musiccoca/music_encoder.tflite",
+    "resources/musiccoca/pretrained_vector_quantizer.tflite",
+    "resources/musiccoca/mapper.tflite",
+    "resources/spectrostream/encoder.safetensors",
+    "resources/spectrostream/decoder.safetensors",
+    "resources/spectrostream/quantizer.safetensors",
+    "resources/spectrostream/spectrostream_encoder.mlxfn",
+)
+
+
+def _present(path: str) -> bool:
+    return os.path.isfile(path) and os.path.getsize(path) > 0
 
 FRAMES_PER_S = 25
 CHUNK_FRAMES = 50  # 2 s per generate() call: fine-grained cancel + progress
@@ -105,59 +128,49 @@ class MagentaRTAdapter(ModelAdapter):
         self.mrt = None
         self.size = str(self.settings.get("size") or "mrt2_small")
 
-    def _ensure_assets(self, progress_cb: ProgressCb) -> None:
-        root = os.path.join(aux_dir("magenta-home"), "magenta-rt-v2")
-        resources = os.path.join(root, "resources")
-        model_dir = os.path.join(root, "models", self.size)
-        resource_files = (
-            os.path.join(resources, "musiccoca", filename)
-            for filename in (
-                "text_encoder.tflite",
-                "audio_preprocessor.tflite",
-                "music_encoder.tflite",
-                "pretrained_vector_quantizer.tflite",
-            )
-        )
-        spectrostream_files = (
-            os.path.join(resources, "spectrostream", filename)
-            for filename in (
-                "decoder.safetensors",
-                "encoder.safetensors",
-                "quantizer.safetensors",
-                "spectrostream_encoder.mlxfn",
-            )
-        )
-        model_files = (
-            os.path.join(model_dir, f"{self.size}.mlxfn"),
-            os.path.join(model_dir, f"{self.size}_state.safetensors"),
-        )
-        mrt_cli = os.path.join(os.path.dirname(sys.executable), "mrt")
-        env = {**os.environ, "MAGENTA_HOME": aux_dir("magenta-home")}
-        # `mrt models init` has two independent resource directories. A
-        # partially interrupted fetch leaves the parent nonempty but cannot
-        # embed text or decode generated audio.
-        if not all(os.path.isfile(path) and os.path.getsize(path) > 0
-                   for path in (*resource_files, *spectrostream_files)):
-            progress_cb(None, "fetching Magenta RT resources "
-                              "(~1.3 GB, first use only)")
-            subprocess.run([mrt_cli, "models", "init"], env=env, check=True,
-                           capture_output=True)
-        # The MLX export needs its separate recurrent state file. An older
-        # downloader left only the .mlxfn behind, so a nonempty directory is
-        # not sufficient evidence that this model is usable.
-        if not all(os.path.isfile(path) and os.path.getsize(path) > 0
-                   for path in model_files):
-            progress_cb(None, f"fetching the {self.size} model "
-                               "(first use only)")
-            subprocess.run([mrt_cli, "models", "download", self.size],
-                           env=env, check=True, capture_output=True)
+    def _model_files(self) -> tuple[str, ...]:
+        return (f"models/{self.size}/{self.size}.mlxfn",
+                f"models/{self.size}/{self.size}_state.safetensors")
+
+    def _snapshot(self) -> str:
+        """The downloaded repo, in the layout `magenta_rt.paths` expects.
+
+        Checked file by file before the package is pointed at it: the
+        resources are two independent directories and the MLX export needs
+        its separate recurrent state file, so a partial or older download can
+        leave any of them missing while the directory itself looks populated.
+        Every name here is one the package opens verbatim — it never globs
+        its home — which is also why the AppleDouble `._X` twins the ExFAT
+        library volume grows beside every file are inert for this family
+        (the YuE2 manifest lesson does not apply).
+        """
+        try:
+            snapshot = self.model_paths[REPO_ID]
+        except KeyError:
+            raise FileNotFoundError(
+                f"{REPO_ID} is not downloaded — install {self.model_id} "
+                "from Models") from None
+        missing = [rel for rel in (*RESOURCE_FILES, *self._model_files())
+                   if not _present(os.path.join(snapshot, rel))]
+        if missing:
+            raise FileNotFoundError(
+                f"{self.model_id}: the download is incomplete — missing "
+                f"{', '.join(missing)} under {snapshot}. Delete the model "
+                "and download it again from Models.")
+        return snapshot
 
     def load(self, progress_cb: ProgressCb) -> None:
-        # Read at magenta_rt import time — must be set before the import.
-        os.environ["MAGENTA_HOME"] = aux_dir("magenta-home")
-        self._ensure_assets(progress_cb)
-
+        snapshot = self._snapshot()
         progress_cb(None, "loading Magenta RT 2 (MLX)")
+        from magenta_rt import paths
+
+        # Every path helper reads this at call time, so the override is
+        # enough on its own and MAGENTA_HOME (the import-time default, under
+        # ~/Documents) is left alone. Nothing on the load or generate path
+        # writes under the home — the package's outputs/ and checkpoints/
+        # directories are created only by its own CLI generate commands — so
+        # the snapshot stays a pure download.
+        paths.set_magenta_home(snapshot)
         from magenta_rt import MagentaRT2StdMlxfn
 
         self.mrt = MagentaRT2StdMlxfn(size=self.size)

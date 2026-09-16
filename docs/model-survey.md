@@ -243,3 +243,25 @@ arm64-dead five, and the superseded rejections.
   USER must accept it on the repo page with their HF account before
   anything can download (same stance as Stability gating; NC also
   means no mirroring, per policy). Triage pending that acceptance.
+
+## Magenta RT 2 weights route (2026-09-16)
+
+The two `magentart` entries were route-B (no catalog repo; the adapter ran
+the package's own `mrt` CLI at first load), which made their "download" a
+runtime-only install that transferred nothing and put an unannounced 1.8 GB
+fetch in the user's first job. Google's release turned out to be an ungated
+Hugging Face repo, `google/magenta-realtime-2`, in exactly the layout the
+package reads (`resources/`, `models/<size>/`), and the CLI itself now
+defaults to fetching from there. Both entries are ordinary `hf_repos`
+downloads now, pattern-scoped to the shared resources (~1.4 GB) plus their
+own export (small 0.46 GB, base 2.8 GB), so the sizes share the resources on
+disk; the adapter hands the snapshot to `magenta_rt.paths.set_magenta_home`
+and stages nothing. `magenta-home` moved from `AUX_DIRS` to the new
+`AUX_LEGACY_DIRS`: still counted, moved and cleared by the library, so what
+older installs fetched there can be reclaimed, but no adapter may create it
+again. Landing the first pattern-scoped entry on the ExFAT library volume
+also exposed a registry bug — the "latest snapshot" pick listed the folder
+and sorted by mtime, so the AppleDouble `._<rev>` twin macOS keeps beside the
+snapshot directory could win — fixed the same day (directories only, with a
+`check_supervisor` case). The small model joined the first-run sheet the
+same day (`OnboardingPlan.generatorIds`).

@@ -62,13 +62,21 @@ async def models_delete(request: Request, model_id: str):
         return err(409, "DOWNLOAD_ACTIVE", "cancel the download first")
     if st.model_in_use(model_id):
         return err(409, "MODEL_IN_USE", "a queued or running job uses this model")
+    if model_id in st.deleting:
+        return err(409, "DELETE_ACTIVE", "this model is already being deleted")
     # Off the event loop, like /v1/models above: this is an rmtree of the
     # weights (a catalog entry can be 57 GB on the external SSD) and often of
     # the family venv too (1.4 GB of torch for ACE-Step). On the loop it froze
     # the event stream and /healthz for the whole delete, and the app's health
     # poller could time out, conclude the engine had crashed and SIGKILL it
     # mid-delete. Still awaited, so the 202 means the same thing it always did.
-    await anyio.to_thread.run_sync(st.delete_model, model_id)
+    # Marked for the duration so a download for the same model (or a runtime
+    # install for its family) is refused instead of racing the removal.
+    st.deleting.add(model_id)
+    try:
+        await anyio.to_thread.run_sync(st.delete_model, model_id)
+    finally:
+        st.deleting.discard(model_id)
     st.bus.emit("models.changed", {})
     return {}
 

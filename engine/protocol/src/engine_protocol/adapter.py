@@ -22,9 +22,20 @@ from typing import Protocol
 AUX_DIRS = ("audio-separator-models", "bsrnn-weights", "btc-chords",
             "bytedance-piano", "diffrhythm2", "essentia-models",
             "heartmula", "inspiremusic", "levo", "localmusic-soundfonts",
-            "magenta-home", "mossmusic", "msst", "msst-weights",
+            "mossmusic", "msst", "msst-weights",
             "mt3-checkpoints", "rave-models", "seedvc", "songbloom",
             "torch-cache", "yingmusic", "yue", "yue2")
+
+# Directories an older engine wrote into the aux root that nothing writes
+# now. Counted, moved and cleared like AUX_DIRS — the bytes are real and the
+# user should be able to see and reclaim them — but `aux_dir()` refuses them
+# and the adapter guard insists no adapter names them, so a retired route
+# cannot quietly come back.
+#
+#   magenta-home — Magenta RT 2 fetched its weights here through the
+#   package's own CLI until 2026-09-16; it is an ordinary Hugging Face
+#   download now (google/magenta-realtime-2, pattern-scoped).
+AUX_LEGACY_DIRS = ("magenta-home",)
 
 
 # Directories in the aux root that hold the *user's* files rather than weights

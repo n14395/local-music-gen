@@ -434,7 +434,15 @@ class Registry:
                 continue
             base = os.path.join(self.repo_cache_dir(repo["repo_id"]), "snapshots")
             try:
-                revs = sorted(os.listdir(base),
+                # Directories only. On an ExFAT library volume macOS keeps
+                # extended attributes in an AppleDouble `._<rev>` file beside
+                # the snapshot directory, and a plain listdir returns it too;
+                # sorted by mtime it can come out newest, and a 4 KB file
+                # was then handed to workers as "the snapshot" while the
+                # install check found no files under it (Magenta RT 2, the
+                # first pattern-scoped entry to land on that volume).
+                revs = sorted((r for r in os.listdir(base)
+                               if os.path.isdir(os.path.join(base, r))),
                               key=lambda r: os.path.getmtime(os.path.join(base, r)))
             except FileNotFoundError:
                 continue
