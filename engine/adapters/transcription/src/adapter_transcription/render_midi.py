@@ -135,6 +135,33 @@ GM_PROGRAMS = {
 }
 
 
+def apply_gain(stereo: np.ndarray, gain_db: float) -> np.ndarray:
+    """Peak-normalise to PEAK_TARGET, then apply `gain_db`.
+
+    Kept in step with the notesynth twin (see this module's header): the old
+    normalize-then-hard-clip pair made any positive gain pure distortion
+    (audit §3), and a plain cap would have made the upper half of the slider
+    inert instead. Linear below the ceiling, tanh knee above it.
+    """
+    peak = float(np.abs(stereo).max())
+    if peak > 1e-6:
+        stereo = stereo * (PEAK_TARGET / peak) * (10.0 ** (gain_db / 20.0))
+        hot = float(np.abs(stereo).max())
+        if hot > CEILING:
+            # tanh maps the whole range into ±1 and is ~linear near zero, so
+            # quiet passages keep their shape while peaks round off. Scaled so
+            # the knee starts at CEILING rather than at 0.
+            knee = CEILING
+            over = np.abs(stereo) > knee
+            stereo = np.where(
+                over,
+                np.sign(stereo) * (knee + (CEILING_MAX - knee)
+                                   * np.tanh((np.abs(stereo) - knee)
+                                             / max(1e-6, CEILING_MAX - knee))),
+                stereo)
+    return stereo.astype(np.float32)
+
+
 def render_midi(midi_path: str, soundfont_path: str, sample_rate: int = 44100,
                 gain_db: float = 0.0, instrument: str | None = None,
                 progress_cb=None, cancel=None) -> np.ndarray:
@@ -201,24 +228,4 @@ def render_midi(midi_path: str, soundfont_path: str, sample_rate: int = 44100,
     if len(loud):
         stereo = stereo[:min(len(stereo), loud[-1] + int(0.25 * sample_rate))]
 
-    # Kept in step with the notesynth twin (see this module's header): the old
-    # normalize-then-hard-clip pair made any positive gain pure distortion
-    # (audit §3), and a plain cap would have made the upper half of the slider
-    # inert instead. Linear below the ceiling, tanh knee above it.
-    peak = float(np.abs(stereo).max())
-    if peak > 1e-6:
-        stereo = stereo * (PEAK_TARGET / peak) * (10.0 ** (gain_db / 20.0))
-        hot = float(np.abs(stereo).max())
-        if hot > CEILING:
-            # tanh maps the whole range into ±1 and is ~linear near zero, so
-            # quiet passages keep their shape while peaks round off. Scaled so
-            # the knee starts at CEILING rather than at 0.
-            knee = CEILING
-            over = np.abs(stereo) > knee
-            stereo = np.where(
-                over,
-                np.sign(stereo) * (knee + (CEILING_MAX - knee)
-                                   * np.tanh((np.abs(stereo) - knee)
-                                             / max(1e-6, CEILING_MAX - knee))),
-                stereo)
-    return stereo.astype(np.float32)
+    return apply_gain(stereo, gain_db)

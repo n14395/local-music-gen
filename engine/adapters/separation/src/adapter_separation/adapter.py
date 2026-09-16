@@ -32,6 +32,24 @@ from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      release_accelerator_memory)
 
 
+def stem_label(path: str) -> str:
+    """The stem one of audio-separator's output files carries.
+
+    Default audio-separator names embed the MODEL name (which may itself
+    contain "vocals"), so the "_(stem)_" marker is authoritative when it is
+    present and the bare file stem is the fallback.
+    """
+    base = os.path.splitext(os.path.basename(path))[0].lower()
+    marker = re.search(r"_\(([^)]+)\)_", base)
+    stem_name = marker.group(1) if marker else base
+    if stem_name in ("other", "no vocals", "no_vocals",
+                     "accompaniment", "instrumental"):
+        return "instrumental"
+    if "vocal" in stem_name:
+        return "vocals"
+    return stem_name
+
+
 class SeparationAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -272,19 +290,7 @@ class SeparationAdapter(ModelAdapter):
                 moved = os.path.join(out_dir, os.path.basename(path))
                 os.replace(path, moved)
                 path = moved
-            base = os.path.splitext(os.path.basename(path))[0].lower()
-            # Default audio-separator names embed the MODEL name (which may
-            # itself contain "vocals"); the "_(stem)_" marker is authoritative
-            # when present.
-            marker = re.search(r"_\(([^)]+)\)_", base)
-            stem_name = marker.group(1) if marker else base
-            if stem_name in ("other", "no vocals", "no_vocals",
-                             "accompaniment", "instrumental"):
-                label = "instrumental"
-            elif "vocal" in stem_name:
-                label = "vocals"
-            else:
-                label = stem_name
+            label = stem_label(path)
             if any(a.label == label for a in artifacts):
                 label = f"{label}-{len(artifacts)}"
             info = sf.info(path)

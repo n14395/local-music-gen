@@ -327,7 +327,9 @@ class JobQueue:
             dur = _number(body, "duration_s", float, None)
         known = {p["key"] for p in caps["params"]}
         defaults = {p["key"]: p.get("default") for p in caps["params"]}
-        raw = body.get("params") or {}
+        raw = body.get("params")
+        if raw is None:
+            raw = {}
         if not isinstance(raw, dict):
             # `raw.items()` below is an AttributeError on a list, which reached
             # the caller as a 500 in plain text rather than a refusal.
@@ -372,6 +374,20 @@ class JobQueue:
                     and params.get(spec["key"]) is None):
                 raise SubmitError(422, "VALIDATION",
                                   f"missing required input '{spec['key']}'")
+        # The same reading for a required text: a string param that is not
+        # nullable and has no default is one the adapter cannot run without
+        # (YingMusic's reference words and lyrics). The catalog declared them
+        # that way precisely to turn a late adapter failure into this 422, but
+        # the check above only ever looked at file inputs, so the worker got
+        # None for a field the catalog says can never be null.
+        for spec in caps["params"]:
+            if (spec.get("type") == "string"
+                    and not spec.get("nullable", True)
+                    and spec.get("default") is None):
+                value = params.get(spec["key"])
+                if value is None or not str(value).strip():
+                    raise SubmitError(422, "VALIDATION",
+                                      f"missing required text '{spec['key']}'")
         # `required_when`: an input that is optional under one setting and
         # mandatory under another. Checked for generate jobs too, unlike the
         # nullable rule above — ACE-Step's source audio is optional for

@@ -136,6 +136,39 @@ GM_PROGRAMS = {
 }
 
 
+def apply_gain(stereo: np.ndarray, gain_db: float) -> np.ndarray:
+    """Peak-normalise to PEAK_TARGET, then apply `gain_db` through a soft
+    knee, because the render is peak-normalised and therefore has only ~0.9 dB
+    of headroom no matter what was played.
+
+    The first fix for audit §3 hard-capped the combined scale at full scale,
+    which did stop the guaranteed clipping — but measured on a real render
+    (2026-09-03) it also meant +12 dB moved the peak by 0.9 dB and nothing
+    else: the whole upper half of the slider did nothing. Trading a lying
+    knob for a dead one is not a fix. So: below the ceiling the gain is
+    exactly linear, and above it the signal leans into a tanh knee, which is
+    what turning a gain knob past a limiter sounds like — audibly louder,
+    gently coloured, never a hard-clipped edge.
+    """
+    peak = float(np.abs(stereo).max())
+    if peak > 1e-6:
+        stereo = stereo * (PEAK_TARGET / peak) * (10.0 ** (gain_db / 20.0))
+        hot = float(np.abs(stereo).max())
+        if hot > CEILING:
+            # tanh maps the whole range into ±1 and is ~linear near zero, so
+            # quiet passages keep their shape while peaks round off. Scaled so
+            # the knee starts at CEILING rather than at 0.
+            knee = CEILING
+            over = np.abs(stereo) > knee
+            stereo = np.where(
+                over,
+                np.sign(stereo) * (knee + (CEILING_MAX - knee)
+                                   * np.tanh((np.abs(stereo) - knee)
+                                             / max(1e-6, CEILING_MAX - knee))),
+                stereo)
+    return stereo.astype(np.float32)
+
+
 def render_midi(midi_path: str, soundfont_path: str, sample_rate: int = 44100,
                 gain_db: float = 0.0, instrument: str | None = None,
                 progress_cb=None, cancel=None) -> np.ndarray:
@@ -202,32 +235,4 @@ def render_midi(midi_path: str, soundfont_path: str, sample_rate: int = 44100,
     if len(loud):
         stereo = stereo[:min(len(stereo), loud[-1] + int(0.25 * sample_rate))]
 
-    # Normalise to PEAK_TARGET, then apply the gain — through a soft knee,
-    # because the render is peak-normalised and therefore has only ~0.9 dB of
-    # headroom no matter what was played.
-    #
-    # The first fix for audit §3 hard-capped the combined scale at full scale,
-    # which did stop the guaranteed clipping — but measured on a real render
-    # (2026-09-03) it also meant +12 dB moved the peak by 0.9 dB and nothing
-    # else: the whole upper half of the slider did nothing. Trading a lying
-    # knob for a dead one is not a fix. So: below the ceiling the gain is
-    # exactly linear, and above it the signal leans into a tanh knee, which is
-    # what turning a gain knob past a limiter sounds like — audibly louder,
-    # gently coloured, never a hard-clipped edge.
-    peak = float(np.abs(stereo).max())
-    if peak > 1e-6:
-        stereo = stereo * (PEAK_TARGET / peak) * (10.0 ** (gain_db / 20.0))
-        hot = float(np.abs(stereo).max())
-        if hot > CEILING:
-            # tanh maps the whole range into ±1 and is ~linear near zero, so
-            # quiet passages keep their shape while peaks round off. Scaled so
-            # the knee starts at CEILING rather than at 0.
-            knee = CEILING
-            over = np.abs(stereo) > knee
-            stereo = np.where(
-                over,
-                np.sign(stereo) * (knee + (CEILING_MAX - knee)
-                                   * np.tanh((np.abs(stereo) - knee)
-                                             / max(1e-6, CEILING_MAX - knee))),
-                stereo)
-    return stereo.astype(np.float32)
+    return apply_gain(stereo, gain_db)

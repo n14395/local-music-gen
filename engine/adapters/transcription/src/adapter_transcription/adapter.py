@@ -73,6 +73,48 @@ def _stage_yourmt3(progress_cb: ProgressCb) -> None:
         raise
 
 
+def _fetch(url: str, dest: str, progress_cb: ProgressCb, what: str,
+           timeout: float = 300.0) -> None:
+    """Download `url` to `dest`, reporting megabytes as they land.
+
+    Per-megabyte reporting, like `_stage_yourmt3` above: the ByteDance
+    checkpoint used to run behind one message for the whole 172 MB, and since
+    `progress_cb` raises CancelledError on a cancelled job, saying nothing
+    meant Cancel was ignored for the whole transfer (audit 11-B12). The total
+    is reported only when the server sent a Content-Length — an invented
+    total is worse than none.
+
+    A transfer that ends any other way than completely takes its `.part` file
+    with it: a half-written checkpoint that survives is one that poisons every
+    retry (the separation-family lesson).
+    """
+    import urllib.request
+
+    part = dest + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp, \
+                open(part, "wb") as f:
+            length = resp.headers.get("Content-Length")
+            total = int(length) if length and length.isdigit() else 0
+            done = 0
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                progress_cb(0.05,
+                            f"fetching {what} — {done >> 20} MB"
+                            + (f" of {total >> 20} MB" if total else ""))
+    except BaseException:
+        try:
+            os.unlink(part)
+        except OSError:
+            pass
+        raise
+    os.replace(part, dest)
+
+
 class TranscriptionAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -276,7 +318,6 @@ class TranscriptionAdapter(ModelAdapter):
         """
         import pretty_midi
         import soxr as _soxr
-        import urllib.request
         from piano_transcription_inference import (PianoTranscription,
                                                    sample_rate)
 
@@ -295,35 +336,7 @@ class TranscriptionAdapter(ModelAdapter):
                               "first use only)")
             url = ("https://zenodo.org/record/4034264/files/"
                    "CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1")
-            part = checkpoint + ".part"
-            # Per-megabyte reporting, like _stage_yourmt3 above: this used to
-            # run behind one message for the whole 172 MB, and since
-            # progress_cb raises CancelledError on a cancelled job, saying
-            # nothing meant Cancel was ignored for the whole transfer.
-            try:
-                with urllib.request.urlopen(url, timeout=300) as resp, \
-                        open(part, "wb") as f:
-                    length = resp.headers.get("Content-Length")
-                    total = int(length) if length and length.isdigit() else 0
-                    done = 0
-                    while True:
-                        chunk = resp.read(1 << 20)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        done += len(chunk)
-                        progress_cb(0.05,
-                                    f"fetching the piano model — "
-                                    f"{done >> 20} MB"
-                                    + (f" of {total >> 20} MB"
-                                       if total else ""))
-            except BaseException:
-                try:
-                    os.unlink(part)
-                except OSError:
-                    pass
-                raise
-            os.replace(part, checkpoint)
+            _fetch(url, checkpoint, progress_cb, "the piano model")
 
         audio, in_sr = sf.read(src, dtype="float32", always_2d=True)
         mono = audio.mean(axis=1)

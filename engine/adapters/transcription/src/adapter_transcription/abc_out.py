@@ -10,10 +10,19 @@ composes in notation.
 music21 parses the MIDI and works out metre and key, but it has **no ABC
 writer** (`ConverterABC` registers no output extensions — it reads ABC and
 cannot emit it), so the serialiser below is ours. It covers what transcribed
-music actually contains: notes, rests, chords, ties, accidentals and
-barlines. It does not attempt tuplets, voices, ornaments, lyrics or
+music actually contains: notes, rests, chords, ties, accidentals, barlines
+and a clef. It does not attempt tuplets, voices, ornaments, lyrics or
 repeats — a transcriber does not produce them, and guessing would make the
 sketch look more authoritative than it is.
+
+Every duration it writes is one an engraver can draw: a plain or dotted note
+value, or a chain of them tied together. That rule arrived with the app's
+notation viewer, which was the first thing to *engrave* this output. The
+writer used to quantise onto a triplet grid as well as sixteenths and then
+serialise whatever came out as a raw fraction, and abcjs answered one
+transcription with 229 "Duration not representable" warnings — one for every
+`E,,,4/3`, `z5/2` and `E,,,5` in it. A triplet length needs the `(3` bracket
+this writer does not attempt, and five eighths is two tied notes, not one.
 """
 
 from __future__ import annotations
@@ -28,6 +37,19 @@ MAX_NOTES = 2000
 # note suits transcribed material: most durations come out as small whole
 # numbers rather than as fractions.
 UNIT = Fraction(1, 2)          # in quarter-lengths
+
+# The lengths one ABC note can carry, in units: a power of two or a dotted
+# one — …, /2, 3/4, 1, 3/2, 2, 3, 4, 6, … — longest first, for the greedy
+# split in `_pieces`. Double dots are legal ABC and abcjs draws them, but a
+# sketch reads better as `A6-A` than as `A7`. The grain is a 64th note.
+_VALUES = sorted(
+    (Fraction(m) * Fraction(2) ** e for m in (1, 3) for e in range(-5, 6)),
+    reverse=True)
+
+# The smallest length written, in units: a 32nd note. Sixteenth quantisation
+# never produces anything below it; the rounding in `_pieces` is for a
+# 64th that `limit_denominator` let through.
+_GRAIN = Fraction(1, 4)
 
 _STEP_TO_ABC = {"C": "C", "D": "D", "E": "E", "F": "F", "G": "G", "A": "A",
                 "B": "B"}
@@ -77,7 +99,7 @@ def _serialise(score, title: str, limit: int | None, total: int) -> str:
     # quarter-length is an eighth note, which ABC writes as 1/8.
     unit_value = UNIT / 4
     lines.append(f"L:{unit_value.numerator}/{unit_value.denominator}")
-    lines.append(f"K:{key_name}")
+    lines.append(f"K:{key_name}{_clef_of(flat)}")
     lines.extend(_body(score, limit))
     return "\n".join(lines).strip()
 
@@ -103,6 +125,20 @@ def _key_of(score) -> str:
         except Exception:  # noqa: BLE001
             pass
     return "C"
+
+
+def _clef_of(flat) -> str:
+    """` clef=bass` when the part lives below middle C, otherwise nothing.
+
+    ABC defaults to a treble clef, and a transcribed bass line drawn on one
+    is a thicket of ledger lines with the staff floating above it. The
+    median pitch decides, so a bass part with a few high notes stays on the
+    bass clef and a melody that dips below middle C stays on the treble.
+    """
+    midis = sorted(p.midi for n in flat.notes for p in n.pitches)
+    if not midis:
+        return ""
+    return " clef=bass" if midis[len(midis) // 2] < 60 else ""
 
 
 def _body(score, limit: int | None) -> list[str]:
@@ -144,10 +180,12 @@ def _measures(score):
     flat = part.flatten().notesAndRests.stream()
     # Quantise before writing. Transcribed onsets land wherever the audio put
     # them, and unquantised durations serialise as `A17/2` and `z10/3` —
-    # technically valid ABC that no one can read. Sixteenths and triplet
-    # eighths are the grid transcribed music actually sits on.
+    # technically valid ABC that no one can read. Sixteenths only: the
+    # triplet-eighth grid this used to include as well produced lengths like
+    # `4/3` that only a tuplet bracket can draw, and this writer draws none.
+    # A swung line loses its swing here, which is what "sketch" means.
     try:
-        flat = flat.quantize(quarterLengthDivisors=(4, 3),
+        flat = flat.quantize(quarterLengthDivisors=(4,),
                              processOffsets=True, processDurations=True,
                              inPlace=False)
     except Exception:  # noqa: BLE001 — an unquantisable stream is written raw
@@ -156,6 +194,13 @@ def _measures(score):
         measured = flat.makeMeasures()
     except Exception:  # noqa: BLE001 — an unmeasurable stream is one long bar
         return [list(flat)]
+    # A note that runs across a barline becomes two tied notes, one in each
+    # bar — what an engraver does, and what keeps every bar's length honest
+    # for the one that draws it.
+    try:
+        measured.makeTies(inPlace=True)
+    except Exception:  # noqa: BLE001 — an unsplit note still draws, untidily
+        pass
     out = []
     for measure in measured.getElementsByClass(stream.Measure):
         out.append(list(measure.notesAndRests))
@@ -163,18 +208,21 @@ def _measures(score):
 
 
 def _token(element) -> str:
-    """One note, chord or rest, with its ABC duration."""
-    length = _length(element.duration.quarterLength)
+    """One note, chord or rest as ABC — as several tied notes when its
+    length is not a single note value."""
+    pieces = _pieces(element.duration.quarterLength)
+    if not pieces:
+        return ""
     if element.isRest:
-        return f"z{length}"
+        return " ".join(f"z{_length(piece)}" for piece in pieces)
     if element.isChord:
-        pitches = "".join(_pitch(p) for p in element.pitches)
-        token = f"[{pitches}]{length}"
+        head = "[" + "".join(_pitch(p) for p in element.pitches) + "]"
     elif element.isNote:
-        token = f"{_pitch(element.pitch)}{length}"
+        head = _pitch(element.pitch)
     else:
         return ""
-    # A tie into the next note is a hyphen after this one.
+    # A tie is a hyphen straight after the note it starts on.
+    token = "-".join(head + _length(piece) for piece in pieces)
     if getattr(element, "tie", None) is not None \
             and element.tie.type in ("start", "continue"):
         token += "-"
@@ -198,16 +246,47 @@ def _pitch(pitch) -> str:
     return accidental + letter + "," * (4 - octave)
 
 
-def _length(quarter_length) -> str:
-    """A duration as a multiple of the unit note length.
+def _pieces(quarter_length) -> list[Fraction]:
+    """A duration as the note values that add up to it, longest first, in
+    units — one entry for a length a single note can carry, more for one
+    that has to be tied: 5 is 4 + 1, 11/2 is 4 + 3/2, 7 is 6 + 1.
 
-    "" means exactly one unit (the common case, and ABC's default), "2" two
-    of them, "/2" half of one, "3/2" a dotted unit.
+    Sixteenth quantisation leaves every length a multiple of a power of two,
+    so the greedy walk always lands exactly. A length that reaches here off
+    that grid — a stream `quantize` refused, leaving a triplet's 4/3 — is
+    snapped to the nearest single value instead: a triplet quarter drawn as
+    a dotted eighth is very slightly wrong, and a chain of ever-smaller ties
+    chasing the exact fraction is worse. Empty for a zero or unreadable
+    length, which the caller skips.
     """
     try:
         ratio = Fraction(quarter_length).limit_denominator(64) / UNIT
     except (TypeError, ValueError, ZeroDivisionError):
-        return ""
+        return []
+    if ratio <= 0:
+        return []
+    if ratio.denominator & (ratio.denominator - 1):
+        # Not a power of two: off the grid.
+        ratio = min(_VALUES, key=lambda value: abs(value - ratio))
+    else:
+        ratio = max(_GRAIN, round(ratio / _GRAIN) * _GRAIN)
+    pieces: list[Fraction] = []
+    remaining = ratio
+    while remaining > 0 and len(pieces) < 8:
+        value = next((v for v in _VALUES if v <= remaining), None)
+        if value is None:
+            break
+        pieces.append(value)
+        remaining -= value
+    return pieces
+
+
+def _length(ratio: Fraction) -> str:
+    """A note value as a multiple of the unit note length.
+
+    "" means exactly one unit (the common case, and ABC's default), "2" two
+    of them, "/2" half of one, "3/2" a dotted unit.
+    """
     if ratio == 1:
         return ""
     if ratio.denominator == 1:

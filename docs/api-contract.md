@@ -339,7 +339,10 @@ ParamSpec = {
                                        // On an audio/midi/json param, false means
                                        // mandatory: submit refuses a job that omits
                                        // it with 422 VALIDATION, for EVERY task,
-                                       // generate included (5.1)
+                                       // generate included (5.1). The same on a
+                                       // string param with a null default: a
+                                       // required text, refused when missing or
+                                       // blank (YingMusic's reference words).
   // numeric only:
   "min": 1.0, "max": 15.0, "step": 0.5,
   // string only:

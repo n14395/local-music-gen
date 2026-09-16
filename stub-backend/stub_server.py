@@ -2365,6 +2365,15 @@ async def jobs_submit(body: dict):
                 and params.get(p["key"]) is None):
             return err(422, "VALIDATION",
                        f"missing required input '{p['key']}'")
+    # A required text reads the same way (contract 4.1): a string param that
+    # is not nullable and has no default is refused when missing or blank.
+    for p in caps["params"]:
+        if (p["type"] == "string" and not p.get("nullable", True)
+                and p.get("default") is None):
+            value = params.get(p["key"])
+            if value is None or not str(value).strip():
+                return err(422, "VALIDATION",
+                           f"missing required text '{p['key']}'")
     # One job per take, sharing the group (contract 5.1): the queue is a list
     # of takes, and the app groups them back by group_id.
     takes = count

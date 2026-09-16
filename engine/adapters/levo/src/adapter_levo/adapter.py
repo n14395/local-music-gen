@@ -63,6 +63,72 @@ def instrumental_lyrics(duration_s: float) -> str:
                       + ["[outro-short]"])
 
 
+def pump_decoder(proc, windows: int, progress_cb: ProgressCb,
+                 cancel: CancelToken) -> None:
+    """Pace the Flow1dVAE decode bar from the decoder child's own output.
+
+    upstream's code2sound pads the token stream to 750·k + 250 frames at a
+    1000-frame window on a 750-frame hop and runs k windows, each one its
+    own 10-step ODE bar that restarts at zero — so a falling step count is
+    the next window starting, and a changed total is a different bar family
+    entirely (the checkpoint-shard loader that runs before the decode).
+
+    Reads the child to EOF. Kills and reaps it on any exception, including
+    the CancelledError `progress_cb` raises on a cancelled job — an unreaped
+    decoder keeps the GPU for the rest of the session.
+    """
+    assert proc.stdout is not None
+    done, last_step, last_total = 0, 0, 0
+    # The highest fraction reported so far. Never reported below: a bar that
+    # falls back reads as "the next act began", and the decode is the last
+    # act of a render.
+    reported = 0.55
+    try:
+        # \r-aware like the YuE adapter: the decoder's tqdm bars redraw
+        # in place and a plain line iterator would sit silent.
+        for line in iter_progress_lines(proc.stdout):
+            if cancel.cancelled:
+                proc.kill()
+                proc.wait()      # or the child is left a zombie
+                raise CancelledError()
+            print(line, flush=True)
+            # Every bar update is also a cancel checkpoint. Without this
+            # the longer half of the render reported one message and the
+            # bar sat at 0.55 for minutes.
+            bar = parse_tqdm(line)
+            if not bar:
+                continue
+            if "checkpoint shards" in line.lower():
+                # transformers' shard loader renders a real tqdm bar before
+                # the decode starts. Paced as a window it climbed the bar to
+                # ~70 % and the first decode redraw dropped it back to 55 %
+                # (found by the engine's own tests, 2026-09-16). It is still
+                # a cancel checkpoint, just not a decode step.
+                progress_cb(None, "loading the Flow1dVAE decoder")
+                continue
+            step, total = bar
+            if total != last_total:
+                # A different bar family; start the window count at it.
+                done, last_total = 0, total
+            elif step < last_step:
+                done = min(done + 1, windows - 1)
+            last_step = step
+            frac = (done + step / total) / windows
+            reported = max(reported, min(0.95, 0.55 + 0.4 * frac))
+            progress_cb(reported,
+                        f"decoding with Flow1dVAE — window "
+                        f"{done + 1}/{windows}",
+                        step=done + 1, steps=windows)
+    except BaseException:
+        # progress_cb itself raises CancelledError on a cancelled job, so
+        # the loop can exit without passing the branch above — and an
+        # unreaped decoder keeps the GPU for the rest of the session.
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        raise
+
+
 class LeVoAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -260,44 +326,8 @@ class LeVoAdapter(ModelAdapter):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             env=env)
         self.proc = proc
-        assert proc.stdout is not None
-        done, last_step, last_total = 0, 0, 0
         try:
-            # \r-aware like the YuE adapter: the decoder's tqdm bars redraw
-            # in place and a plain line iterator would sit silent.
-            for line in iter_progress_lines(proc.stdout):
-                if cancel.cancelled:
-                    proc.kill()
-                    proc.wait()      # or the child is left a zombie
-                    raise CancelledError()
-                print(line, flush=True)
-                # Every bar update is also a cancel checkpoint. Without this
-                # the longer half of the render reported one message and the
-                # bar sat at 0.55 for minutes.
-                bar = parse_tqdm(line)
-                if not bar:
-                    continue
-                step, total = bar
-                if total != last_total:
-                    # A different bar family (a checkpoint-shard loader
-                    # before the decode); start the window count at it.
-                    done, last_total = 0, total
-                elif step < last_step:
-                    done = min(done + 1, windows - 1)
-                last_step = step
-                frac = (done + step / total) / windows
-                progress_cb(min(0.95, 0.55 + 0.4 * frac),
-                            f"decoding with Flow1dVAE — window "
-                            f"{done + 1}/{windows}",
-                            step=done + 1, steps=windows)
-        except BaseException:
-            # progress_cb itself raises CancelledError on a cancelled job, so
-            # the loop can exit without passing the branch above — and an
-            # unreaped decoder keeps the GPU for the rest of the session.
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-            raise
+            pump_decoder(proc, windows, progress_cb, cancel)
         finally:
             self.proc = None
         if proc.wait() != 0:

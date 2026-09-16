@@ -104,12 +104,8 @@ class AssistantAdapter(ModelAdapter):
         messages = build_messages(kind, inp, dialect, lyric_tags)
         temperature = _clamp(params.get("temperature"), DEFAULT_TEMPERATURE,
                              0.0, 2.0)
-        # The catalog declares 64…2048 and nothing enforced it: the
-        # supervisor does no numeric range validation, and mlx_lm reads -1 as
-        # "an infinite generator" — a job that ran to EOS with no ceiling,
-        # with the bar stuck at 0.95 (produced / max(1, -1)).
-        max_tokens = max(64, min(2048, int(params.get("max_tokens")
-                                           or kind.max_tokens)))
+        max_tokens = clamp_max_tokens(params.get("max_tokens"),
+                                      kind.max_tokens)
 
         started = time.monotonic()
         text = self._chat(messages, temperature=temperature,
@@ -218,6 +214,18 @@ def _thinking_kwarg(tokenizer, messages: list[dict]) -> dict:
     except (TypeError, ValueError):
         return {}
     return {"enable_thinking": False}
+
+
+def clamp_max_tokens(value, default: int) -> int:
+    """The token ceiling one assist call may ask for.
+
+    The catalog declares 64…2048 and nothing enforced it: the supervisor does
+    no numeric range validation, and mlx_lm reads -1 as "an infinite
+    generator" — a job that ran to EOS with no ceiling, with the bar stuck at
+    0.95 (produced / max(1, -1)). An absent or zero value means "the kind's
+    own", which is what `default` carries.
+    """
+    return max(64, min(2048, int(value or default)))
 
 
 def _clamp(value, default: float, lo: float, hi: float) -> float:

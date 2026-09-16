@@ -32,7 +32,12 @@ def _engine(request: Request) -> EngineState:
 
 def resolve_upload(uploads_dir: str, upload_id: str) -> str | None:
     """Upload id → absolute file path, or None if it doesn't resolve."""
-    if not isinstance(upload_id, str) or os.path.basename(upload_id) != upload_id:
+    # `basename` is the identity on "", "." and "..", so those three used to
+    # slip past the traversal guard: ".." resolved to the first entry of the
+    # *data* directory and handed a worker that as its input (found by the
+    # engine's own tests, 2026-09-16).
+    if (not isinstance(upload_id, str) or upload_id in ("", ".", "..")
+            or os.path.basename(upload_id) != upload_id):
         return None
     d = os.path.join(uploads_dir, upload_id)
     try:

@@ -24,17 +24,28 @@
   }
 
   function options(req, scale) {
-    // abcjs lays the staff out at `staffwidth` unscaled units and then scales
-    // the whole SVG, so what gets drawn is (staffwidth + padding) × scale
-    // wide. Solving that for the width the view actually has keeps the score
-    // flush with its container at every zoom. It is also why `responsive`
-    // mode is not used anywhere: abcjs discards `scale` in that mode, which
-    // would have made the sheet's zoom control a no-op.
-    var staffwidth = Math.max(160, Math.floor(req.width / scale) - PADDING * 2);
+    // In wrap mode abcjs treats `staffwidth` as the width the score should
+    // *end up* on screen: it breaks lines for staffwidth ÷ scale unscaled
+    // units and the SVG's scale transform brings them back to staffwidth
+    // pixels, with the padding scaled on top. So the staff is the view's
+    // width less the scaled padding — not width ÷ scale, which is what the
+    // non-wrap path wants and what this first said; measured through the
+    // headless driver, that filled two thirds of the sheet at 150 % and
+    // overflowed it at 80 %. `responsive` mode is not used anywhere: abcjs
+    // discards `scale` in that mode, which would make zoom a no-op.
+    var staffwidth = Math.max(160, Math.floor(req.width - PADDING * 2 * scale));
     return {
       staffwidth: staffwidth,
       scale: scale,
       visualTranspose: req.transpose || 0,
+      // Re-break the lines to the staff width instead of honouring the
+      // ABC's own newlines. The engine writes four bars to a line whatever
+      // they hold, and abcjs otherwise keeps that: a dense line that did not
+      // fit was stretched past the right edge and clipped, and zooming in
+      // clipped more of it rather than flowing onto more lines. With wrap the
+      // width decides — 150 % is more lines, 75 % is fewer — and the ABC's
+      // line breaks are treated as the formatting hint they are.
+      wrap: { minSpacing: 1.8, maxSpacing: 2.7 },
       add_classes: true,
       paddingtop: PADDING,
       paddingbottom: PADDING,
