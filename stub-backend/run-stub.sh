@@ -16,4 +16,7 @@ ARGS=(--handshake-file "$RUN_DIR/handshake.json" \
       --parent-pid "$PPID")
 
 uv sync --quiet
-exec uv run python stub_server.py "${ARGS[@]}" "$@"
+# The venv's python, not `uv run`: uv would fork the stub as a child and stay
+# resident as its parent, so the pid the app tracks — and the one the
+# supervision tests kill — would be uv's. Same fix as packaging/engine-shim.sh.
+exec "$PWD/.venv/bin/python" stub_server.py "${ARGS[@]}" "$@"

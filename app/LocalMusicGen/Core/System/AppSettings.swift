@@ -661,8 +661,13 @@ final class AppSettings {
         smallModelBytes = 1_500_000_000
         memGuardPercent = 90
         maxActiveDownloads = 1
-        hfHomePath = nil
-        auxCachePath = nil
+        // hfHomePath and auxCachePath are deliberately not swept: they say
+        // where the model library *is*, not what the user prefers about it.
+        // Setting them to nil pointed the engine back at ~/.cache/huggingface
+        // without moving a byte — every installed model then read as missing
+        // and the next download landed on the boot disk — which is exactly
+        // what the relocate flow exists to prevent, and what the dialog that
+        // leads here promises will not happen.
         engineLogLevel = "info"
         engineFileRetentionDays = 14
         backupsCapGB = 0

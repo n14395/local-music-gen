@@ -69,6 +69,11 @@ struct GenerateNeed: Equatable, Hashable, Sendable {
             // the job would only fail at the adapter.
             return false
         }
+        // The other direction of the lyrics test above: a need that does not
+        // promise lyrics cannot run a model that demands them. Without this
+        // Compare Models pre-ticked YuE2 and HeartMuLa and sent them
+        // lyricless jobs they refused — after loading several gigabytes.
+        if !lyrics && caps.needsLyrics { return false }
         return true
     }
 

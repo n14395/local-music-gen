@@ -147,6 +147,9 @@ struct WorkbenchScreen: View {
     @State private var timelineZoom: CGFloat = 20
     @State private var outputPath: OutputPath = .exact
     @State private var preview = MultiPartPlayer()
+    /// A pending re-arm of the preview after a structural edit — see
+    /// `syncPreview`.
+    @State private var previewRearm: Task<Void, Never>?
     @State private var selection: Set<String> = []
     @State private var peaksStore = PeaksStore()
     @State private var reimaginePrompt = ""
@@ -289,9 +292,12 @@ struct WorkbenchScreen: View {
         .onChange(of: catalog.version, initial: true) { _, version in
             eligibleCache = (version: version, value: pickEligible())
         }
-        .onDisappear { preview.stop() }
-        .onChange(of: model.clips) { syncPreviewGains() }
-        .onChange(of: model.lanes) { syncPreviewGains() }
+        .onDisappear {
+            previewRearm?.cancel()
+            preview.stop()
+        }
+        .onChange(of: model.clips) { syncPreview() }
+        .onChange(of: model.lanes) { syncPreview() }
     }
 
     // MARK: top bar
@@ -700,9 +706,28 @@ struct WorkbenchScreen: View {
         }
     }
 
-    private func syncPreviewGains() {
+    /// Keep a running preview honest with the bench. A change that only
+    /// moved a fader, a mute or a solo lands on the live nodes; anything
+    /// structural — an offset, a trim, a clip added or removed — re-arms
+    /// from the same moment, the way the Editor does, so the audio follows
+    /// the timeline instead of the arrangement Play was pressed on. The
+    /// re-arm is debounced because a drag reports every pixel; it settles
+    /// once the drag stops. (Only gains used to be synced, so every move
+    /// was ignored until Stop.)
+    private func syncPreview() {
         guard preview.isPlaying else { return }
-        preview.updateGains(items: previewItems)
+        let items = previewItems
+        if MultiPartPlayer.Schedule(items) == preview.armedSchedule {
+            previewRearm?.cancel()
+            preview.updateGains(items: items)
+            return
+        }
+        previewRearm?.cancel()
+        previewRearm = Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, preview.isPlaying else { return }
+            preview.play(items: previewItems, from: preview.currentPosition())
+        }
     }
 
     private func seconds(_ beats: Double) -> Double {

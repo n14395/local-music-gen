@@ -24,7 +24,7 @@ AUX_DIRS = ("audio-separator-models", "bsrnn-weights", "btc-chords",
             "heartmula", "inspiremusic", "levo", "localmusic-soundfonts",
             "magenta-home", "mossmusic", "msst", "msst-weights",
             "mt3-checkpoints", "rave-models", "seedvc", "songbloom",
-            "torch-cache", "yingmusic", "yue")
+            "torch-cache", "yingmusic", "yue", "yue2")
 
 
 # Directories in the aux root that hold the *user's* files rather than weights

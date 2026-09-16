@@ -8,7 +8,8 @@
 #
 #   ./build.sh --debug         fast Debug dev build instead of the production one
 #   ./build.sh --test          …then run the app test suite + stub contract checks
-#   ./build.sh --adapters      …also sync every adapter venv (first run pulls torch)
+#   ./build.sh --adapters      also sync every adapter venv, on either build
+#                              (first run pulls torch)
 #   ./build.sh --reset         wipe app state first — prefs, library, install markers
 #                              — so the next launch starts at onboarding. Keeps every
 #                              downloaded model (quit the app first)
@@ -352,6 +353,11 @@ build_app() {
     rm -rf "$APP_PATH"
     ditto "$built" "$APP_PATH"
 
+    # Before bundling, so the lockfiles the bundle ships are the ones that
+    # just resolved — and so `--adapters` means something here. It used to
+    # be read only on the Debug path, so `./build.sh --adapters` parsed the
+    # flag and did nothing.
+    sync_engine_venvs
     bundle_engine
     dev_sign
     codesign --verify --strict "$APP_PATH" && echo "    signature verifies"

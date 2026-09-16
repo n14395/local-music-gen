@@ -6,7 +6,8 @@ import XCTest
 final class GeneratePresetTests: XCTestCase {
 
     private func model(_ id: String, family: String = "musicgen",
-                       lyrics: Bool = false, minS: Double = 1,
+                       lyrics: Bool = false, requiresLyrics: Bool? = nil,
+                       minS: Double = 1,
                        maxS: Double = 30,
                        state: InstallState = .installed) -> ModelInfo {
         ModelInfo(
@@ -18,7 +19,8 @@ final class GeneratePresetTests: XCTestCase {
                 duration: DurationSpec(minS: minS, maxS: maxS,
                                        defaultS: minS),
                 sampleRate: 44100, outputsPerJobMax: 4,
-                estSecondsPerAudioSecond: 1, params: []),
+                estSecondsPerAudioSecond: 1, requiresLyrics: requiresLyrics,
+                params: []),
             requirements: Requirements(minRamBytes: 1, diskBytes: 0,
                                        speedTier: .fast),
             license: LicenseInfo(name: "MIT", commercialUse: true,
@@ -26,6 +28,19 @@ final class GeneratePresetTests: XCTestCase {
     }
 
     // MARK: needs
+
+    func testAPromptOnlyNeedWillNotRunOnAModelThatDemandsLyrics() {
+        // The bare need is what Compare Models and the auto-running cards
+        // use; a model that refuses to render without lyrics must not be
+        // on their roster, or the job loads gigabytes and then fails.
+        let need = GenerateNeed()
+        XCTAssertFalse(need.canRun(model("yue2", lyrics: true,
+                                         requiresLyrics: true)))
+        XCTAssertTrue(need.canRun(model("acestep", lyrics: true,
+                                        requiresLyrics: false)))
+        XCTAssertTrue(GenerateNeed(lyrics: true)
+            .canRun(model("yue2", lyrics: true, requiresLyrics: true)))
+    }
 
     func testALyricsCardWillNotRunOnAModelThatCannotSing() {
         let need = GenerateNeed(lyrics: true)

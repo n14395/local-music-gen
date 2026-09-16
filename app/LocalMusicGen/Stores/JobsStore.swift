@@ -553,8 +553,16 @@ final class JobsStore {
     }
 
     /// Takes of this submission that have not finished yet.
+    ///
+    /// A take whose completion has arrived and is being ingested counts as
+    /// finished: the engine is done with it, and only the library row lags.
+    /// Counting it as running was why "Your track is ready" never fired for
+    /// a success — the notifier asked while the finishing job was still
+    /// non-terminal, and the answer was always "not yet".
     func unfinishedBatchJobs(_ groupId: String) -> [ActiveJob] {
-        batch(groupId).filter { !$0.status.isTerminal }
+        batch(groupId).filter {
+            !$0.status.isTerminal && !landing.contains($0.id)
+        }
     }
 
     /// Whether nothing of this job's submission is still running — which is
@@ -1262,6 +1270,11 @@ final class JobsStore {
     /// and a cancel that was working perfectly well was indistinguishable from
     /// a dead button. Pressing it twice was the only thing left to try.
     private(set) var canceling: Set<String> = []
+    /// Jobs whose `job.completed` has arrived and whose ingest is running.
+    /// The ingest is asynchronous, so the row's own status stays at its last
+    /// stage until the ingest writes `.succeeded`; anything asking "is this
+    /// submission finished?" in between reads this instead.
+    private var landing: Set<String> = []
 
     func isCanceling(_ jobId: String) -> Bool { canceling.contains(jobId) }
 
@@ -1447,48 +1460,52 @@ final class JobsStore {
 
     func reconcile() async {
         guard let client else { return }
-        if let jobs = try? await client.jobs() {
-            // One shell update for the whole adoption, not one per row: on a
-            // reconnect with a full queue this ran the sort and every
-            // projection once per job. The `await` is outside the batch.
-            var toIngest: [String] = []
-            batched {
-                var seen = Set<String>()
-                for job in jobs {
-                    seen.insert(job.jobId)
-                    guard let row = active[job.jobId] else {
-                        adopt(ActiveJob(info: job, progress: job.progress,
-                                        status: job.status))
-                        continue
-                    }
-                    // A terminal event the 500-event ring no longer holds:
-                    // without settling here a row missed at reconnect spun
-                    // "generating" until retention deleted it (audit H2).
-                    guard !row.status.isTerminal,
-                          job.status != row.status else { continue }
-                    active[job.jobId]?.progress = job.progress
-                    switch job.status {
-                    case .succeeded:
-                        canceling.remove(job.jobId)
-                        toIngest.append(job.jobId)
-                    case .failed:
-                        active[job.jobId]?.status = .failed
-                        active[job.jobId]?.error = job.error
-                        canceling.remove(job.jobId)
-                        dropBatchIngestIfFinished(job.jobId)
-                    case .canceled:
-                        active[job.jobId]?.status = .canceled
-                        notifyOnLanding.remove(job.jobId)
-                        canceling.remove(job.jobId)
-                        dropBatchIngestIfFinished(job.jobId)
-                    default:
-                        active[job.jobId]?.status = job.status
-                    }
+        guard let jobs = try? await client.jobs() else { return }
+        // One shell update for the whole adoption, not one per row: on a
+        // reconnect with a full queue this ran the sort and every
+        // projection once per job. Every `await` is outside the batches.
+        var toIngest: [String] = []
+        var unseen: [String] = []
+        batched {
+            var seen = Set<String>()
+            for job in jobs {
+                seen.insert(job.jobId)
+                guard let row = active[job.jobId] else {
+                    adopt(ActiveJob(info: job, progress: job.progress,
+                                    status: job.status))
+                    continue
                 }
-                // Rows the engine no longer knows at all — it restarted, or
-                // history evicted them. Left alone they spin forever.
-                for (id, row) in active
-                where !seen.contains(id) && !row.status.isTerminal {
+                guard !row.status.isTerminal,
+                      job.status != row.status else { continue }
+                settle(from: job, toIngest: &toIngest)
+            }
+            // The listing is the engine's *live* jobs — it leaves finished
+            // ones out on purpose (api/jobs.py) — so a tracked row missing
+            // from it has either finished while the stream was down or been
+            // forgotten in a restart, and only a fetch by id can say which.
+            // Concluding "forgotten" here, as this used to, marked every
+            // take that landed during a stream gap as failed and never
+            // imported its audio; the settle arms below were unreachable.
+            unseen = active.compactMap { id, row in
+                seen.contains(id) || row.status.isTerminal ? nil : id
+            }
+        }
+        var fetched: [(id: String, job: JobInfo?)] = []
+        for id in unseen {
+            do {
+                fetched.append((id, try await client.job(id)))
+            } catch APIError.http(let status, _) where status == 404 {
+                fetched.append((id, nil))
+            } catch {
+                // Unreachable rather than unknown: the row keeps its state
+                // for the next reconcile instead of being guessed at.
+            }
+        }
+        batched {
+            for (id, job) in fetched {
+                guard let job else {
+                    // Rows the engine no longer knows at all — it restarted,
+                    // or history evicted them. Left alone they spin forever.
                     active[id]?.status = .failed
                     active[id]?.error = APIErrorBody(
                         code: "ENGINE_FORGOT",
@@ -1496,10 +1513,40 @@ final class JobsStore {
                             + "finished")
                     canceling.remove(id)
                     dropBatchIngestIfFinished(id)
+                    continue
                 }
-                ensureAutoClearRunning()
+                guard let row = active[id], !row.status.isTerminal,
+                      job.status != row.status else { continue }
+                settle(from: job, toIngest: &toIngest)
             }
-            for id in toIngest { await ingest(jobId: id) }
+            ensureAutoClearRunning()
+        }
+        for id in toIngest { await ingest(jobId: id) }
+    }
+
+    /// Bring a tracked row into line with the engine's own record of it — a
+    /// terminal event the 500-event ring no longer holds, or a stage change
+    /// missed the same way. Without this a row missed at reconnect spun
+    /// "generating" until retention deleted its audio (audit H2).
+    private func settle(from job: JobInfo, toIngest: inout [String]) {
+        active[job.jobId]?.progress = job.progress
+        switch job.status {
+        case .succeeded:
+            canceling.remove(job.jobId)
+            landing.insert(job.jobId)
+            toIngest.append(job.jobId)
+        case .failed:
+            active[job.jobId]?.status = .failed
+            active[job.jobId]?.error = job.error
+            canceling.remove(job.jobId)
+            dropBatchIngestIfFinished(job.jobId)
+        case .canceled:
+            active[job.jobId]?.status = .canceled
+            notifyOnLanding.remove(job.jobId)
+            canceling.remove(job.jobId)
+            dropBatchIngestIfFinished(job.jobId)
+        default:
+            active[job.jobId]?.status = job.status
         }
     }
 
@@ -1559,6 +1606,10 @@ final class JobsStore {
             // A take that landed while the cancel was in flight: the request
             // lost, and the row must stop claiming otherwise.
             canceling.remove(jobId)
+            // Settled synchronously, before the notifier asks whether the
+            // batch is done: the ingest below runs after this drain, and
+            // until it writes `.succeeded` the row still reads as running.
+            landing.insert(jobId)
             // The arming is NOT cleared here: this runs before the notifier
             // reads it. `takeNotifyOnLanding` spends it instead.
             Task { await ingest(jobId: jobId) }
@@ -1586,6 +1637,9 @@ final class JobsStore {
     // MARK: ingest
 
     private func ingest(jobId: String) async {
+        // Whatever happens below, the row's own status is the truth again
+        // once this returns.
+        defer { landing.remove(jobId) }
         // Retried: painting a succeeded render as failed over one dropped
         // HTTP fetch was audit H5's app-side half. Three tries, short
         // backoff — the engine is local, so a real failure stays fast.
@@ -1794,8 +1848,11 @@ final class JobsStore {
     /// running. Nothing in the library is touched: takes that landed before a
     /// failure or a cancel are finished audio and stay.
     private func dropBatchIngestIfFinished(_ jobId: String) {
+        // Every row terminal — not `unfinishedBatchJobs`, which discounts a
+        // take mid-ingest, and that take's `landTake` still needs the names.
         guard let info = active[jobId]?.info,
-              unfinishedBatchJobs(info.groupId).isEmpty else { return }
+              batch(info.groupId).allSatisfy({ $0.status.isTerminal })
+        else { return }
         takeIngests.removeValue(forKey: info.groupId)
     }
 

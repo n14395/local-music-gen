@@ -59,7 +59,10 @@ enum MetaJobRunner {
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if Task.isCancelled { return .failure(.cancelled) }
+            if Task.isCancelled {
+                cancelOnEngine(client, jobId)
+                return .failure(.cancelled)
+            }
             try? await Task.sleep(for: .milliseconds(400))
             // A dropped poll is not a failure: one refused request while the
             // engine is busy should not end a job that is still running fine.
@@ -73,6 +76,18 @@ enum MetaJobRunner {
             default: continue
             }
         }
+        cancelOnEngine(client, jobId)
         return .failure(.timedOut)
+    }
+
+    /// Stop the job on the engine as well as the polling. Giving up here
+    /// used to leave the assist, plan or caption running — still loading
+    /// its family, still holding the one GPU queue — for a page nobody was
+    /// looking at, and the natural answer to "it took too long", pressing
+    /// the button again, queued a second one behind it. Detached, because
+    /// the task this runs in is the one that was just cancelled, and an
+    /// `await` inside it would be cut short before the request left.
+    private static func cancelOnEngine(_ client: BackendClient, _ jobId: String) {
+        Task.detached { try? await client.cancelJob(jobId) }
     }
 }

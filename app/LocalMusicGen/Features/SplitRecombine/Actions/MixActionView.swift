@@ -367,9 +367,20 @@ struct MixActionView: View {
     private func create(returningToGallery: Bool) {
         guard let mixModel else { return }
         submitting = true
-        let ingredients = recipe.slots.flatMap { slot in
-            (filled[slot.id] ?? []).map {
-                IngredientSubmission(slotId: slot.id, partId: $0.id)
+        // `(songId, slotId)` is the provenance table's primary key, so a slot
+        // holding several materials — every mashup, a swap with two backing
+        // parts — has to stamp each with an id of its own. Stamping them all
+        // with the slot's id made the second row collide, rolled the whole
+        // insert back, and landed the mix with no ingredients at all, which
+        // is why "Reopen in the Workbench" was dead for every mashup. The
+        // `<slug>-<n>` shape is the one the Workbench already writes and
+        // `WorkbenchRestore.laneName` already reads back into lanes.
+        let ingredients = recipe.slots.flatMap { slot -> [IngredientSubmission] in
+            let picked = filled[slot.id] ?? []
+            return picked.enumerated().map { index, material in
+                IngredientSubmission(
+                    slotId: picked.count == 1 ? slot.id : "\(slot.id)-\(index + 1)",
+                    partId: material.id)
             }
         }
         let options = RecombineOptions(

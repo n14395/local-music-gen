@@ -17,6 +17,10 @@ actor BackendProcessManager {
     private var healthTask: Task<Void, Never>?
     private var crashTimes: [Date] = []
     private var stopping = false
+    /// True from `start()`'s first line until its handshake wait ends, so a
+    /// second caller in that window is turned away rather than spawning a
+    /// second engine beside the first.
+    private var starting = false
     private var stderrLog: FileHandle?
 
     private let modeOverride: BackendLaunchMode?
@@ -39,6 +43,14 @@ actor BackendProcessManager {
     // MARK: lifecycle
 
     func start() async {
+        // Idempotent. The engine used to be started from the main window's
+        // `.task`, so closing that window and reopening it from the Dock ran
+        // this again against a live engine: a second launch minted a new
+        // token, found the first engine through its own pid file and
+        // SIGKILLed it mid-render. Whatever asks, a manager runs one engine.
+        guard !starting, process?.isRunning != true, client == nil else { return }
+        starting = true
+        defer { starting = false }
         guard let mode = modeOverride ?? BackendLaunchMode.resolve() else {
             await setPhase(.failed(reason: "No engine found. Set LOCALMUSICGEN_BACKEND_HANDSHAKE or LOCALMUSICGEN_BACKEND_CMD, or use a bundled build."))
             return
@@ -65,18 +77,7 @@ actor BackendProcessManager {
         }
         if let process, process.isRunning {
             // graceful: /v1/shutdown above → SIGTERM → SIGKILL
-            let deadline = Date().addingTimeInterval(5)
-            while process.isRunning && Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-            if process.isRunning { process.terminate() }
-            let killDeadline = Date().addingTimeInterval(5)
-            while process.isRunning && Date() < killDeadline {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
+            await awaitExit(of: process, gracePeriod: 5)
         }
         try? FileManager.default.removeItem(at: StoragePaths.enginePidFile)
         process = nil
@@ -84,13 +85,54 @@ actor BackendProcessManager {
         await setPhase(.stopped)
     }
 
+    /// Bring the engine down and up again, cleanly.
+    ///
+    /// This used to SIGKILL the child and call `start()`. The child was `uv`,
+    /// which forks the supervisor rather than exec'ing it, so the kill
+    /// orphaned a live engine that kept the data-dir lock and its port; each
+    /// of the four respawns that followed died on "another engine already
+    /// serves this data dir", and the app sat in `.failed` until it was quit.
+    /// The shim now execs the supervisor itself, and this goes the way
+    /// `stop()` does — the shutdown verb, then SIGTERM, then SIGKILL, and a
+    /// wait for the exit — so the lock is free before the next spawn asks.
     func restart() async {
-        if let process, process.isRunning {
+        healthTask?.cancel()
+        eventsTask?.cancel()
+        if let process {
+            // Not a crash: the handler would count it as one and spawn on
+            // its own, racing the spawn below.
             process.terminationHandler = nil
-            kill(process.processIdentifier, SIGKILL)
+            if process.isRunning {
+                if let client { try? await client.shutdown() }
+                await awaitExit(of: process, gracePeriod: 5)
+            }
         }
+        try? FileManager.default.removeItem(at: StoragePaths.enginePidFile)
         process = nil
+        client = nil
         await start()
+    }
+
+    /// Wait for the child to leave, escalating: `gracePeriod` seconds for it
+    /// to act on a shutdown already requested, then SIGTERM, then SIGKILL.
+    /// Always waits out the exit itself — the next spawn takes the data-dir
+    /// lock this process holds and reads the pid file it wrote, so returning
+    /// before it is gone is what made a restart a crash loop.
+    private func awaitExit(of p: Process, gracePeriod: TimeInterval) async {
+        var deadline = Date().addingTimeInterval(gracePeriod)
+        while p.isRunning && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if p.isRunning { p.terminate() }
+        deadline = Date().addingTimeInterval(5)
+        while p.isRunning && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        deadline = Date().addingTimeInterval(2)
+        while p.isRunning && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     // MARK: spawn path
@@ -162,6 +204,10 @@ actor BackendProcessManager {
                                      encoding: .utf8),
               let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)),
               kill(pid, 0) == 0 else { return }
+        // Never our own live child. `start()` refuses to run twice, but the
+        // pid file is the one thing here that outlives a manager, and the
+        // stale-engine sweep must not be the thing that kills a good one.
+        guard pid != process?.processIdentifier else { return }
         let ps = Process()
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
         ps.arguments = ["-o", "command=", "-p", String(pid)]
@@ -276,9 +322,15 @@ actor BackendProcessManager {
             if let client { startHealthPolling(client: client) }
             return
         }
-        if let process, process.isRunning {
+        if let process {
             process.terminationHandler = nil
-            kill(process.processIdentifier, SIGKILL)
+            if process.isRunning {
+                // Three health checks have already gone unanswered, so the
+                // shutdown verb would too: straight to the signals, but
+                // still waiting for the exit — the respawn below needs the
+                // data-dir lock this engine is holding.
+                await awaitExit(of: process, gracePeriod: 0)
+            }
         }
         await handleTermination()
     }

@@ -26,6 +26,21 @@ async def healthz(request: Request):
             "uptime_s": _engine(request).uptime_s()}
 
 
+def _library_free_bytes(st: EngineState) -> int | None:
+    """Free space where weights land.
+
+    The library folder may be configured but not created yet, or on a
+    volume that is not mounted; the nearest existing ancestor is what
+    `disk_usage` can answer for, and a folder with no answer at all is
+    reported as unknown rather than as the boot disk's figure.
+    """
+    from ..library import _nearest_existing
+    try:
+        return shutil.disk_usage(_nearest_existing(st.settings.hf_cache_dir)).free
+    except OSError:
+        return None
+
+
 @router.get("/v1/system")
 async def system(request: Request):
     st = _engine(request)
@@ -33,7 +48,12 @@ async def system(request: Request):
     small = [w for w in st.queue.small_workers.values() if w.is_alive()]
     active = st.queue.active
     return {"ram_bytes": physical_ram_bytes(),
+            # The data folder's volume — outputs, the database, the logs.
             "free_disk_bytes": shutil.disk_usage(st.settings.data_dir).free,
+            # The library's volume, where a download lands. A different disk
+            # on any Mac whose library was relocated, and the one every
+            # "will this model fit" question in the app is really about.
+            "library_free_disk_bytes": _library_free_bytes(st),
             "machine": machine_model(),
             "warm_family": worker.family if worker and worker.is_alive() else None,
             "warm_model_id": worker.loaded_model_id

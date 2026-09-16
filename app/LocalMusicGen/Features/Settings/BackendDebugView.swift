@@ -87,6 +87,9 @@ struct BackendDebugView: View {
                 BenchInfoRow("Free disk", telemetry.freeDiskBytes
                                 .map { "\(TelemetryStore.gigabytes($0)) GB" } ?? "—",
                              mono: true, labelWidth: 96)
+                BenchInfoRow("Library disk", telemetry.libraryFreeDiskBytes
+                                .map { "\(TelemetryStore.gigabytes($0)) GB" } ?? "—",
+                             mono: true, labelWidth: 96)
             }
 
             section("ENGINE LOG") {

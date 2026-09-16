@@ -59,6 +59,22 @@ final class SettingsCatalogTests: XCTestCase {
         }
     }
 
+    /// The library's location is not a preference. Both resets once wrote
+    /// nil to it — "the shared Hugging Face cache" — without moving a byte,
+    /// so a relocated library read as uninstalled and re-downloads landed on
+    /// the boot disk, while the dialogs promised models were untouched.
+    func testNoResetTouchesTheLibraryLocation() {
+        let settings = freshSettings()
+        settings.hfHomePath = "/tmp/some-library"
+        settings.auxCachePath = "/tmp/some-library/aux"
+        for pane in SettingsPane.allCases {
+            SettingsCatalog.reset(pane: pane, settings)
+        }
+        settings.resetAllPreferences()
+        XCTAssertEqual(settings.hfHomePath, "/tmp/some-library")
+        XCTAssertEqual(settings.auxCachePath, "/tmp/some-library/aux")
+    }
+
     // MARK: - Counting
 
     func testAChangedSettingIsCountedInItsOwnSectionOnly() {

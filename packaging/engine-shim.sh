@@ -71,4 +71,12 @@ say "Preparing the Python runtime"
 say "Installing the engine's dependencies"
 "$UV" sync --frozen --quiet
 say "Starting the engine"
-exec "$UV" run --frozen local-music-gen-engine "$@"
+# The venv's own console script, not `uv run`. uv forks the command as a child
+# and stays resident as its parent, so the process the app spawned, tracked,
+# pid-filed and signalled was uv: "Restart engine now" SIGKILLed uv, the real
+# supervisor lived on holding the data-dir lock and the port, and every respawn
+# died on "another engine already serves this data dir" until the app was quit.
+# `uv sync` above has just built the venv this script lives in, so exec'ing it
+# makes the app's child *be* the supervisor — one pid in the handshake, the pid
+# file and `ps`, and every signal lands where it is aimed.
+exec "$SRC/supervisor/.venv/bin/local-music-gen-engine" "$@"

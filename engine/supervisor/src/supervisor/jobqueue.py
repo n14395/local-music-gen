@@ -442,6 +442,15 @@ class JobQueue:
             if job.status in TERMINAL_STATUSES:
                 raise SubmitError(409, "JOB_NOT_CANCELABLE", "job already terminal")
             if job.status == "queued":
+                # Set on this path too. `_next_job` hands a job to the runner
+                # while its status still reads "queued" — it only becomes
+                # "loading" inside `_run_job` — so a cancel landing in that
+                # window took this branch, told the client "canceled", and
+                # left every later checkpoint reading a flag nobody had set:
+                # the model loaded and the take rendered to the end anyway.
+                # For a job that really is still queued the flag is never
+                # read, so this costs nothing there.
+                job.cancel_requested = True
                 self._set_status(job, "canceled")
                 if job_id in self.order:
                     self.order.remove(job_id)

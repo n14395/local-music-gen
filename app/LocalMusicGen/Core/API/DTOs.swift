@@ -100,7 +100,13 @@ struct HealthResponse: Codable, Sendable {
 
 struct SystemInfo: Codable, Sendable {
     let ramBytes: Int64
+    /// Free space on the data folder's volume — outputs, database, logs.
     let freeDiskBytes: Int64
+    /// Free space on the volume that holds the model library, where a
+    /// download lands. A different disk on any Mac whose library was
+    /// relocated, and the one to compare a model's `diskBytes` against.
+    /// Optional so an engine that predates the field still decodes.
+    let libraryFreeDiskBytes: Int64?
     let machine: String
     let warmFamily: String?
     let warmModelId: String?

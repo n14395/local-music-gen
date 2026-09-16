@@ -50,6 +50,20 @@ class HeartMuLaAdapter(ModelAdapter):
                 return path
         raise RuntimeError(f"no '{needle}' snapshot in model_paths")
 
+    @staticmethod
+    def _decode_windows(n_codes: int, duration: float = 29.76) -> int:
+        """How many flow-matching windows `HeartCodec.detokenize` runs for
+        `n_codes` frames — its own padding arithmetic, repeated here so the
+        decode bar has a total. Only the bar depends on it being exact."""
+        import math
+        min_samples = int(duration * 12.5)
+        hop = min_samples // 93 * 80
+        ovlp = min_samples - hop
+        n = max(n_codes, min_samples)
+        if (n - ovlp * 2) % hop > 0:
+            n = math.ceil((n - ovlp) / hop) * hop + ovlp
+        return max(1, len(range(0, n - hop + 1, hop)))
+
     def _scaffold(self) -> str:
         """The assembled checkpoint folder heartlib wants, built from links.
 
@@ -163,10 +177,40 @@ class HeartMuLaAdapter(ModelAdapter):
         if cancel.cancelled:
             raise CancelledError()
 
+        # `detokenize` decodes in 29.76 s windows on a 25.6 s hop — five
+        # flow-matching passes for a two-minute song, thirteen for six, about
+        # half the render's wall time — and offers no hook, so the bar used to
+        # sit at 0.92 for all of it and Cancel waited for the whole decode.
+        # Its per-window call is wrapped the way generate_frame is above: a
+        # real checkpoint and a real bar for the decode half, restored in
+        # `finally` so a failed take cannot leave the codec wrapped.
+        frames = out["frames"].to(self.pipe.codec_device)
+        windows = self._decode_windows(int(frames.shape[-1]))
+        flow = self.pipe.codec.flow_matching
+        orig_infer = flow.inference_codes
+        done = 0
+
+        def counted_window(*a, **kw):
+            nonlocal done
+            if cancel.cancelled:
+                raise CancelledError()
+            progress_cb(min(0.99, 0.92 + 0.07 * done / windows),
+                        f"decoding with HeartCodec — window "
+                        f"{min(done + 1, windows)}/{windows}",
+                        step=done, steps=windows)
+            res = orig_infer(*a, **kw)
+            done += 1
+            return res
+
         progress_cb(0.92, "decoding with HeartCodec (flow matching)")
-        with torch.no_grad():
-            frames = out["frames"].to(self.pipe.codec_device)
-            wav = self.pipe.codec.detokenize(frames)
+        flow.inference_codes = counted_window
+        try:
+            with torch.no_grad():
+                wav = self.pipe.codec.detokenize(frames)
+        finally:
+            flow.inference_codes = orig_infer
+        if cancel.cancelled:
+            raise CancelledError()
         audio = wav.to(torch.float32).cpu().numpy()
         if audio.ndim == 2:            # (channels, samples) -> (samples, ch)
             audio = audio.T

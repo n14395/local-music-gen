@@ -1702,6 +1702,8 @@ async def system():
     warm = STATE.models[STATE.jobs[active].model_id]["family"] if active else None
     return {"ram_bytes": ram,
             "free_disk_bytes": shutil.disk_usage(STATE.output_dir).free,
+            # The stub has no separate library volume; same figure.
+            "library_free_disk_bytes": shutil.disk_usage(STATE.output_dir).free,
             "machine": sysctl("hw.model"), "warm_family": warm,
             "warm_model_id": STATE.warm_model_id,
             "transient_model_ids": warm_small_models(),

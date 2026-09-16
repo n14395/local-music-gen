@@ -27,10 +27,17 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb)
+                                     ProgressCb, aux_dir, clear_stale_link)
 
 MODEL_NEEDLE = "yue2-3b"
 VAE_NEEDLE = "yue2-vae"
+# Everything upstream reads from a checkpoint folder (its own MODEL_FILES),
+# beyond the shards the weights manifest names. Linked when present.
+STAGED_FILES = ("config.json", "generation_config.json",
+                "yue2_generation_config.json", "weights_manifest.json",
+                "model.safetensors", "model.safetensors.index.json",
+                "qwen.tiktoken", "modeling_yue2.py", "modeling_vae.py",
+                "LICENSE", "THIRD_PARTY_NOTICES.md")
 # Semantic tokens per song second (upstream's 9000-token sampling ceiling over
 # its documented 360 s full-song range; the VAE runs 25 latent frames/s). The
 # model ends a song on its own when the lyrics run out — the duration slider
@@ -51,6 +58,50 @@ class YuE2Adapter(ModelAdapter):
                 return path
         raise RuntimeError(f"no '{needle}' snapshot in model_paths")
 
+    def _stage(self, needle: str, name: str) -> str:
+        """A clean twin of the snapshot holding only the files upstream reads.
+
+        The library volume is ExFAT, which cannot carry extended attributes,
+        so macOS writes an AppleDouble `._X` twin beside every file in it.
+        Upstream's manifest check enumerates the folder with
+        `Path.glob("*.safetensors")` — which, unlike `glob.glob`, returns
+        dot-files — finds `._model.safetensors`, has no manifest entry for
+        it, and refuses to load ("Weight integrity failed"). This is why the
+        entry had never rendered. Deleting the twins is no fix, macOS
+        recreates them; so the pipeline is pointed at a folder of links to
+        exactly the files the manifest and the loaders name, the move the
+        HeartMuLa adapter makes for its checkpoint folder.
+
+        Links cross from the aux cache into an HF snapshot and a library
+        relocate strands them, so each goes through clear_stale_link before
+        the exists-check — the InspireMusic lesson. Anything else that turns
+        up in the stage (a twin of a link, a shard from an older revision)
+        would fail the same check, so the sweep at the end removes it.
+        """
+        import json
+        snapshot = self._snapshot(needle)
+        root = os.path.join(aux_dir("yue2"), name)
+        os.makedirs(root, exist_ok=True)
+        names = set(STAGED_FILES)
+        manifest = os.path.join(snapshot, "weights_manifest.json")
+        if os.path.exists(manifest):
+            with open(manifest) as f:
+                names.update(json.load(f).get("files", {}))
+        for filename in sorted(names):
+            target = os.path.join(snapshot, filename)
+            link = os.path.join(root, filename)
+            clear_stale_link(link)
+            if os.path.islink(link) and os.path.realpath(link) != \
+                    os.path.realpath(target):
+                # Alive but pointing at an older snapshot revision.
+                os.unlink(link)
+            if os.path.exists(target) and not os.path.lexists(link):
+                os.symlink(target, link)
+        for entry in os.listdir(root):
+            if entry not in names:
+                os.unlink(os.path.join(root, entry))
+        return root
+
     def load(self, progress_cb: ProgressCb) -> None:
         import torch
         from yue2 import YuE2Pipeline
@@ -65,7 +116,8 @@ class YuE2Adapter(ModelAdapter):
         # worth a message, because 8 GB of SHA-256 is not instant.
         progress_cb(None, "verifying YuE2 weights (integrity hash, ~8 GB)")
         self.pipe = YuE2Pipeline(
-            self._snapshot(MODEL_NEEDLE), self._snapshot(VAE_NEEDLE),
+            self._stage(MODEL_NEEDLE, "YuE2-3B"),
+            self._stage(VAE_NEEDLE, "YuE2-Vae"),
             device=device, progress=False)
         progress_cb(None, "loading YuE2 (3.6B bf16 — takes a little while)")
         # The pipeline loads lazily on first use; pulling the load forward

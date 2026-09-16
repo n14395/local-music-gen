@@ -74,6 +74,7 @@ request; `EventSource` polyfills that can't set headers are not a constraint her
   {
     "ram_bytes": 68719476736,
     "free_disk_bytes": 512000000000,
+    "library_free_disk_bytes": 2913000000000,
     "machine": "Mac16,10",
     "warm_family": "musicgen",
     "warm_model_id": "musicgen-small",
@@ -92,6 +93,11 @@ request; `EventSource` polyfills that can't set headers are not a constraint her
   }
   ```
 
+  `free_disk_bytes` is measured on the data folder's volume (outputs, database,
+  logs); `library_free_disk_bytes` on the model library's volume, where a
+  download lands — a different disk whenever the library has been relocated,
+  and the figure a client should compare a model's `requirements.disk_bytes`
+  against. It is null when the library folder's volume cannot be measured.
   `memory_guard.worker_bytes` is the live worker's accelerator memory (null when
   no worker is running); `limit_bytes` is the warning level described above.
   `queue_held` is the job-queue hold of §5.7 — note that it can be `true` while

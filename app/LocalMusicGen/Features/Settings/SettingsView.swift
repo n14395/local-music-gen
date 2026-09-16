@@ -126,9 +126,13 @@ struct SettingsView: View {
     }
 
     private var header: some View {
-        SettingsSectionHeader(
+        // A pane with nothing resettable gets no button — not a disabled
+        // one whose help text claims everything is at its default.
+        let onReset: (() -> Void)? =
+            settingsInPane == 0 ? nil : { confirmingSectionReset = true }
+        return SettingsSectionHeader(
             title: pane.title,
-            onReset: { confirmingSectionReset = true },
+            onReset: onReset,
             resetDisabled: changedInPane == 0) {
             if pane == .notifications { notificationChip }
         }

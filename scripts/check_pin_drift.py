@@ -1,7 +1,8 @@
 """Diff each app adapter venv against the triage env that proved it.
 
 An adapter's pyproject is written from a stack that was proven once, in
-`new-model-testing/envs/<stack>`. When a dependency is left floating (or
+`new-model-testing/envs/<stack>` (on the model SSD; override the root with
+LOCALMUSICGEN_TRIAGE_ENVS). When a dependency is left floating (or
 pinned to what upstream's requirements.txt asks for rather than to what
 actually ran), uv resolves something else into the app's venv and the model
 fails on its FIRST in-app run — long after every test passed. Two live
@@ -21,6 +22,7 @@ any adapter's dependencies:
 
 A family with no app venv yet is reported as SKIP — it has never been
 provisioned, so there is nothing to compare until the model is first used.
+Exits 1 when anything drifted or is missing, so a caller can gate on it.
 """
 import json
 import os
@@ -29,7 +31,12 @@ import sys
 
 APP = ("/Users/nwf/Library/Application Support/LocalMusicGen/engine-src/"
        "adapters/{}/.venv/bin/python")
-TRIAGE = "/Users/nwf/build/local-music-gen/new-model-testing/envs/{}/bin/python"
+# The triage envs moved to the SSD with the rest of the model library; the
+# old project-relative path made every family SKIP, silently.
+TRIAGE = os.path.join(
+    os.environ.get("LOCALMUSICGEN_TRIAGE_ENVS",
+                   "/Volumes/SSK-4TB/new-model-testing/envs"),
+    "{}", "bin", "python")
 
 # adapter family -> triage env that proved it
 PAIRS = {
@@ -117,3 +124,4 @@ for family, env in sorted(PAIRS.items()):
         print(f"{family:15s} ok ({len(set(app) & set(triage))} shared)")
 
 print("\nPROBLEMS FOUND" if problems else "\nno critical drift, nothing missing")
+sys.exit(1 if problems else 0)

@@ -472,7 +472,8 @@ struct ModelsScreen: View {
             failure: failure,
             hasHFToken: catalog.hasHFToken,
             physicalMemory: physicalMemory,
-            freeDiskBytes: telemetry.freeDiskBytes,
+            // The library volume: the badge is about a download landing.
+            freeDiskBytes: telemetry.libraryFreeDiskBytes,
             actionCount: ModelActions.count(for: listRow.model),
             onDownload: { requestDownload(listRow.model) },
             onPause: { id in Task { await downloads.pause(id) } },

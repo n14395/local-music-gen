@@ -23,6 +23,11 @@ final class TelemetryStore {
     private(set) var acceleratorBytes: Int64?
     private(set) var ramBytes: Int64?
     private(set) var freeDiskBytes: Int64?
+    /// The library volume's free space — the figure for "will this model
+    /// fit". Falls back to `freeDiskBytes` against an engine (or the stub)
+    /// that does not report one, which was the only figure there used to be
+    /// and is the wrong disk whenever the library has been relocated.
+    private(set) var libraryFreeDiskBytes: Int64?
     private(set) var machine: String?
 
     /// Each assignment gated.
@@ -37,6 +42,8 @@ final class TelemetryStore {
     func apply(_ system: SystemInfo) {
         set(&ramBytes, system.ramBytes)
         set(&freeDiskBytes, system.freeDiskBytes)
+        set(&libraryFreeDiskBytes,
+            system.libraryFreeDiskBytes ?? system.freeDiskBytes)
         set(&machine, system.machine)
         set(&acceleratorName, system.accelerator?.name)
         set(&backend, system.accelerator?.backend)

@@ -257,13 +257,14 @@ enum SettingsCatalog {
 
     // MARK: Models & Downloads
 
-    @MainActor static let models: [SettingEntry] = [
-        .of("hfHomePath", .models, "Model library folder", \.hfHomePath,
-            default: nil, keywords: "cache hugging face weights folder path"),
-        .of("auxCachePath", .models, "Auxiliary model files folder",
-            \.auxCachePath, default: nil,
-            keywords: "aux auxiliary cache separators soundfonts folder path"),
-    ]
+    // Nothing here resets. `hfHomePath` and `auxCachePath` used to be
+    // registered with a default of nil, so "Reset this section" — whose
+    // dialog says nothing outside the section changes — re-pointed the
+    // engine at the shared Hugging Face cache and stranded a relocated
+    // library: models read as not installed, re-downloads filled the boot
+    // disk. They are locations, not preferences; the library card's relocate
+    // flow is the only thing that may change them, because it moves the bytes.
+    @MainActor static let models: [SettingEntry] = []
 
     // MARK: Queue
 

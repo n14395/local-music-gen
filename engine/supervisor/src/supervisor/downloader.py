@@ -107,9 +107,23 @@ class DownloadManager:
                     return t.id
         model = self.registry.models[model_id]
         need = model["requirements"]["disk_bytes"] * 1.2
-        free = shutil.disk_usage(self.registry.settings.data_dir).free
-        if free < need:
-            raise DownloadError("INSUFFICIENT_DISK", "not enough free disk space")
+        # Measured where the bytes will land — the library volume(s) — not
+        # on data_dir. The app-support folder is on the boot disk while the
+        # library is wherever the user put it (an external SSD here), so the
+        # old check refused downloads that would have fit and waved through
+        # ones that died part-way once the SSD was the full one.
+        from .library import _nearest_existing
+        settings = self.registry.settings
+        dests = [settings.hf_cache_dir]
+        if Registry.ms_repos(model):
+            dests.append(settings.ms_cache_dir)
+        for dest in dests:
+            free = shutil.disk_usage(_nearest_existing(dest)).free
+            if free < need:
+                raise DownloadError(
+                    "INSUFFICIENT_DISK",
+                    f"not enough free disk space: {model_id} needs about "
+                    f"{need / 1e9:.1f} GB and {dest} has {free / 1e9:.1f} GB free")
         # record the attempt: this is what makes a later interruption report
         # "partial" (and the UI offer "Resume download") without mistaking
         # shared files that other entries brought in for progress of our own

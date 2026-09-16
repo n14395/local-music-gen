@@ -274,7 +274,8 @@ struct MainWindow: View {
             OnboardingView(catalog: env.catalog,
                            downloads: env.downloadsStore,
                            backend: env.backendStatus,
-                           freeDiskBytes: env.telemetry.freeDiskBytes) {
+                           // The library volume — where the installs land.
+                           freeDiskBytes: env.telemetry.libraryFreeDiskBytes) {
                 shell.showOnboarding = false
             }
         }
@@ -1234,9 +1235,11 @@ struct SidebarFooterCard: View {
 
     private var audioBytes: Int64 { env.storage.audioBytes }
 
-    /// Against total occupied + free, so the bar reads as "of this disk".
+    /// Against total occupied + free, so the bar reads as "of this disk" —
+    /// the model library's disk, which is where "Free up space…" acts and
+    /// which is not the boot disk once the library has been relocated.
     private func share(_ bytes: Int64) -> Double {
-        let free = env.telemetry.freeDiskBytes ?? 0
+        let free = env.telemetry.libraryFreeDiskBytes ?? 0
         let total = modelBytes + audioBytes + free
         guard total > 0 else { return 0 }
         return Double(bytes) / Double(total)
@@ -1251,8 +1254,8 @@ struct SidebarFooterCard: View {
                 + (installedModels.count == 1 ? "" : "S")
             : "— MODELS"
         line += " · \(TelemetryStore.gigabytes(audioBytes)) GB AUDIO"
-        if let free = env.telemetry.freeDiskBytes {
-            line += "\n\(TelemetryStore.gigabytes(free)) GB FREE"
+        if let free = env.telemetry.libraryFreeDiskBytes {
+            line += "\n\(TelemetryStore.gigabytes(free)) GB FREE FOR MODELS"
         }
         return line
     }

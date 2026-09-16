@@ -84,8 +84,30 @@ final class MultiPartPlayer {
     private var tick: Timer?
     /// Whether the meter tap is on the mixer — see `prepare`.
     private var meterTapInstalled = false
+    /// The output-device watch — see `handleConfigurationChange`. Outside
+    /// observation and isolation so `deinit` can hand it back.
+    @ObservationIgnored nonisolated(unsafe)
+    private var configurationObserver: (any NSObjectProtocol)?
 
     var isPlaying: Bool { state == .playing }
+
+    init() {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.handleConfigurationChange()
+            }
+        }
+    }
+
+    deinit {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+    }
 
     // MARK: pure geometry
 
@@ -152,7 +174,11 @@ final class MultiPartPlayer {
 
     func resume() {
         guard state == .paused else { return }
-        _ = arm(from: frozenPosition ?? 0)
+        // `finish()` parks at the end, where nothing can be scheduled and
+        // `arm` would only park again — so Play after a preview has played
+        // out starts it over rather than doing nothing until Stop.
+        let from = frozenPosition ?? 0
+        _ = arm(from: durationS > 0 && from >= durationS ? 0 : from)
     }
 
     func seek(to position: Double) {
@@ -267,7 +293,11 @@ final class MultiPartPlayer {
         var nextNodes: [String: AVAudioPlayerNode] = [:]
         var nextFiles: [String: AVAudioFile] = [:]
         var prepared: [Item] = []
-        for item in items where !item.muted {
+        // Muted items get a node too, at volume 0. Skipping them meant a
+        // clip that was silent when Play was pressed had no node for
+        // `updateGains` to reach, so un-muting it (or clearing a solo)
+        // mid-preview did nothing — and the timeline's length left it out.
+        for item in items {
             if let file = files[item.id], file.url == item.url,
                let node = nodes[item.id] {
                 nextNodes[item.id] = node
@@ -302,7 +332,8 @@ final class MultiPartPlayer {
         // Set every pass, not just for new nodes: a reused node is carrying
         // the gain it was given last time.
         for item in prepared {
-            nodes[item.id]?.volume = Float(pow(10.0, item.gainDb / 20.0))
+            nodes[item.id]?.volume = item.muted
+                ? 0 : Float(pow(10.0, item.gainDb / 20.0))
             nodes[item.id]?.pan = Float(max(-1, min(1, item.pan)))
         }
         // Summing N clips with no normalisation clips the mixer; the mix job
@@ -489,6 +520,33 @@ final class MultiPartPlayer {
         }
         RunLoop.main.add(timer, forMode: .common)
         tick = timer
+    }
+
+    /// The output device changed under the engine — headphones or AirPods
+    /// in or out, an interface appearing, a sample-rate change in Audio MIDI
+    /// Setup. AVAudioEngine stops itself and drops its connections when that
+    /// happens, and nothing here noticed: the transport kept advancing across
+    /// a silent timeline until it reached the end. Rebuild the graph from
+    /// nothing — the mixer's output format may have changed, and every node
+    /// was connected against the old one — and pick up where it was.
+    private func handleConfigurationChange() {
+        guard state != .stopped else { return }
+        let items = armedItems
+        let position = currentPosition()
+        let wasPlaying = state == .playing
+        disarm()
+        teardown()
+        guard prepare(items: items) else {
+            state = .stopped
+            frozenPosition = nil
+            return
+        }
+        if wasPlaying {
+            _ = arm(from: position)
+        } else {
+            anchorPosition = position
+            frozenPosition = position
+        }
     }
 
     /// Everything has played out: park the playhead at the end rather than

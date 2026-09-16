@@ -301,6 +301,9 @@ struct SettingsStatusStrip: View {
     }
 
     private var summary: String {
+        // A section whose controls are locations rather than preferences
+        // (Models & Downloads) says so instead of counting to zero.
+        guard total > 0 else { return "NOTHING IN THIS SECTION RESETS" }
         let settings = "\(total) SETTING\(total == 1 ? "" : "S") IN THIS SECTION"
         // "ALL AT DEFAULT" rather than "0 CHANGED": the reassuring case should
         // read as a statement, not as an arithmetic result.

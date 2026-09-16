@@ -7,9 +7,13 @@ struct LocalMusicGenApp: App {
     static let settingsWindowID = "settings"
 
     var body: some Scene {
+        // The engine is started from `AppDelegate.applicationDidFinishLaunching`,
+        // not from a `.task` here: a view task re-runs whenever SwiftUI
+        // builds the window again — close it, click the Dock — and a second
+        // start found the live engine through its pid file and killed it
+        // mid-render. Launch happens once per process; that is the hook for it.
         WindowGroup {
             MainWindow(env: appDelegate.env)
-                .task { appDelegate.env.startBackend() }
         }
         // No title bar and no system toolbar: the design draws its own 52 pt
         // bar per screen, and the traffic lights float over the reserved
@@ -100,6 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // only SwiftUI's own views — menus, alerts, popovers and the open
         // panel would still come back light on a light Mac.
         NSApp.appearance = NSAppearance(named: .darkAqua)
+    }
+
+    /// Once per process, before any window's own tasks run — the only
+    /// moment that cannot repeat when a window is closed and reopened.
+    @MainActor
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        env.startBackend()
     }
 
     @MainActor

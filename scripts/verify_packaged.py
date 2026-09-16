@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """First-run verification of the PACKAGED app's engine.
 
-Spawns dist/LocalMusicGen.app's bundled engine shim against an empty data dir — the
+Spawns build/LocalMusicGen.app's bundled engine shim against an empty data dir — the
 same thing the app does on a fresh machine: sources copied out of the bundle, uv
 installs CPython 3.11, the supervisor venv syncs, then a real download + generation
 runs through a freshly provisioned adapter venv. Slow on first run by design.
@@ -23,13 +23,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from contractlib import Client, SSEListener, check, report  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHIM = os.path.join(ROOT, "dist", "LocalMusicGen.app", "Contents", "Resources",
+# build.sh's APP_PATH. This pointed at a `dist/` folder that no build has
+# written and told you to run a script that does not exist, so
+# `make verify-packaged` — the only first-run test of the packaged engine —
+# failed before it started, every time.
+SHIM = os.path.join(ROOT, "build", "LocalMusicGen.app", "Contents", "Resources",
                     "backend", "bin", "local-music-gen-engine")
 
 
 def main() -> int:
     if not os.path.exists(SHIM):
-        print("run scripts/package_app.sh first")
+        print(f"no packaged app at {SHIM}: run ./build.sh first")
         return 1
     tmp = tempfile.mkdtemp(prefix="localmusicgen-packaged-")
     handshake = os.path.join(tmp, "hs.json")

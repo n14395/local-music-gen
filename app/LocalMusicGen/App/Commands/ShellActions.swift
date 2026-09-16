@@ -1029,7 +1029,12 @@ struct ShellActions {
         lines.append("Models installed: \(installed.count)")
         if let memory = env.telemetry.memoryLine { lines.append("Memory: \(memory)") }
         if let free = env.telemetry.freeDiskBytes {
-            lines.append("Free disk: \(TelemetryStore.gigabytes(free)) GB")
+            lines.append("Free disk (data folder): "
+                         + "\(TelemetryStore.gigabytes(free)) GB")
+        }
+        if let free = env.telemetry.libraryFreeDiskBytes {
+            lines.append("Free disk (model library): "
+                         + "\(TelemetryStore.gigabytes(free)) GB")
         }
         lines.append("Data folder: \(StoragePaths.root.path)")
         if let path = env.modelLibrary.info?.path {
