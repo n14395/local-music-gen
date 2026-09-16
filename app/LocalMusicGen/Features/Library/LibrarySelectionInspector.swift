@@ -201,7 +201,12 @@ struct LibrarySelectionInspector: View {
     private func deleteAll() {
         // Anything playing out of a file about to be removed is stopped
         // first; a player holding a deleted file is a stall with no error.
-        for song in selection.songs { playback.stop(songId: song.id) }
+        // The stashed original counts: it plays under its own transport id and
+        // is disposed with the track.
+        for song in selection.songs {
+            playback.stop(songId: song.id)
+            playback.stop(songId: song.originalPlaybackId)
+        }
         for part in selection.parts { playback.stop(songId: part.id) }
         library.delete(selection.songs)
         parts.delete(selection.parts)

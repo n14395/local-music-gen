@@ -24,6 +24,7 @@ import struct
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 import wave
 from contextlib import asynccontextmanager
@@ -31,7 +32,9 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 VERSION = "0.1.0"
 CONTRACT = 1
@@ -710,6 +713,15 @@ def _derive_tags(entry: dict) -> list[str]:
 # ---------------------------------------------------------------- state
 
 
+# Per-subscriber backlog, mirroring supervisor.events: a client that holds the
+# stream open but stops reading is cut loose rather than buffered forever, and
+# recovers by reconnecting with Last-Event-ID.
+SUBSCRIBER_QUEUE_MAX = 2000
+_OVERFLOW = object()
+OVERFLOW_MESSAGE = ("this client fell too far behind the event stream; "
+                    "reconnect with Last-Event-ID to replay what it missed")
+
+
 class EventBus:
     def __init__(self) -> None:
         self.next_id = 1
@@ -722,7 +734,19 @@ class EventBus:
         self.ring.append((eid, event, data))
         del self.ring[:-500]
         for q in list(self.subscribers):
-            q.put_nowait((eid, event, data))
+            try:
+                q.put_nowait((eid, event, data))
+            except asyncio.QueueFull:
+                # The subscriber goes, not the events: the ring replays what it
+                # missed on reconnect, while a frame dropped from the middle of
+                # its queue is a hole its resume point has already moved past.
+                self.subscribers.discard(q)
+                while not q.empty():
+                    q.get_nowait()
+                q.put_nowait(_OVERFLOW)
+                print(f"stub: an event-stream subscriber fell "
+                      f"{SUBSCRIBER_QUEUE_MAX} frames behind; closing its "
+                      f"stream so it reconnects", file=sys.stderr)
 
 
 class Download:
@@ -897,6 +921,29 @@ def err(status: int, code: str, message: str, detail: dict | None = None) -> JSO
     return JSONResponse(status_code=status,
                         content={"error": {"code": code, "message": message,
                                            "detail": detail or {}}})
+
+
+class BadNumber(Exception):
+    """A submit field that is not a number. Mirrors the supervisor's `_number`
+    raising SubmitError: `{"duration_s": null}` reaches `body.get(key, default)`
+    as None (a present key does not take the default), and `float(None)` was a
+    500 with a plain-text body — the one error shape the contract rules out."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.key = key
+
+
+def number(body: dict, key: str, kind, default):
+    raw = body.get(key)
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or isinstance(raw, (list, dict)):
+        raise BadNumber(key)
+    try:
+        return kind(raw)
+    except (TypeError, ValueError):
+        raise BadNumber(key) from None
 
 
 # ---------------------------------------------------------------- telemetry
@@ -1495,6 +1542,10 @@ async def make_task_artifacts(job: Job, out_dir: str,
                                   "sample_rate": sr, "duration_s": dur})
         meta = {}
         if job.params.get("normalize", True):
+            # The engine reports the loudness it MEASURED after the limiter
+            # (or null when the input was too short to measure); the stub's
+            # audio is synthetic and unlimited, so the target stands in for
+            # the measurement here.
             meta["lufs"] = float(job.params.get("target_lufs") or -14.0)
         return artifacts, meta
     if job.task == "transcribe":
@@ -1687,6 +1738,36 @@ async def auth_middleware(request: Request, call_next):
         if request.headers.get("authorization") != f"Bearer {AUTH_TOKEN}":
             return err(401, "UNAUTHORIZED", "missing or invalid bearer token")
     return await call_next(request)
+
+
+# Mirrors the supervisor's build_app: EVERY non-2xx carries the contract
+# envelope, including the ones FastAPI raises itself. Without these the stub —
+# the fixture the app is developed against — answered an unknown route and a
+# malformed body with `{"detail": …}`, which is not a shape the app can decode.
+STATUS_CODES = {401: "UNAUTHORIZED", 403: "UNAUTHORIZED", 404: "NOT_FOUND",
+                405: "NOT_FOUND", 422: "VALIDATION"}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    return err(422, "VALIDATION", "malformed request",
+               {"errors": [{k: str(v) for k, v in e.items()
+                            if k in ("loc", "msg", "type")}
+                           for e in exc.errors()]})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    return err(exc.status_code,
+               STATUS_CODES.get(exc.status_code, "INTERNAL"), str(exc.detail))
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    traceback.print_exception(type(exc), exc, exc.__traceback__,
+                              file=sys.stderr)
+    return err(500, "INTERNAL", f"{type(exc).__name__}: {exc}" if str(exc)
+               else type(exc).__name__)
 
 
 @app.get("/healthz")
@@ -2011,6 +2092,19 @@ async def models_inspect(body: dict):
                f"stub cannot inspect '{repo}' — arbitrary models arrive post-MVP")
 
 
+@app.post("/v1/models/custom")
+async def models_custom(body: dict):
+    """The other half of the canned 422 the contract promises (4.1).
+
+    Only `inspect` existed, so an add that got past it reached the app as
+    FastAPI's `{"detail": "Not Found"}` — a body BackendClient cannot decode,
+    reported as INTERNAL / "HTTP 404" instead of the refusal it is.
+    """
+    repo = body.get("repo_id", "")
+    return err(422, "UNSUPPORTED_MODEL",
+               f"stub cannot add '{repo}' — arbitrary models arrive post-MVP")
+
+
 @app.post("/v1/settings/hf-token", status_code=204)
 async def hf_token(body: dict):
     STATE.hf_token = body.get("token")
@@ -2149,6 +2243,11 @@ async def download_cancel(did: str):
 
 @app.post("/v1/uploads", status_code=201)
 async def uploads_create(request: Request, filename: str = "audio"):
+    # Mirrors the engine: a declared length is refused before the body is read,
+    # so an oversized file is not transferred in full just to be rejected.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > 256 * 1024 * 1024:
+        return err(422, "VALIDATION", "upload exceeds 256 MB")
     data = await request.body()
     if not data:
         return err(422, "VALIDATION", "empty upload body")
@@ -2185,10 +2284,19 @@ async def jobs_submit(body: dict):
     caps = st.models[mid]["capabilities"]
     if task not in (caps.get("tasks") or ["generate"]):
         return err(422, "VALIDATION", f"{mid} does not support task '{task}'")
+    try:
+        count = number(body, "count", int, 1)
+        dur = number(body, "duration_s", float,
+                     caps["duration"]["default_s"] if task == "generate"
+                     else None)
+    except BadNumber as e:
+        return err(422, "VALIDATION", f"'{e.key}' must be a number")
+    if count < 1:
+        return err(422, "VALIDATION", "count must be at least 1")
     if task != "generate":
         if body.get("lyrics"):
             return err(422, "VALIDATION", f"task '{task}' does not accept lyrics")
-        if int(body.get("count", 1)) != 1:
+        if count != 1:
             return err(422, "VALIDATION",
                        f"task '{task}' jobs run exactly one take")
     if body.get("lyrics") and not caps["supports_lyrics"]:
@@ -2200,20 +2308,19 @@ async def jobs_submit(body: dict):
     if preview and not caps.get("supports_preview"):
         return err(422, "VALIDATION", f"{mid} cannot preview while it renders",
                    {"model_id": mid})
-    if int(body.get("count", 1)) > caps["outputs_per_job_max"]:
+    if count > caps["outputs_per_job_max"]:
         return err(422, "VALIDATION", f"count exceeds max for {mid}")
 
     group_id = f"grp_{uuid.uuid4().hex[:12]}"
     if task == "generate":
-        dur = float(body.get("duration_s", caps["duration"]["default_s"]))
         # mirrors the supervisor: unlocked_max_s is the ceiling where declared
         ceiling = caps["duration"].get("unlocked_max_s") or caps["duration"]["max_s"]
         dur = max(caps["duration"]["min_s"], min(ceiling, dur))
-    else:
-        raw_dur = body.get("duration_s")
-        dur = float(raw_dur) if raw_dur is not None else None
+    # else: output length derives from the input; `dur` echoes what was sent
     known = {p["key"] for p in caps["params"]}
     raw = body.get("params") or {}
+    if not isinstance(raw, dict):
+        return err(422, "VALIDATION", "params must be an object")
     params = {k: v for k, v in raw.items() if k in known}
     dropped = set(raw) - known
     for p in caps["params"]:
@@ -2260,7 +2367,7 @@ async def jobs_submit(body: dict):
                        f"missing required input '{p['key']}'")
     # One job per take, sharing the group (contract 5.1): the queue is a list
     # of takes, and the app groups them back by group_id.
-    takes = int(body.get("count", 1))
+    takes = count
     jobs = [Job(group_id, mid, body, dur, params, task=task, preview=preview,
                 take_index=i, take_of=takes)
             for i in range(takes)]
@@ -2381,14 +2488,17 @@ async def queue_order(body: dict):
 @app.get("/v1/events")
 async def events(request: Request):
     st = STATE
-    q: asyncio.Queue = asyncio.Queue()
+    q: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
 
     async def gen():
         st.bus.subscribers.add(q)
         try:
             last = request.headers.get("last-event-id")
             if last is not None and last.isdigit():
-                for eid, event, data in st.bus.ring:
+                # list(): this generator suspends on every yield, so an emit()
+                # mid-replay could del ring[:-500] and shift the indices under
+                # the iterator — frames skipped or repeated on a reconnect.
+                for eid, event, data in list(st.bus.ring):
                     if eid > int(last):
                         yield f"id: {eid}\nevent: {event}\ndata: {json.dumps(data)}\n\n"
             # on a clock, not on silence: telemetry ticks every 10 s even when
@@ -2396,8 +2506,15 @@ async def events(request: Request):
             next_beat = time.monotonic() + 15.0
             while True:
                 try:
-                    eid, event, data = await asyncio.wait_for(
+                    item = await asyncio.wait_for(
                         q.get(), timeout=max(0.0, next_beat - time.monotonic()))
+                    if item is _OVERFLOW:
+                        # No `id:` on purpose: the client's resume point stays
+                        # at the last event it really saw.
+                        yield ("event: stream.overflow\ndata: "
+                               f"{json.dumps({'message': OVERFLOW_MESSAGE})}\n\n")
+                        return
+                    eid, event, data = item
                     yield f"id: {eid}\nevent: {event}\ndata: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
                     next_beat = time.monotonic() + 15.0

@@ -107,6 +107,9 @@ struct TextActionView: View {
     /// the whole thing to be parsed from inside `body` — so every redraw
     /// re-decoded it, which on a page with a text field is every keystroke.
     @State private var runLog = ActionRunLog()
+    /// The score the notation viewer is open on — "View" on the ABC output
+    /// row, once a document has landed on the source song.
+    @State private var openScore: NotationDocument?
 
     private var slot: Slot? { recipe.slots.first }
 
@@ -198,6 +201,12 @@ struct TextActionView: View {
                 library: library, parts: parts, jobs: jobs,
                 playback: playback, onOpenModels: onOpenModels,
                 onPick: { source = $0 })
+        }
+        // No renderer route from here: the Actions pages never had one, and
+        // the sheet's Hear it says where the render lives instead.
+        .sheet(item: $openScore) { score in
+            NotationSheet(document: score, playback: playback,
+                          onRenderNotes: nil)
         }
     }
 
@@ -558,8 +567,27 @@ struct TextActionView: View {
         case .extractABC:
             [ActionOutput(id: "notes", name: "Notes parts", meta: "MIDI",
                           kind: "notes.melody"),
-             ActionOutput(id: "abc", name: "ABC notation", meta: "TEXT")]
+             ActionOutput(id: "abc", name: "ABC notation", meta: "TEXT",
+                          onOpen: latestScore.map { doc in { open(score: doc) } })]
         }
+    }
+
+    /// The newest ABC document on the picked material's song, once one has
+    /// landed — the output row is drawn before the run has produced any, and
+    /// only offers "View" when there is something to view.
+    private var latestScore: TextDocRecord? {
+        guard let source else { return nil }
+        return NotationDocument.newest(in: textStore.docs(for: source.songId,
+                                                          kind: .abc))
+    }
+
+    private func open(score doc: TextDocRecord) {
+        let songParts = (try? parts.repository.allParts(forSong: doc.ownerId))
+            ?? []
+        let title = ((try? library.repository.song(id: doc.ownerId)) ?? nil)?
+            .title ?? source?.sourceTitle ?? "Notation"
+        openScore = NotationDocument.resolve(doc: doc, parts: songParts,
+                                             songTitle: title)
     }
 
     private var canUseInGenerate: Bool {

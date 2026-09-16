@@ -323,9 +323,15 @@ bundle_engine() {
     # decoder bridge, provisioned beside `.venv` on first load). Same claim
     # as `.venv`: a runtime rebuilt in place, never shipped — and its
     # uv-managed python symlink escapes the bundle, which codesign refuses.
+    # `.cache` is upstream ACE-Step's learned per-step timings
+    # (<project_root>/.cache/acestep/progress_estimates.json). Two of those
+    # exist in this tree; shipping them means every install starts from THIS
+    # Mac's measured seconds-per-step, and the shim's rsync then restores them
+    # over the user's own on every launch. `.DS_Store` is Finder's, and three
+    # of them were shipping too.
     rsync -a \
         --exclude '.venv' --exclude '.venv-decoder' --exclude '__pycache__' \
-        --exclude 'build-src' \
+        --exclude 'build-src' --exclude '.cache' --exclude '.DS_Store' \
         --exclude '*.pyc' --exclude '.python-version' \
         engine/supervisor engine/protocol engine/adapters engine/catalog \
         "$res/engine/"

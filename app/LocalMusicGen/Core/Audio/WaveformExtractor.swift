@@ -4,7 +4,10 @@ import Foundation
 /// Extracts min/max peak bins from an audio file and caches them as a compact
 /// binary file (.peaks) so waveforms render instantly ever after.
 ///
-/// Cache format: "LMPK" magic, UInt32 bin count, then bins × (Float32 min, Float32 max).
+/// Cache format: "LMPK2" magic, UInt32 bin count, then bins × (Float32 min,
+/// Float32 max). The magic was bumped from "LMPK" when whole-file extraction
+/// started folding every channel rather than drawing channel 0, so caches
+/// written before that are ignored rather than serving a half-right waveform.
 actor WaveformExtractor {
     static let shared = WaveformExtractor()
     static let binCount = 2000
@@ -194,10 +197,19 @@ actor WaveformExtractor {
             try file.read(into: buffer, frameCount: chunk)
             let n = Int(buffer.frameLength)
             if n == 0 { break }
-            guard let data = buffer.floatChannelData?[0] else { break }
+            guard let data = buffer.floatChannelData else { break }
+            let channels = Int(buffer.format.channelCount)
             for i in 0..<n {
                 let bin = min(bins - 1, (frameIndex + i) / framesPerBin)
-                let v = data[i]
+                // Fold every channel by magnitude, keeping the sign of the
+                // loudest — the rule `extractRange` already uses for its mono
+                // lane. This read channel 0 only, so a hard-panned-right track
+                // (or a right-only stem) drew a flat line in the library row,
+                // the transport bar and every timeline clip.
+                var v = data[0][i]
+                for channel in 1..<channels where abs(data[channel][i]) > abs(v) {
+                    v = data[channel][i]
+                }
                 if v < mins[bin] { mins[bin] = v }
                 if v > maxs[bin] { maxs[bin] = v }
             }
@@ -285,27 +297,38 @@ actor WaveformExtractor {
 
     // MARK: cache
 
+    /// Bumped from "LMPK" with the channel fold in `extract`: a cache written
+    /// by the old code holds the left channel alone, and `readCache` already
+    /// returns nil on a magic it does not know, so the bump reclaims them for
+    /// free.
+    private static let cacheMagic = Data("LMPK2".utf8)
+
     private static func readCache(_ url: URL) -> Peaks? {
-        guard let data = try? Data(contentsOf: url), data.count >= 8,
-              data.prefix(4) == Data("LMPK".utf8) else { return nil }
-        let count = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
-        let expected = 8 + Int(count) * 8
+        let header = cacheMagic.count + 4
+        guard let data = try? Data(contentsOf: url), data.count >= header,
+              data.prefix(cacheMagic.count) == cacheMagic else { return nil }
+        // Unaligned throughout: the magic is an odd number of bytes wide, so
+        // a typed load off the base pointer would be misaligned.
+        let count = Int(data.withUnsafeBytes {
+            $0.loadUnaligned(fromByteOffset: cacheMagic.count, as: UInt32.self)
+        })
+        let expected = header + count * 8
         guard data.count == expected else { return nil }
-        var mins = [Float](repeating: 0, count: Int(count))
-        var maxs = [Float](repeating: 0, count: Int(count))
+        var mins = [Float](repeating: 0, count: count)
+        var maxs = [Float](repeating: 0, count: count)
         data.withUnsafeBytes { raw in
-            let floats = raw.baseAddress!.advanced(by: 8)
-                .assumingMemoryBound(to: Float32.self)
-            for i in 0..<Int(count) {
-                mins[i] = floats[i * 2]
-                maxs[i] = floats[i * 2 + 1]
+            for i in 0..<count {
+                mins[i] = raw.loadUnaligned(fromByteOffset: header + i * 8,
+                                            as: Float32.self)
+                maxs[i] = raw.loadUnaligned(fromByteOffset: header + i * 8 + 4,
+                                            as: Float32.self)
             }
         }
         return Peaks(mins: mins, maxs: maxs)
     }
 
     private static func writeCache(_ peaks: Peaks, to url: URL) {
-        var data = Data("LMPK".utf8)
+        var data = cacheMagic
         var count = UInt32(peaks.mins.count)
         withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
         for i in 0..<peaks.mins.count {

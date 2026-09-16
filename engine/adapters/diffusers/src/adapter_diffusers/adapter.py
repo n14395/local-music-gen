@@ -17,7 +17,6 @@ approximation of it, which is the only claim a preview may make.
 
 from __future__ import annotations
 
-import gc
 import inspect
 import os
 import sys
@@ -27,7 +26,8 @@ import soundfile as sf
 import torch
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb, preview_stride)
+                                     ModelAdapter, ProgressCb, preview_stride,
+                                     release_accelerator_memory)
 
 SAMPLE_RATES = {
     "StableAudioPipeline": 44100,
@@ -115,7 +115,14 @@ class DiffusersAudioAdapter(ModelAdapter):
                  cancel: CancelToken) -> GenerateResult:
         assert self.pipe is not None
         duration_s = float(params.get("duration_s", 10.0))
-        steps = int(params.get("steps", 50))
+        # The fallbacks come from the entry, not from constants: this family
+        # spans four pipelines whose catalog defaults disagree (AudioLDM 2 is
+        # 100 steps / guidance 3.5, MusicLDM 100 / 2.0, AudioLDM 1 50 / 2.5),
+        # so a caller that omits either param — the verify scripts, a
+        # hand-built request — used to get a materially different render than
+        # the entry advertises (audit 09-B9). Same idiom as the stableaudio
+        # adapter's cfg_scale.
+        steps = int(params.get("steps", self.settings.get("steps_default", 50)))
         seed = params.get("seed")
         generator = None
         if seed is not None:
@@ -148,7 +155,9 @@ class DiffusersAudioAdapter(ModelAdapter):
         kwargs = {
             "prompt": prompt,
             "num_inference_steps": steps,
-            "guidance_scale": float(params.get("guidance_scale", 3.5)),
+            "guidance_scale": float(params.get(
+                "guidance_scale",
+                self.settings.get("guidance_scale_default", 3.5))),
             "negative_prompt": str(params.get("negative_prompt", "")) or None,
             "generator": generator,
             "num_waveforms_per_prompt": candidates,
@@ -245,10 +254,18 @@ class DiffusersAudioAdapter(ModelAdapter):
                     moved = {k: v.to(device) for k, v in inputs.items()}
                     logits = encoder(**moved).logits_per_text
                 except Exception:  # noqa: BLE001 — MPS kernel gaps: retry on CPU
+                    # `encoder` is the pipeline's LIVE text encoder, so the
+                    # move back has to happen even when the CPU attempt also
+                    # raises: the outer handler swallows that, this render
+                    # finishes, and the NEXT generate on the warm worker then
+                    # failed with a device mismatch that named nothing about
+                    # ranking (audit 09-B8).
                     encoder.to("cpu")
-                    moved = {k: v.to("cpu") for k, v in inputs.items()}
-                    logits = encoder(**moved).logits_per_text
-                    encoder.to(device)
+                    try:
+                        moved = {k: v.to("cpu") for k, v in inputs.items()}
+                        logits = encoder(**moved).logits_per_text
+                    finally:
+                        encoder.to(device)
             row = logits[0].float().cpu().numpy()
             best = int(np.argmax(row))
             return best, float(row[best])
@@ -289,6 +306,4 @@ class DiffusersAudioAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.pipe = None
-        gc.collect()
-        if self.device == "mps":
-            torch.mps.empty_cache()
+        release_accelerator_memory()

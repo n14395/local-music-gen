@@ -21,7 +21,7 @@ import secrets
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, release_accelerator_memory)
 
 from . import abc_convert
 
@@ -170,6 +170,10 @@ class NotationAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.bundle = None
+        # Both backends put a transformers model on MPS when it is there
+        # (ChatMusician is 13 GB in bf16), and the bundle dict is the only
+        # reference — but the allocator keeps its blocks regardless.
+        release_accelerator_memory()
 
 
 def _clamp(value, default: float, low: float, high: float) -> float:

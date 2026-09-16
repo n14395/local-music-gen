@@ -14,7 +14,7 @@ import os
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, release_accelerator_memory)
 
 ENGINES = ("lpmusiccaps",)
 
@@ -129,3 +129,6 @@ class CaptioningAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.bundle = None
+        # The caption model goes to MPS when it is there; the allocator keeps
+        # its blocks until it is told, however few references are left.
+        release_accelerator_memory()

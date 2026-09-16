@@ -146,6 +146,14 @@ struct BackendClient: Sendable {
         catch { throw APIError.decoding(underlying: error) }
     }
 
+    /// The engine's cap on an upload body — `MAX_UPLOAD_BYTES` in
+    /// `supervisor/api/uploads.py`. Mirrored here so a source too big to
+    /// accept can be refused before it is transferred: the engine reads an
+    /// oversized body all the way to the end on purpose (so its 422 is
+    /// deliverable), which for a long WAV is the whole file over the wire
+    /// only to be told no.
+    static let maxUploadBytes: Int64 = 256 * 1024 * 1024
+
     /// The same upload, streamed from disk.
     ///
     /// Identical on the wire; the difference is that the sibling above needs

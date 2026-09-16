@@ -20,12 +20,14 @@ import json
 import os
 import random
 import shutil
+import sys
 import threading
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
                                      TaskResult, UnstoppableWorkError,
-                                     clear_stale_link)
+                                     clear_stale_link,
+                                     release_accelerator_memory)
 
 # How often the cancel token is checked while generate_music runs. Short enough
 # that the button feels connected, long enough to be free.
@@ -320,7 +322,13 @@ class ACEStepAdapter(ModelAdapter):
             "instrumental": not lyrics,
             # src-audio tasks lock output length to the source
             "duration": -1 if src_task else int(duration_s),
-            "inference_steps": int(params.get("steps", 8)),
+            # The fallback is the entry's, not a constant: the turbo DiTs
+            # are distilled for 8 steps and every base/sft variant declares
+            # 50, so a caller that omits `steps` — the verify scripts, a
+            # hand-built request — used to render all five at turbo's step
+            # count (audit 09-B9).
+            "inference_steps": int(
+                params.get("steps", self.settings.get("steps_default", 8))),
             "guidance_scale": float(params.get("guidance_scale", 7.0)),
             "seed": seed,
             # 3.0 suits turbo DiTs; base/sft variants want 1.0 (set via catalog settings)
@@ -620,8 +628,29 @@ class ACEStepAdapter(ModelAdapter):
                       if k in accepted and v is not None})
 
     def unload(self) -> None:
+        # Upstream's LM handler knows how to take its own backend down (the
+        # MLX model handle, the constrained-decoding processor, any vLLM
+        # state); dropping the reference alone leaves all of that standing.
+        llm = self.llm
+        if llm is not None and hasattr(llm, "unload"):
+            try:
+                llm.unload()
+            except Exception:  # noqa: BLE001 — unload must never raise
+                pass
         self.dit = None
         self.llm = None
+        # The one handle the `acestep` package keeps outside our two objects:
+        # `dcw_loader.WAVELET_CACHE` is a module-level singleton holding a
+        # DWT/IWT module pair per (device, dtype, wavelet), built on the MPS
+        # device and rebuilt lazily, so it survives both handlers.
+        dcw = sys.modules.get("acestep.models.common.dcw_loader")
+        cache = getattr(getattr(dcw, "WAVELET_CACHE", None), "_cache", None)
+        if isinstance(cache, dict):
+            cache.clear()
+        # This family is the dual-runtime one — torch/MPS DiT plus an MLX LM,
+        # 5-10 GB per DiT variant — and it used to free neither allocator's
+        # arena, so the next variant loaded against a full one (audit 09-B7).
+        release_accelerator_memory()
 
 
 # MARK: param coercion

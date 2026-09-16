@@ -199,4 +199,31 @@ final class ClipEditingTests: XCTestCase {
         XCTAssertEqual(model.lanes.count, 1)
         XCTAssertEqual(model.clips[0].startBeats, 0)
     }
+
+    /// Undo, redo, undo. The redo step used to register nothing, so ⌘⇧Z
+    /// consumed the step and the third press undid the *previous* edit.
+    func testUndoAndRedoCanBeRepeated() {
+        let model = WorkbenchModel()
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.add(material: material("a"), parts: nil)
+
+        undo.beginUndoGrouping()
+        model.registerUndo(undo)
+        model.clips[0].startBeats = 32
+        undo.endUndoGrouping()
+
+        undo.undo()
+        XCTAssertEqual(model.clips[0].startBeats, 0)
+        XCTAssertTrue(undo.canRedo)
+
+        undo.redo()
+        XCTAssertEqual(model.clips[0].startBeats, 32)
+        XCTAssertTrue(undo.canUndo, "redo must leave a step to undo again")
+
+        undo.undo()
+        XCTAssertEqual(model.clips[0].startBeats, 0)
+        undo.redo()
+        XCTAssertEqual(model.clips[0].startBeats, 32)
+    }
 }

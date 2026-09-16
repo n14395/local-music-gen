@@ -745,7 +745,8 @@ struct LibraryScreen: View {
         } else if let song = selectedSong {
             SongDetailView(song: song, library: library, playback: playback,
                            actions: actions,
-                           onDeleted: { selectedSongId = nil })
+                           onDeleted: { selectedSongId = nil },
+                           onRenderNotes: onRenderNotes)
         } else {
             LibraryEmptyState(title: "Select a song",
                               message: "Details appear here.")

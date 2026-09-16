@@ -232,7 +232,8 @@ struct StudioView: View {
                         LyricsEditor(lyrics: $lyrics,
                                      tags: model.capabilities.lyricsTags ?? [],
                                      hint: model.capabilities.lyricsHint,
-                                     fills: true)
+                                     fills: true,
+                                     isRequired: model.capabilities.needsLyrics)
                     }
                     if let model {
                         nameCard
@@ -253,7 +254,8 @@ struct StudioView: View {
                                     catalog: catalog, library: library,
                                     parts: parts, jobs: jobs,
                                     playback: playback,
-                                    onOpenModels: onOpenModels))
+                                    onOpenModels: onOpenModels),
+                                heldValues: heldValues)
                         }
                         generateRow(model)
                     }
@@ -658,9 +660,16 @@ struct StudioView: View {
             let value: String
             switch spec.type {
             case .int, .float:
-                value = formState.isNull(spec) ? "random"
-                    : (spec.type == .int ? String(Int(formState.doubleValue(spec)))
-                                         : String(format: "%g", formState.doubleValue(spec)))
+                if formState.isNull(spec) {
+                    // "random" is a lie when something is going to fill the
+                    // value in on the way out — see `heldSeed`.
+                    value = heldValues[spec.key].map {
+                        "held " + ParameterFormView.plain($0, spec)
+                    } ?? "random"
+                } else {
+                    value = ParameterFormView.plain(
+                        formState.doubleValue(spec), spec)
+                }
             case .bool:
                 value = formState.boolValue(spec) ? "on" : "off"
             default:
@@ -869,7 +878,11 @@ struct StudioView: View {
             lyrics: preset.lyricsSeed,
             modelId: preset.need.best(catalog.models)?.id,
             durationS: preset.durationS,
-            takes: preset.takes)
+            takes: preset.takes,
+            // The chips carry the same explanation a reuse does — "Sketch ×4"
+            // silently moving the take count to 4 is exactly the surprise the
+            // notice band exists to prevent.
+            notice: preset.notice)
     }
 
     private func applyPrefill() {
@@ -1012,6 +1025,27 @@ struct StudioView: View {
         durationS = want
     }
 
+    /// The seed `submit` will inject for a seed field left on random —
+    /// Settings ▸ "Hold the seed". nil when the setting is off, when no take
+    /// has reported a seed yet, or when the model has no seed param.
+    ///
+    /// Read by the panel as well as by `submit`: the row used to light RANDOM
+    /// and print "—" over a run that reused the last number, and the summary
+    /// line said `SEED random` beside it.
+    private var heldSeed: Double? {
+        // Keyed by model: the last seed *this* model rolled, not whatever job
+        // landed last on some other screen.
+        guard settings.holdSeed, let model,
+              let seed = jobs.lastSeedByModel[model.id],
+              model.capabilities.params.contains(where: { $0.key == "seed" })
+        else { return nil }
+        return Double(seed)
+    }
+
+    private var heldValues: [String: Double] {
+        heldSeed.map { ["seed": $0] } ?? [:]
+    }
+
     private func applyPreset(_ preset: StudioPreset) {
         formState.reset()
         for (key, value) in preset.values {
@@ -1037,9 +1071,10 @@ struct StudioView: View {
         Task {
             var params = formState.params
             // "Hold the seed": a seed field left on random borrows the last
-            // take's. A seed the user typed is theirs and stays.
-            if settings.holdSeed, let seed = jobs.lastSeedUsed,
-               model.capabilities.params.contains(where: { $0.key == "seed" }),
+            // take's. A seed the user typed is theirs and stays. The same
+            // number the seed row has been showing as HELD — one source, so
+            // the panel cannot say one thing and the job do another.
+            if let seed = heldSeed,
                params["seed"] == nil || params["seed"] == .null {
                 params["seed"] = .int(Int(seed))
             }

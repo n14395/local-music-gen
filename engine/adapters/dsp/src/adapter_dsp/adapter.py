@@ -101,7 +101,13 @@ class DSPAdapter(ModelAdapter):
                                              kind="stem"))
         meta = {"duration_s": round(len(mix) / sr, 3)}
         if normalize:
-            meta["lufs"] = target_lufs
+            # Measured, not requested. This used to restate `target_lufs`,
+            # which the −1 dBTP limiter above then pulled the mix below — and
+            # it kept claiming the target even when _normalize_loudness gave
+            # up silently on input shorter than the gating block. `None` says
+            # "normalised, but the level could not be measured".
+            measured = _measure_loudness(mix, sr)
+            meta["lufs"] = round(measured, 2) if measured is not None else None
         if target_bpm:
             meta["tempo_bpm"] = target_bpm
         return TaskResult(artifacts=artifacts, meta=meta)
@@ -430,15 +436,28 @@ def _stretch_piecewise(audio: np.ndarray, sr: int, downbeats: list[float],
     return np.concatenate(chunks) if chunks else audio
 
 
-def _normalize_loudness(mix: np.ndarray, sr: int, target_lufs: float) -> np.ndarray:
+def _measure_loudness(mix: np.ndarray, sr: int) -> float | None:
+    """Integrated loudness (ITU-R BS.1770) in LUFS, or None if unmeasurable.
+
+    None covers both ways the measurement can refuse: pyloudnorm raises
+    ValueError for input shorter than the 400 ms gating block, and returns
+    -inf for a signal with no gated blocks above the threshold (silence).
+    """
     import pyloudnorm as pyln
     try:
-        meter = pyln.Meter(sr)
-        loudness = meter.integrated_loudness(mix.astype(np.float64))
-        if np.isfinite(loudness):
-            gained = pyln.normalize.loudness(mix.astype(np.float64), loudness,
-                                             target_lufs)
-            return gained.astype(np.float32)
+        loudness = float(pyln.Meter(sr).integrated_loudness(
+            mix.astype(np.float64)))
     except ValueError:
-        pass  # input shorter than the gating block — leave levels untouched
-    return mix
+        return None
+    return loudness if math.isfinite(loudness) else None
+
+
+def _normalize_loudness(mix: np.ndarray, sr: int,
+                        target_lufs: float) -> np.ndarray:
+    import pyloudnorm as pyln
+    loudness = _measure_loudness(mix, sr)
+    if loudness is None:
+        return mix   # shorter than the gating block — leave levels untouched
+    gained = pyln.normalize.loudness(mix.astype(np.float64), loudness,
+                                     target_lufs)
+    return gained.astype(np.float32)

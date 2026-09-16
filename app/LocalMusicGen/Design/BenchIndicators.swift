@@ -269,6 +269,10 @@ struct BenchPlayButton: View {
 /// The big circular transport button in the player bar — white fill, dark
 /// glyph, always high contrast because it is the app's primary control.
 struct BenchTransportButton: View {
+    /// Read rather than passed: callers say `.disabled(…)`, and the button
+    /// dims itself to match. A primary control that looks live and does
+    /// nothing is the thing this avoids.
+    @Environment(\.isEnabled) private var isEnabled
     let isPlaying: Bool
     var size: CGFloat = 34
     let action: () -> Void
@@ -285,6 +289,12 @@ struct BenchTransportButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.45)
+        // A glyph-only button says nothing to VoiceOver, and this is the app's
+        // primary control — the sidebar toggle's pattern: name it, and say the
+        // same thing in the tooltip.
+        .help(isPlaying ? "Pause" : "Play")
+        .accessibilityLabel(isPlaying ? "Pause" : "Play")
     }
 }
 

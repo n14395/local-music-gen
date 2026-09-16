@@ -110,9 +110,12 @@ struct SystemInfo: Codable, Sendable {
     let machine: String
     let warmFamily: String?
     let warmModelId: String?
-    /// The small side-worker's model. The engine and the stub have always sent
-    /// this; there was simply no field here, so it was silently dropped.
-    let transientModelId: String?
+    /// The small side-workers' models — the warm pool holds several, and the
+    /// wire field is `transient_model_ids`, a list (contract §4.3). This was
+    /// declared as a singular `transientModelId`, a key the engine has never
+    /// sent: with `.convertFromSnakeCase` it matched nothing and the property
+    /// was permanently nil, under a comment claiming the opposite.
+    let transientModelIds: [String]?
     let pinnedModelId: String?
     let activeJobId: String?
     /// The queue hold (contract §5.7). Optional so an older engine still

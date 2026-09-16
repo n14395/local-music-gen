@@ -39,7 +39,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir)
+                                     ProgressCb, aux_dir,
+                                     release_accelerator_memory)
 from engine_protocol.staging import fetch_tarball_tree, staged
 
 MODEL_NAME = "InspireMusic-1.5B-Long"
@@ -284,8 +285,6 @@ class InspireMusicAdapter(ModelAdapter):
         if cancel.cancelled:
             raise CancelledError()
         kwargs = {"task": task, "text": prompt}
-        if task == "continuation":
-            kwargs["audio_prompt"] = self._tail_clip(extend)
         # Structure conditioning: the text prompt is wrapped in
         # <|time_start|><|chorus|><|text|><|time_end|> tokens upstream, so
         # these steer which part of a song the model believes it is writing.
@@ -323,11 +322,23 @@ class InspireMusicAdapter(ModelAdapter):
                     yield tok
 
             core.inference = counted
+        # _tail_clip writes a real wav into $TMPDIR and returns its input
+        # unchanged when it wrote none; every continuation render used to
+        # leave that 5-second file behind, so make it here and delete it in
+        # the same finally that unwraps the generator.
+        tail_clip = self._tail_clip(extend) if task == "continuation" else None
+        if tail_clip is not None:
+            kwargs["audio_prompt"] = tail_clip
         try:
             self.model.inference(**kwargs)
         finally:
             if core is not None and callable(orig_inf):
                 core.inference = orig_inf
+            if tail_clip is not None and tail_clip != extend:
+                try:
+                    os.unlink(tail_clip)
+                except OSError:
+                    pass
         if cancel.cancelled:
             raise CancelledError()
 
@@ -348,3 +359,7 @@ class InspireMusicAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
+        # Dropping the reference frees the Python objects; the Metal arena
+        # the 1.6 B model filled stays checked out until the allocator is
+        # told, and the next model in this warm worker paid for it.
+        release_accelerator_memory()

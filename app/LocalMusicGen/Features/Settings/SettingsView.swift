@@ -179,19 +179,25 @@ struct SettingsView: View {
             })
     }
 
+    /// The strip's link, through `ShellActions` — the same implementation the
+    /// menubar uses.
+    ///
+    /// This used to reveal `modelLibrary.info?.url` and do nothing when it was
+    /// nil, which is exactly the state a failed engine leaves you in and the
+    /// reason you are in this pane. `revealModelLibrary()` falls back to the
+    /// configured `HF_HOME` and then to the default cache, so the link always
+    /// lands somewhere.
     private func follow(_ link: SettingsPane.ExternalLink) {
+        let actions = ShellActions(env: env)
         switch link {
         case .notificationSettings:
             env.notifications.openSystemSettings()
         case .dataFolder:
-            NSWorkspace.shared.activateFileViewerSelecting([StoragePaths.root])
+            actions.revealDataFolder()
         case .modelLibrary:
-            if let url = env.modelLibrary.info?.url {
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            }
+            actions.revealModelLibrary()
         case .engineLogs:
-            NSWorkspace.shared
-                .activateFileViewerSelecting([StoragePaths.engineLogs])
+            actions.openEngineLogs()
         }
     }
 

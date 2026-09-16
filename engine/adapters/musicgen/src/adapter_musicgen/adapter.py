@@ -33,7 +33,8 @@ from transformers import (AutoProcessor, MusicgenForConditionalGeneration,
 from transformers.generation import StoppingCriteria, StoppingCriteriaList
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb, preview_stride)
+                                     ModelAdapter, ProgressCb, preview_stride,
+                                     release_accelerator_memory)
 
 FRAME_RATE = 50  # EnCodec tokens per second of audio
 # How much of the source a continuation listens to. MusicGen's attention
@@ -153,6 +154,15 @@ class MusicGenAdapter(ModelAdapter):
                 "this melody checkpoint conditions on audio rather than "
                 "continuing it — use a plain MusicGen for continuation, or "
                 "the melody slot to follow this tune")
+        if melody_path and not self.is_melody:
+            # The one audio input this path can drop in silence — the melody
+            # + continue collision above raises, and the catalog only offers
+            # the melody slot on melody checkpoints, so this is a hand-built
+            # request. stderr is mirrored into the render card's log
+            # (audit 09-B10).
+            print("ignoring melody_audio: this is not a melody checkpoint, "
+                  "so it has no chroma conditioner to feed",
+                  file=sys.stderr, flush=True)
         if melody_path and self.is_melody:
             melody = self._load_melody(str(melody_path))
             inputs = self.processor(
@@ -231,6 +241,12 @@ class MusicGenAdapter(ModelAdapter):
         import mlx.core as mx
 
         assert self.mlx_model is not None
+        if params.get("melody_audio"):
+            # Same silence as the transformers path used to have: the
+            # vendored MLX loop has no conditioner for it (audit 09-B10).
+            print("ignoring melody_audio: the MLX runtime has no chroma "
+                  "conditioner — use the same model's standard entry",
+                  file=sys.stderr, flush=True)
         if params.get("continue_audio"):
             # The vendored MLX decode loop starts from the delay-pattern BOS
             # and has no seam for a token prefix, so a continuation here would
@@ -360,9 +376,5 @@ class MusicGenAdapter(ModelAdapter):
     def unload(self) -> None:
         self.model = None
         self.processor = None
-        if self.mlx_model is not None:
-            self.mlx_model = None
-            import mlx.core as mx
-            mx.clear_cache()
-        if self.device == "mps":
-            torch.mps.empty_cache()
+        self.mlx_model = None
+        release_accelerator_memory()

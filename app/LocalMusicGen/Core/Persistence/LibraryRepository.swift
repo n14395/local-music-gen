@@ -106,8 +106,15 @@ struct LibraryRepository: Sendable {
         try db.queue.read { database in
             var request = SongRecord.all()
             let query = filters.query.trimmingCharacters(in: .whitespaces)
-            if !query.isEmpty {
-                let pattern = FTS5Pattern(matchingAllPrefixesIn: query)
+            // `matchingAllPrefixesIn:` is failable: a query FTS5 finds no
+            // token in at all — "!!!", "--", a lone quote — yields nil, which
+            // bound as SQL NULL, and `MATCH NULL` is an FTS5 syntax error. The
+            // throw reached `(try? repo.search(filters)) ?? []` in every call
+            // site, so typing punctuation emptied the whole library. A query
+            // with no searchable word in it narrows nothing, so it is the same
+            // answer as an empty field rather than "nothing matched".
+            if !query.isEmpty,
+               let pattern = FTS5Pattern(matchingAllPrefixesIn: query) {
                 let ids = try Row.fetchAll(
                     database,
                     sql: "SELECT rowid FROM songFts WHERE songFts MATCH ?",
@@ -368,6 +375,15 @@ struct LibraryRepository: Sendable {
                 try TagRecord(name: name).upsert(database)
                 try SongTagRecord(songId: songId, tagName: name).insert(database)
             }
+            // Nothing else ever deleted a `tag` row, so a name typed once
+            // stayed in the Library's tag menu forever — including after the
+            // last song carrying it was untagged, where picking it showed an
+            // empty library. In the same write as the replace above, so the
+            // menu and the join rows can never disagree.
+            try database.execute(sql: """
+                DELETE FROM tag WHERE NOT EXISTS (
+                    SELECT 1 FROM songTag WHERE songTag.tagName = tag.name)
+                """)
         }
     }
 }

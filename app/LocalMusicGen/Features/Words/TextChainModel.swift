@@ -258,10 +258,17 @@ final class TextChainModel {
         }
 
         current.progress.jobId = nil
+        // A failure belongs to the stage that failed. `statusLine` prints
+        // "Stopped at step \(stageIndex + 1)", so advancing first blamed the
+        // step that never ran — a caption that came back empty was reported
+        // as a failure of the generate step after it.
+        if current.progress.isFailed {
+            run = current
+            return
+        }
         current.progress.stageIndex += 1
         run = current
 
-        if current.progress.isFailed { return }
         if current.isFinished {
             notice = Self.finishedNotice(current)
             return

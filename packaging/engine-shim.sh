@@ -55,9 +55,14 @@ mkdir -p "$SRC"
 # so --delete removed it (and its marker) on every launch and the next LeVo job
 # rebuilt several GB of wheels. Excluded here too, which is what spares it.
 rm -rf "$SRC/adapters/acestepcpp/build-src"
+# `.cache` is ACE-Step's learned per-step timings, written by the engine into
+# its own source tree. --delete spares excluded paths, so excluding it is what
+# stops this rsync overwriting the user's measured timings with the bundle's
+# on every launch. `.DS_Store` is excluded for the same reason it is in
+# build.sh: Finder's, never ours.
 rsync -a --delete \
     --exclude '.venv' --exclude '.venv-decoder' --exclude 'build-src' \
-    --exclude '__pycache__' \
+    --exclude '__pycache__' --exclude '.cache' --exclude '.DS_Store' \
     "$RESOURCES/engine/" "$SRC/"
 export LOCALMUSICGEN_ADAPTERS_DIR="$SRC/adapters"
 

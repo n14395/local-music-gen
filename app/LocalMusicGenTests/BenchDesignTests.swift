@@ -113,7 +113,7 @@ final class BenchDesignTests: XCTestCase {
         let json = """
         {"ram_bytes": \(ramBytes), "free_disk_bytes": 418000000000,
          "machine": "Mac16,10", "warm_family": null, "warm_model_id": null,
-         "transient_model_id": null, "pinned_model_id": null, "active_job_id": null,
+         "transient_model_ids": [], "pinned_model_id": null, "active_job_id": null,
          "memory_guard": null, "engine_versions": {},
          "accelerator": {"name": "Apple M1 Max",
                          "backend": \(backend.map { "\"\($0)\"" } ?? "null"),

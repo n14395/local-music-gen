@@ -16,8 +16,11 @@ from fastapi import APIRouter, Request
 from ..state import EngineState
 from .errors import err
 
-# 256 MB fits a ~10-minute imported WAV; sources beyond this are FLAC-compressed
-# app-side before upload
+# 256 MB fits roughly a 25-minute stereo 16/44.1 WAV, or 12 minutes at 24/96.
+# This used to claim longer sources were "FLAC-compressed app-side before
+# upload": there is no such path anywhere in the app — wav/aiff are passthrough
+# on import and `uploadAudio` streams the stored file as it is — so a long
+# recording really does arrive at full size and really is refused.
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
 router = APIRouter()
@@ -59,6 +62,14 @@ async def upload(request: Request, filename: str = "audio"):
     import anyio
 
     st = _engine(request)
+    # A declared length is a refusal that can happen before the bytes do:
+    # reading a 400 MB body to the end only to reject it costs the transfer
+    # twice over. A chunked upload declares no length, and for that one the
+    # read-and-drop path below is still what makes the 422 deliverable.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+        return err(422, "VALIDATION",
+                   f"upload exceeds {MAX_UPLOAD_BYTES // (1 << 20)} MB")
     upload_id = f"up_{uuid.uuid4().hex[:12]}"
     safe_name = os.path.basename(filename).strip() or "audio"
     d = os.path.join(st.settings.uploads_dir, upload_id)

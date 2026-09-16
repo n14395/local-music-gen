@@ -461,14 +461,25 @@ final class WorkbenchModel {
     /// nothing or undid the *previous* edit, which is worse.
     func registerUndo(_ undoManager: UndoManager?,
                       name: String = "Edit Timeline") {
+        register(snapshot(), with: undoManager, name: name)
+    }
+
+    /// One rung of the undo/redo ladder: put `restore` back, and register the
+    /// state we are leaving as the step that undoes *that*.
+    ///
+    /// Recursive because it has to be. The redo closure used to register
+    /// nothing, so ⌘⇧Z consumed the step: a third ⌘Z either did nothing or
+    /// undid the edit *before* the one just redone. `EditorStore.registerUndo`
+    /// has always had this shape. The manager is captured weakly because it
+    /// owns the closure, and a strong capture was a cycle nothing but
+    /// `removeAllActions` broke.
+    private func register(_ restore: Snapshot, with undoManager: UndoManager?,
+                          name: String) {
         guard let undoManager else { return }
-        let before = snapshot()
-        undoManager.registerUndo(withTarget: self) { target in
-            let after = target.snapshot()
-            target.apply(before)
-            undoManager.registerUndo(withTarget: target) { redoTarget in
-                redoTarget.apply(after)
-            }
+        undoManager.registerUndo(withTarget: self) { [weak undoManager] target in
+            let inverse = target.snapshot()
+            target.apply(restore)
+            target.register(inverse, with: undoManager, name: name)
         }
         undoManager.setActionName(name)
     }

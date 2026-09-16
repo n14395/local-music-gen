@@ -46,26 +46,41 @@ struct WaveformRegionSelector: View {
     private enum Handle { case start, end }
     @State private var dragging: Handle?
 
+    /// The horizontal padding under the waveform, which the region math has
+    /// to share.
+    ///
+    /// `BenchWaveform` draws edge to edge inside whatever width it is given,
+    /// and it is given the well minus this inset — so mapping 0…duration
+    /// across the *full* width put the shading and the handles 8 pt right of
+    /// the audio at the head and 8 pt left of it at the tail. On a 60 s track
+    /// in a 400 pt well that is over a second, while the readout underneath
+    /// printed the correct number: the picture and the text disagreed.
+    private static let inset: CGFloat = 8
+
     var body: some View {
         GeometryReader { geo in
-            let math = RegionMath(durationS: durationS, width: geo.size.width)
+            let inset = Self.inset
+            let math = RegionMath(durationS: durationS,
+                                  width: max(0, geo.size.width - inset * 2))
             ZStack(alignment: .topLeading) {
                 BenchWaveformLoader(audioURL: audioURL, cacheURL: cacheURL)
-                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .padding(.horizontal, inset).padding(.vertical, 6)
                     .allowsHitTesting(false)
                 // shaded selection
                 Rectangle()
                     .fill(Bench.Palette.accent.opacity(0.18))
                     .frame(width: max(0, math.x(atSeconds: endS)
                                       - math.x(atSeconds: startS)))
-                    .offset(x: math.x(atSeconds: startS))
-                handle(at: math.x(atSeconds: startS), height: geo.size.height)
-                handle(at: math.x(atSeconds: endS), height: geo.size.height)
+                    .offset(x: inset + math.x(atSeconds: startS))
+                handle(at: inset + math.x(atSeconds: startS),
+                       height: geo.size.height)
+                handle(at: inset + math.x(atSeconds: endS),
+                       height: geo.size.height)
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    let t = math.seconds(atX: value.location.x)
+                    let t = math.seconds(atX: value.location.x - inset)
                     if dragging == nil {
                         // grab whichever handle is nearer
                         dragging = abs(t - startS) <= abs(t - endS)

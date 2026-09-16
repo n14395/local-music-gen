@@ -145,6 +145,15 @@ final class ShellState {
     /// because the two fields are consumed by different views.
     var notesRequest: String?
 
+    /// A song whose notation Track ▸ Show Notation asked to see — a one-shot
+    /// request `MainWindow` consumes by presenting `NotationSheet` on the
+    /// newest ABC document the song carries, and clearing this.
+    ///
+    /// The window rather than the detail pane, unlike the two above: the
+    /// pane is only on screen in the scopes that list songs, and the item is
+    /// enabled from a part row and from the Editor too.
+    var notationRequest: String?
+
     /// The keyboard-shortcut reference, opened from Help.
     var showShortcuts = false
 

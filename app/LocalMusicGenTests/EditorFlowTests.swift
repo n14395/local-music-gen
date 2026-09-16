@@ -281,6 +281,21 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertEqual(store.timelineDurationS, 90, accuracy: 1e-9)
     }
 
+    /// A selection dragged back onto itself is not an edit: the program
+    /// refuses a zero-length range, so recording the op left a no-op row, an
+    /// undo step and an Apply button for a render that changes nothing.
+    func testAZeroLengthSelectionRecordsNothing() throws {
+        let (store, _, _) = try makeStore()
+        store.selection = EditRange(start: 12, end: 12)
+        store.deleteSelection()
+        store.silenceSelection()
+        store.trimToSelection()
+        store.reverseSelection()
+        XCTAssertTrue(store.document.ops.isEmpty)
+        XCTAssertEqual(store.undoStepsRegistered, 0)
+        XCTAssertEqual(store.timelineDurationS, 100, accuracy: 1e-9)
+    }
+
     /// The app must never open an undo group it does not close: an
     /// unbalanced level makes the next undo raise "too many nested undo
     /// groups" and terminate the process. Nothing in the Editor opens one.

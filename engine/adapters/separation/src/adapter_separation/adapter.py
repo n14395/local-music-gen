@@ -28,7 +28,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult, aux_dir, clear_stale_link)
+                                     TaskResult, aux_dir, clear_stale_link,
+                                     release_accelerator_memory)
 
 
 class SeparationAdapter(ModelAdapter):
@@ -300,3 +301,6 @@ class SeparationAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self._separator = None
+        # The separator runs on MPS when it is there and is deliberately kept
+        # across jobs, so its arena is the biggest thing this worker holds.
+        release_accelerator_memory()

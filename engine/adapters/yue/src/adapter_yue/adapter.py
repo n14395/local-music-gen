@@ -20,6 +20,7 @@ import sys
 from engine_protocol.progress import iter_progress_lines
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
                                      ModelAdapter, ProgressCb, aux_dir)
+from engine_protocol.staging import staged
 
 YUE_REPO = "https://github.com/multimodal-art-projection/YuE"
 YUE_SHA = "9f1394bae1d8d218fea750c1413c2d9d731c7310"
@@ -52,9 +53,23 @@ class YuEAdapter(ModelAdapter):
         # for downloaded data, relocatable with the rest of the library.
         base = aux_dir("yue")
         self.repo_dir = os.path.join(base, "YuE")
-        if not os.path.exists(os.path.join(self.repo_dir, "inference")):
+        # `exists("inference")` passed on the half-copied husk an interrupted
+        # library relocate leaves behind: the directory was there, infer.py was
+        # not, _teach_infer_sdpa returned without a word, and the render died
+        # hours-shaped as "YuE infer.py exited with 2". staged() demands the
+        # landmarks and honours the relocate tombstone. The landmarks are files
+        # the clone itself carries — NOT inference/xcodec_mini_infer, which is
+        # the symlink into the HF snapshot that the block below rebuilds and
+        # which every library move legitimately strands.
+        if not staged(self.repo_dir, "inference/infer.py",
+                      "inference/mmtokenizer.py",
+                      "inference/mm_tokenizer_v0.2_hf"):
             progress_cb(None, "cloning YuE repository")
             os.makedirs(base, exist_ok=True)
+            if os.path.isdir(self.repo_dir):
+                # Only ever reached after staged() said no, so this is the
+                # husk; git clone refuses a non-empty destination.
+                shutil.rmtree(self.repo_dir, ignore_errors=True)
             subprocess.run(["git", "clone", YUE_REPO, self.repo_dir],
                            check=True, capture_output=True, timeout=600)
             subprocess.run(["git", "checkout", YUE_SHA], cwd=self.repo_dir,
@@ -98,7 +113,11 @@ class YuEAdapter(ModelAdapter):
         (a re-clone would otherwise silently restore the blocker)."""
         path = os.path.join(self.repo_dir, "inference", "infer.py")
         if not os.path.exists(path):
-            return
+            # Returning quietly here is how a broken checkout used to reach
+            # `python infer.py` and fail with an exit code instead of a reason.
+            raise RuntimeError(
+                f"YuE's checkout has no {path} — delete "
+                f"{self.repo_dir} and retry to re-clone it")
         with open(path) as f:
             src = f.read()
         if "LOCALMUSIC-SDPA" in src:
@@ -227,6 +246,7 @@ class YuEAdapter(ModelAdapter):
             for line in iter_progress_lines(proc.stdout):
                 if cancel.cancelled:
                     proc.kill()
+                    proc.wait()      # or the child is left a zombie
                     raise CancelledError()
                 # infer.py's stdout is captured because this worker's own
                 # stdout is the JSONL protocol channel — so without this
@@ -243,6 +263,14 @@ class YuEAdapter(ModelAdapter):
                 else:
                     progress_cb(None, line[:200])
             proc.wait()
+        except BaseException:
+            # progress_cb itself raises CancelledError on a cancelled job, so
+            # the loop can exit without passing the branch above — and an
+            # unreaped infer.py keeps the GPU for the rest of the session.
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
         finally:
             self.proc = None
         if proc.returncode != 0:
@@ -276,3 +304,13 @@ class YuEAdapter(ModelAdapter):
                         p = os.path.join(root, f)
                         candidates.append((os.path.getmtime(p), p))
         return max(candidates)[1] if candidates else None
+
+    def unload(self) -> None:
+        # The model lives in the subprocess, so there is nothing here to drop
+        # and no accelerator memory this process is holding — but a run that
+        # ended by exception may have left the child alive, and it owns the
+        # GPU the next model wants.
+        proc, self.proc = self.proc, None
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()

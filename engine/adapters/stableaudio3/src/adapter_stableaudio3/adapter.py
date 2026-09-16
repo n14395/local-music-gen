@@ -25,7 +25,7 @@ same decode the upstream interface runs to draw its own preview spectrograms.
 
 from __future__ import annotations
 
-import gc
+import inspect
 import json
 import os
 import secrets
@@ -35,13 +35,34 @@ import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb, preview_stride)
+                                     ModelAdapter, ProgressCb, preview_stride,
+                                     release_accelerator_memory)
 
 
 def _pcm16(wav: np.ndarray) -> bytes:
     """(channels, samples) float → interleaved little-endian PCM16."""
     interleaved = np.clip(np.asarray(wav, dtype=np.float32).T, -1.0, 1.0)
     return (interleaved * 32767.0).astype("<i2").tobytes()
+
+
+def _takes_callback(fn) -> bool:
+    """Does `fn` accept a `callback=` keyword?
+
+    True for an explicit parameter and for a `**kwargs` catch-all — this
+    library declares `**sampler_kwargs` and forwards `callback` to the
+    sampler from there. Asked up front rather than discovered by catching
+    TypeError: the old `except TypeError` wrapped the whole render, so a
+    TypeError raised anywhere inside the model, the conditioner or the
+    preview decode ran the entire diffusion a second time with no progress
+    and no cancel, and reported the retry's traceback instead of the real
+    one (audit 09-B5).
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):   # a C builtin has no signature
+        return False
+    return any(p.name == "callback" or p.kind is inspect.Parameter.VAR_KEYWORD
+               for p in params.values())
 
 # The Small default; Medium raises it via settings.max_duration_s (its
 # training window runs to 6:20).
@@ -108,7 +129,13 @@ class StableAudio3Adapter(ModelAdapter):
         duration_s = min(self.max_duration_s, float(params.get("duration_s", 30.0)))
         # 150 matches the top of the catalog's declared ranges; the old 50
         # silently ate medium-base's 51-150 (audit B5).
-        steps = max(1, min(150, int(params.get("steps", 8))))
+        # The fallback is the entry's, not a constant: these checkpoints
+        # disagree (Small is tuned at 8 steps / cfg 1.0, medium-base at 50 /
+        # 7.0), and a caller that omits either param — the verify scripts, a
+        # hand-built request — used to get the Small recipe on every entry
+        # (audit 09-B9). The same idiom the stableaudio sibling uses.
+        steps = max(1, min(150, int(
+            params.get("steps", self.settings.get("steps_default", 8)))))
         # Drawn here rather than handed to the library as -1: upstream
         # draws its own and never tells us which, so the take could not be
         # reproduced. Seeding it ourselves makes `seed_used` true.
@@ -119,7 +146,8 @@ class StableAudio3Adapter(ModelAdapter):
             "prompt": prompt,
             "duration": duration_s,
             "steps": steps,
-            "cfg_scale": float(params.get("cfg_scale", 1.0)),
+            "cfg_scale": float(params.get(
+                "cfg_scale", self.settings.get("cfg_scale_default", 1.0))),
             "seed": seed,
             # The library's default sample_size is the Small window (120 s)
             # and _adapt_sample_size only ever clamps DOWN to it — without
@@ -141,6 +169,20 @@ class StableAudio3Adapter(ModelAdapter):
         inpaint = load_clip("inpaint_audio")
         extend = load_clip("extend_audio")
         init = load_clip("init_audio")
+        # One audio input per job (module docstring). Which one wins was
+        # documented here and nowhere the user could see it, so a second
+        # attachment simply vanished — the take came back looking like a
+        # normal render of the first (audit 09-B10). stderr is mirrored into
+        # the render card's log, so say it there.
+        supplied = [name for name, clip in (("inpaint_audio", inpaint),
+                                            ("extend_audio", extend),
+                                            ("init_audio", init))
+                    if clip is not None]
+        for name in supplied[1:]:
+            print(f"ignoring {name}: this model takes one audio input per "
+                  f"take and {supplied[0]} wins "
+                  f"(repaint → continue → restyle)",
+                  file=sys.stderr, flush=True)
 
         if inpaint is not None:
             src_dur = inpaint[1].shape[1] / inpaint[0]
@@ -197,14 +239,14 @@ class StableAudio3Adapter(ModelAdapter):
                               float(kwargs["duration"]), i + 1)
 
         progress_cb(0.02, f"{mode} ({steps} steps)", phase="prompt_encode")
-        try:
-            audio = self.sa.generate(callback=callback, **kwargs)
-        except TypeError:
-            # sampler without callback passthrough: the phase is still known,
-            # the step count is not, so it goes without one
+        if _takes_callback(self.sa.generate):
+            kwargs["callback"] = callback
+        else:
+            # a sampler without callback passthrough: the phase is still
+            # known, the step count is not, so it goes without one
             progress_cb(None, f"{mode} (this build reports no steps)",
                         phase="diffusion")
-            audio = self.sa.generate(**kwargs)
+        audio = self.sa.generate(**kwargs)
         if cancel.cancelled:
             raise CancelledError()
 
@@ -253,4 +295,8 @@ class StableAudio3Adapter(ModelAdapter):
 
     def unload(self) -> None:
         self.sa = None
-        gc.collect()
+        # settings.device is "mps" for three of the four entries, and dropping
+        # the reference leaves torch's caching allocator holding every block
+        # the model touched — the next model of this family then loads against
+        # a full arena (audit 09-B7).
+        release_accelerator_memory()

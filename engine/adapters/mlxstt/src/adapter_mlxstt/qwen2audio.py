@@ -8,6 +8,8 @@ tasks.
 
 from __future__ import annotations
 
+import re
+
 from engine_protocol.adapter import CancelledError
 
 from .textout import preview, write_payload
@@ -154,7 +156,11 @@ def _labels(answer: str) -> list[str]:
     perfect, and a reply that opens with "Sure! Here are the genres:" should
     still yield genres rather than a tag called "sure".
     """
-    text = answer.split(":")[-1] if ":" in answer.split("\n")[0] else answer
+    # Only the leading label of the FIRST line. The condition used to look at
+    # the first line while the split ran over the whole answer and kept the
+    # piece after the LAST colon anywhere in it, so "Genres: techno, house\n
+    # Note: fairly upbeat" came back as the single tag "fairly upbeat".
+    text = re.sub(r"^[^:\n]{0,40}:", "", answer, count=1)
     parts: list[str] = []
     for raw in text.replace("\n", ",").split(","):
         label = raw.strip().strip(".;-•*").strip()

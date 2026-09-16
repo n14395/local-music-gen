@@ -20,7 +20,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult, aux_dir, clear_stale_link)
+                                     TaskResult, aux_dir, clear_stale_link,
+                                     release_accelerator_memory)
 
 from . import features, keys, structure
 
@@ -493,3 +494,6 @@ class AnalysisAdapter(ModelAdapter):
         self._btc = None
         self._squim = None
         self._squim_mos = None
+        # Four torch models, beat tracker and CLAP on MPS where it exists:
+        # rebinding frees the objects, not the allocator's arena.
+        release_accelerator_memory()

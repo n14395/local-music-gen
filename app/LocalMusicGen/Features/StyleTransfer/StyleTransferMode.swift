@@ -326,11 +326,13 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
             /// source**. The catalog's own help says so — "lower (0.2) is
             /// closer to pure style transfer" — so the slider is its inverse.
             case invertedUnit
-            /// `init_noise_level`: 0.1…10, higher is freer. Mapped
-            /// geometrically rather than linearly, which is the only way the
-            /// model's own default of 1.0 lands on the middle of the slider:
-            /// the range spans two decades, so a linear map would squeeze
-            /// every useful value into the bottom tenth of the travel.
+            /// `init_noise_level`: 0.05…1, higher is freer — it is the sigma
+            /// the sampler starts from, and 1.0 is `sigma_max`, i.e. full
+            /// noise with nothing of the source left. Mapped geometrically
+            /// rather than linearly because the useful values are bunched at
+            /// the quiet end: half the travel covers 0.05…0.22, where the
+            /// arrangement is plainly intact, and the top half spends itself
+            /// on the last stretch towards "ignore the source".
             case logarithmic
         }
 
@@ -339,6 +341,9 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
         let nominalMin: Double
         let nominalMax: Double
         let nominalDefault: Double
+        /// Where this mode's slider rests, as a **wire** value, when the
+        /// model's own default is not the right place for it. See `.shape`.
+        var restingValue: Double?
 
         private func bounds(_ spec: ParamSpec?) -> (min: Double, max: Double) {
             (spec?.min ?? nominalMin, spec?.max ?? nominalMax)
@@ -373,12 +378,18 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
             }
         }
 
-        /// Where the slider sits before the user touches it: whatever the
-        /// model's own default maps to, so "I didn't move it" and "the model's
-        /// default" are the same run.
+        /// Where the slider sits before the user touches it: the model's own
+        /// default, so "I didn't move it" and "the model's default" are the
+        /// same run — unless the mode names a resting point of its own,
+        /// because the model's default does not do what the mode promises.
+        ///
+        /// Stated as a wire value rather than as a slider position so a
+        /// catalog that re-ranges the param moves the handle rather than
+        /// changing what is rendered.
         func defaultStyleAmount(spec: ParamSpec? = nil) -> Double {
-            styleAmount(wireValue: spec?.default.doubleValue ?? nominalDefault,
-                        spec: spec)
+            let value = restingValue
+                ?? spec?.default.doubleValue ?? nominalDefault
+            return styleAmount(wireValue: value, spec: spec)
         }
     }
 
@@ -406,8 +417,22 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
             // Matches the catalog's re-ranged spec (audit §2): 1.0 is
             // sigma_max = ignore the source, so it is the top of the dial,
             // not its resting point.
+            //
+            // Which is why this mode rests somewhere of its own. The catalog
+            // default of 0.9 is upstream's "reimagine a loop" number and maps
+            // to 96 % of the travel — the card promises "the rough
+            // arrangement survives in proportion to the dial" and then opened
+            // with the dial all but hard over, so an untouched run kept
+            // almost nothing. 0.3 is the sampler's own mixing fraction
+            // (`init_data * (1 - level) + noise * level` for the RF models,
+            // the cosine equivalent for the v-diffusion ones), so seven parts
+            // source to three parts noise: the arrangement is unmistakably
+            // the same piece while the performance and production are
+            // genuinely re-rendered. A judgment call, and the dial is right
+            // there — this is where it starts, not where it has to stay.
             Dial(key: "init_noise_level", sense: .logarithmic,
-                 nominalMin: 0.05, nominalMax: 1, nominalDefault: 0.9)
+                 nominalMin: 0.05, nominalMax: 1, nominalDefault: 0.9,
+                 restingValue: 0.3)
         case .repaint, .complete, .layer, .extract, .morph, .continueTrack,
              .melody:
             nil

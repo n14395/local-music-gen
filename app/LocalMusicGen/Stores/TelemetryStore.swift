@@ -68,6 +68,22 @@ final class TelemetryStore {
         if let bytes = usage.workerBytes { set(&workerBytes, bytes) }
     }
 
+    /// Forget the live readings when there is no engine behind them.
+    ///
+    /// Every field here is only ever written by a successful `/v1/system` read
+    /// or a `system.telemetry` event, and nothing used to clear them: a
+    /// stopped or crashed engine left the sidebar printing the memory it had
+    /// been using, and a GPU percentage, under the word "Stopped".
+    ///
+    /// Only the moving readings go. The machine's name, its RAM and the free
+    /// space on both volumes are facts about the Mac, and they stay true while
+    /// the engine is down.
+    func reset() {
+        set(&gpuPercent, nil)
+        set(&workerBytes, nil)
+        set(&acceleratorBytes, nil)
+    }
+
     private func set<T: Equatable>(_ stored: inout T, _ next: T) {
         if stored != next { stored = next }
     }

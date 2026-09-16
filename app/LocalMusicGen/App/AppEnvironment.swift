@@ -223,6 +223,18 @@ final class AppEnvironment {
         downloadsStore.autoClearAfterS = { [settings = self.settings] in
             settings.queueAutoClear.seconds
         }
+        // How `DownloadsStore.reconcile` tells a transfer that finished while
+        // the stream was down from one that failed: the engine lists only live
+        // downloads, so the only honest evidence is what is installed now. The
+        // catalog is refreshed immediately before the reconcile on
+        // `.connected`, so this reads a fresh answer.
+        downloadsStore.installCompleted = { [weak self] modelId, runtimeOnly in
+            guard let model = self?.catalog.model(id: modelId) else {
+                return false
+            }
+            return runtimeOnly ? model.runtime == .installed
+                               : model.installState == .installed
+        }
         jobsStore.autoArm = { [settings = self.settings] in
             settings.autoArmRenders
         }
@@ -578,7 +590,10 @@ final class AppEnvironment {
                 storage.refresh()
             }
         case .disconnected:
-            break
+            // The numbers behind the sidebar's engine card are only ever
+            // written by a live engine, and nothing used to clear them: a
+            // crash left `GPU 92% · 11.8 / 36 GB` on screen under "Stopped".
+            telemetry.reset()
         case .event(let event):
             downloadsStore.apply(event)
             jobsStore.apply(event)

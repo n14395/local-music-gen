@@ -1033,6 +1033,20 @@ def diffusers_caps(max_s, default_s, steps_default, guidance_default, est=3.0,
     }
 
 
+def diffusers_settings(steps_default, guidance_default):
+    """What the diffusers adapter falls back to when a caller omits the param.
+
+    It used to be a pair of constants in the adapter (50 steps, guidance 3.5),
+    which contradicted every entry below that declares something else — this
+    family spans four pipelines and three different recipes, so the caller
+    that omits a param (the verify scripts, a hand-built request) got a
+    materially different render than the entry advertises (audit 09-B9).
+    Same shape as the stableaudio family's `cfg_scale_default`.
+    """
+    return {"steps_default": steps_default,
+            "guidance_scale_default": guidance_default}
+
+
 def entry(id_, family, repos, name, desc, caps, min_ram_gib, tier, license_,
           notes=None, variant_of=None, format_=None, gated=False,
           settings=None, featured=False, ms_repos=None,
@@ -1461,8 +1475,12 @@ def ace_variant(id_, dit_repo, dit_config, name, fmt, steps, shift, est,
     return entry(id_, "acestep", [ACE_CORE, dit_repo], name, desc, caps,
                  min_ram_gib, tier, ACE_MIT, variant_of="acestep-base",
                  format_=fmt,
+                 # steps_default is the adapter's fallback for a caller
+                 # that omits `steps`: it used to be a constant 8, the turbo
+                 # recipe, so every base/sft variant rendered at an eighth of
+                 # its declared step count (audit 09-B9).
                  settings={"dit_config": dit_config, "dit_repo": dit_repo,
-                           "shift": shift})
+                           "shift": shift, "steps_default": steps})
 
 
 ACESTEP_CPP_CORE = [
@@ -1896,29 +1914,42 @@ NEW_ENTRIES = [
                   {"key": "negative_prompt", "type": "string",
                    "label": "Negative prompt", "default": None,
                    "nullable": True, "placeholder": "low quality, distorted"},
-                  # Null keeps the tool's default (v-DDIM here — acceptable
-                  # per the 2026-09 audit); the choices are the v-objective
-                  # samplers the pinned tool implements.
+                  # dpmpp-3m-sde is Open 1.0's released recipe, and the
+                  # entry says so twice — here and in `settings` — exactly
+                  # like the `stableaudio-small` sibling says pingpong twice.
+                  # This used to be nullable with a null default, and then
+                  # nothing was sent: `generate_diffusion_cond` applied its
+                  # own hard "euler", which is in neither the k-diffusion nor
+                  # the v-ddim set, so a v-objective model fell through to
+                  # plain DDIM — none of the five choices offered here
+                  # (audit 09-B6). Not nullable for that reason: "unset" only
+                  # ever meant that fall-through. The choices are the
+                  # v-objective samplers the pinned tool implements.
                   {"key": "sampler_type", "type": "enum", "label": "Sampler",
-                   "default": None, "nullable": True,
+                   "default": "dpmpp-3m-sde", "nullable": False,
                    "choices": [
                        {"value": "dpmpp-3m-sde", "label": "DPM++ 3M SDE"},
                        {"value": "dpmpp-2m-sde", "label": "DPM++ 2M SDE"},
                        {"value": "v-ddim", "label": "DDIM"},
                        {"value": "k-heun", "label": "Heun"},
                        {"value": "k-lms", "label": "LMS"}],
-                   "help": "Which numerical sampler draws the audio — leave "
-                           "unset for the tool's default"},
+                   "help": "Which numerical sampler draws the audio. "
+                           "DPM++ 3M SDE is this checkpoint's released "
+                           "recipe"},
                   seed_param(),
                   *init_audio_params(),
               ],
           },
           16, "medium", STABILITY, gated=True,
-          # The adapter's own fallback for a caller that omits `cfg_scale`.
-          # Without it that caller got 1.0 — where this DiT skips guidance
-          # entirely, taking the negative prompt with it — while the entry
-          # above advertises 7.0.
-          settings={"cfg_scale_default": 7.0},
+          # The adapter's own fallbacks for a caller that omits these, and
+          # the sampler it sends when the param is null. Without the first a
+          # caller got 1.0 — where this DiT skips guidance entirely, taking
+          # the negative prompt with it — while the entry above advertises
+          # 7.0; without `steps_default` it got 8 against the advertised 100
+          # (audit 09-B9); without `sampler_type` the tool ran "euler"
+          # (audit 09-B6).
+          settings={"cfg_scale_default": 7.0, "steps_default": 100,
+                    "sampler_type": "dpmpp-3m-sde"},
           notes="Accept the license on huggingface.co and add your token in Settings."),
     # ---- Stable Audio 3 ---------------------------------------------------
     # Decision recorded 2026-09-03 (audit §7): the fifth sibling checkpoint,
@@ -1975,6 +2006,11 @@ NEW_ENTRIES = [
            "requires_hf_token": True,
            "url": "https://stability.ai/community-license-agreement"},
           gated=True,
+          # What the adapter falls back to when a caller omits the param.
+          # It used to be a constant in the adapter (8 steps / cfg 1.0 — the
+          # Small recipe), which contradicted every entry that declares
+          # something else (audit 09-B9).
+          settings={"steps_default": 8, "cfg_scale_default": 1.0},
           notes="Accept the Stable Audio 3 license on huggingface.co and add "
                 "your token in Settings. One audio input per job: repaint > "
                 "continue > reimagine."),
@@ -2027,7 +2063,8 @@ NEW_ENTRIES = [
           # device: the Small entry stays on CPU (its design point); Medium
           # was measured at 7.9 s for 10 s of audio on MPS fp32 and is too
           # slow to enjoy on CPU. max_duration_s lifts the adapter's 120 s cap.
-          settings={"device": "mps", "max_duration_s": 380.0},
+          settings={"device": "mps", "max_duration_s": 380.0,
+                    "steps_default": 8, "cfg_scale_default": 1.0},
           notes="Accept the Stable Audio 3 license on huggingface.co and add "
                 "your token in Settings. One audio input per job: repaint > "
                 "continue > reimagine. Runs on the GPU (MPS); ~19 GB peak "
@@ -2077,7 +2114,11 @@ NEW_ENTRIES = [
            "requires_hf_token": False,
            "url": "https://stability.ai/community-license-agreement"},
           variant_of="stableaudio3-medium", format_="base · 50 steps",
-          settings={"device": "mps", "max_duration_s": 380.0},
+          # 50/7.0, not the adapter's old 8/1.0 constants: this is the
+          # non-distilled DiT and 8 steps at cfg 1.0 renders it unguided and
+          # under-sampled (audit 09-B9).
+          settings={"device": "mps", "max_duration_s": 380.0,
+                    "steps_default": 50, "cfg_scale_default": 7.0},
           notes="Speed on this hardware is unmeasured — the est scales the "
                 "distilled Medium's by the step count. Same one-audio-input "
                 "rule: repaint > continue > reimagine."),
@@ -2134,7 +2175,8 @@ NEW_ENTRIES = [
            "url": "https://stability.ai/community-license-agreement"},
           gated=True,
           variant_of="stableaudio3-medium", format_="small · sfx",
-          settings={"device": "mps"},
+          settings={"device": "mps", "steps_default": 8,
+                    "cfg_scale_default": 1.0},
           notes="Untested on this hardware — est is a guess from the small "
                 "architecture. Gated repo (auto-approval): accept the "
                 "license on huggingface.co and add your token in Settings."),
@@ -3335,25 +3377,27 @@ NEW_ENTRIES = [
           "AudioLDM 2 Music",
           "Music-specialised AudioLDM 2 — text-to-music at 16 kHz.",
           diffusers_caps(30, 10, 100, 3.5, best_of=True), 12, "medium",
-          CC_NC_SA),
+          CC_NC_SA, settings=diffusers_settings(100, 3.5)),
     entry("audioldm2", "diffusers", ["cvssp/audioldm2"],
           "AudioLDM 2", "General text-to-audio; handles musical prompts.",
           diffusers_caps(30, 10, 100, 3.5, best_of=True), 12, "medium",
-          CC_NC_SA),
+          CC_NC_SA, settings=diffusers_settings(100, 3.5)),
     entry("audioldm2-large", "diffusers", ["cvssp/audioldm2-large"],
           "AudioLDM 2 Large", "Larger AudioLDM 2 — better quality, slower.",
           diffusers_caps(30, 10, 100, 3.5, est=5.0, best_of=True), 16, "slow",
-          CC_NC_SA),
+          CC_NC_SA, settings=diffusers_settings(100, 3.5)),
     entry("audioldm-s", "diffusers", ["cvssp/audioldm-s-full-v2"],
           "AudioLDM Small", "The original AudioLDM, small and quick.",
-          diffusers_caps(20, 10, 50, 2.5, est=1.5), 8, "fast", CC_NC_SA),
+          diffusers_caps(20, 10, 50, 2.5, est=1.5), 8, "fast", CC_NC_SA,
+          settings=diffusers_settings(50, 2.5)),
     entry("audioldm-m", "diffusers", ["cvssp/audioldm-m-full"],
           "AudioLDM Medium", "Mid-size AudioLDM.",
-          diffusers_caps(20, 10, 50, 2.5, est=2.0), 8, "fast", CC_NC_SA),
+          diffusers_caps(20, 10, 50, 2.5, est=2.0), 8, "fast", CC_NC_SA,
+          settings=diffusers_settings(50, 2.5)),
     entry("musicldm", "diffusers", ["ucsd-reach/musicldm"],
           "MusicLDM", "AudioLDM retrained on music (beat-synchronous mixup).",
           diffusers_caps(20, 10, 100, 2.0, est=2.5, best_of=True), 8, "medium",
-          CC_NC_SA),
+          CC_NC_SA, settings=diffusers_settings(100, 2.0)),
     # ---- Split & Recombine: stem separation ------------------------------
     task_entry(
         "separation-htdemucs", "separation", [],

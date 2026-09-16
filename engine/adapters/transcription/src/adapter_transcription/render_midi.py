@@ -18,7 +18,7 @@ import urllib.request
 
 import numpy as np
 
-from engine_protocol.adapter import aux_dir
+from engine_protocol.adapter import CancelledError, aux_dir
 
 # Two sources, tried in order. The osuosl mirror is MuseScore's own
 # distribution and stays first for that reason; the second is our copy of the
@@ -105,10 +105,15 @@ def ensure_soundfont(progress_cb=None) -> str:
                 os.unlink(tmp)
             except OSError:
                 pass
-            failures.append(f"{url.split('/')[2]}: {e}")
             # A cancel or a keyboard interrupt is not a source being down.
-            if not isinstance(e, Exception):
+            # CancelledError subclasses Exception, so an isinstance check on
+            # Exception used to let it through: a cancel here was recorded as a
+            # dead source, the mirror was tried, and the job failed with
+            # "could not fetch the SoundFont from any source — host: ; host: "
+            # (str(CancelledError()) is empty).
+            if isinstance(e, CancelledError) or not isinstance(e, Exception):
                 raise
+            failures.append(f"{url.split('/')[2]}: {e}")
     raise OSError("could not fetch the SoundFont from any source — "
                   + "; ".join(failures))
 

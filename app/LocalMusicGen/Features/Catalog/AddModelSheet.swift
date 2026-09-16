@@ -123,7 +123,12 @@ struct AddModelSheet: View {
     }
 
     private func inspect() {
-        guard let client = catalog.client else { return }
+        // Both buttons used to bail on a bare `guard` when the engine was down:
+        // no spinner, no message, nothing. Say so instead of being inert.
+        guard let client = catalog.client else {
+            errorMessage = APIError.notConnected.localizedDescription
+            return
+        }
         let repo = repoId.trimmingCharacters(in: .whitespaces)
         inspecting = true
         errorMessage = nil
@@ -139,8 +144,15 @@ struct AddModelSheet: View {
     }
 
     private func add() {
-        guard let client = catalog.client,
-              let repo = candidate?.hfRepos.first?.repoId else { return }
+        guard let client = catalog.client else {
+            errorMessage = APIError.notConnected.localizedDescription
+            return
+        }
+        guard let repo = candidate?.hfRepos.first?.repoId else {
+            errorMessage = "That repository has nothing to download — press "
+                + "Check again."
+            return
+        }
         Task {
             do {
                 _ = try await client.addCustomModel(repoId: repo)

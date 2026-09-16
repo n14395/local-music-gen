@@ -18,13 +18,25 @@ Error codes used in this document: `UNAUTHORIZED`, `NOT_FOUND`, `VALIDATION`,
 `DOWNLOAD_ACTIVE`, `DELETE_ACTIVE`, `JOB_NOT_CANCELABLE`, `ENGINE_BUSY`, `OOM`,
 `WORKER_CRASHED`, `UNSUPPORTED_MODEL`, `INTERNAL`.
 
+**Every** non-2xx carries that envelope, the ones the web framework raises by
+itself included: an unknown route or method is `404` / `405 NOT_FOUND`, a body
+that is not a JSON object is `422 VALIDATION` (the parser's complaints under
+`detail.errors`), and an unhandled fault is `500 INTERNAL` naming the exception.
+Numeric fields follow the same rule rather than crashing on the way in: a
+present `null` is read as absent and takes the field's default, and anything
+that is not a number (`"two"`, `[]`, `true`) is `422 VALIDATION` — see `count`
+and `duration_s` in 5.1.
+
 Memory warning: workers report their Metal/accelerator memory every 2 s. When
 usage crosses the warning level (default 90% of physical RAM;
 `LOCALMUSICGEN_MEM_GUARD_BYTES` in the engine's environment overrides, `0`
-disables), the engine emits `engine.warning` plus a `job.log` line for the
-running job — it never stops the job (transient allocator spikes can cross the
-level during legitimate generations). The warning re-arms after usage falls
-below 85% of the level.
+disables), the engine first **evicts what nothing is using** — every idle warm
+worker except the one that tripped the guard, and the resident model too when
+no job is using it and it is not pinned (each of those emits
+`worker.state: "stopped"`) — and then emits `engine.warning` plus a `job.log`
+line for the running job, naming anything it unloaded. It never stops the job
+(transient allocator spikes can cross the level during legitimate generations).
+The warning re-arms after usage falls below 85% of the level.
 
 ## 1. Process bootstrap
 
@@ -403,7 +415,13 @@ as their value: the app first
 (audio: any format soundfile reads; ≤ 256 MB) →
 `201 {"upload_id": "up_...", "bytes": N, "filename": "..."}`, then submits the
 job with `"params": {"melody_audio": "up_..."}`. An unknown upload id fails the
-submit with `422 VALIDATION`. Uploads are transient: the engine purges them at
+submit with `422 VALIDATION`. Over the cap is `422 VALIDATION` too, and a
+request that declares its size in `Content-Length` is refused **before** the
+body is read rather than after — a client sending 400 MB should not have to
+send all of it to be told no. Without a declared length (a chunked upload) the
+engine still reads to the end and drops the bytes, because hanging up on a
+half-sent body reaches the client as a connection error with nothing in it to
+explain the refusal. Uploads are transient: the engine purges them at
 startup, so ids never outlive the engine process. `"json"` params carry a
 JSON-encoded **string** (the params dict itself stays flat scalars on the wire).
 
@@ -747,7 +765,7 @@ other, never half of one, and the terminal event names which went.
   "lyrics": null,                     // 422 VALIDATION if the model lacks supports_lyrics
   "duration_s": 20,                   // clamped to capabilities.duration — to
                                       // unlocked_max_s where declared, else max_s
-  "count": 1,                         // takes asked for, ≤ outputs_per_job_max.
+  "count": 1,                         // takes asked for, ≥ 1 and ≤ outputs_per_job_max.
                                        // N>1 is expanded into N sibling jobs,
                                        // one per take — see below
   "params": {"guidance_scale": 3.0, "seed": null},   // validated against the model's
@@ -787,7 +805,10 @@ generate-only entries make an audio slot mandatory that way — VampNet's
 load and a failed job instead of this refusal.
 
 Refusals: `409 MODEL_NOT_INSTALLED`, `409 INSUFFICIENT_RAM` (unless `force`),
-`422 VALIDATION`.
+`422 VALIDATION`. `count` and `duration_s` are validated as numbers before
+anything else happens to them (see the preamble): `null` means "use the
+default", `count < 1` and any non-number are `422 VALIDATION`, and `params`
+must be an object.
 
 Jobs run **strictly serially** (one at a time, engine-enforced). The scheduler may
 reorder equal-priority queued jobs to run same-family jobs consecutively (warm worker);
@@ -1387,6 +1408,16 @@ Monotonically increasing integer `id:` per event. `Last-Event-ID` replays from a
 buffer of the last 500 events (best effort); after any reconnect the app also re-fetches
 `/v1/models`, `/v1/downloads`, and `/v1/jobs`, so replay gaps are safe.
 
+Each subscriber's backlog is bounded (2000 frames). A client that holds the
+connection open but stops reading — a suspended app, a full TCP window — is
+**dropped** rather than buffered: it gets one last `stream.overflow` frame and
+the stream ends. That frame deliberately carries no `id:`, so the client's
+resume point stays at the last event it really saw and the reconnect replays
+the gap out of the ring; dropping individual events instead would leave a hole
+the resume point had already moved past, which is precisely what `Last-Event-ID`
+cannot recover. A gap longer than the ring is still safe for the usual reason —
+the refetch above.
+
 | event                | data payload |
 |----------------------|--------------|
 | `download.progress`  | `DownloadInfo` |
@@ -1407,6 +1438,7 @@ buffer of the last 500 events (best effort); after any reconnect the app also re
 | `library.failed`     | `LibraryOperation` with `state: "failed"` and `error` |
 | `worker.state`       | `{"state":"loading"\|"loaded"\|"stopped","model_id","family"}` — what the warm worker holds (drives the app's titlebar) |
 | `system.telemetry`   | the `usage` object from `/v1/system` — every 2 s while a worker is alive, every 10 s idle, so the sidebar readout is live without polling. Same nullability rules; skipped entirely while no client is subscribed |
+| `stream.overflow`    | `{"message"}` — the last frame on a stream the engine is closing because this client stopped reading; carries no `id:`. Reconnect with `Last-Event-ID` |
 | `engine.warning`     | `{"message"}` (e.g. MPS CPU-fallback, RAM > 85 %, a library root that could not be created at startup because its volume is not mounted — the engine comes up anyway and those models read `not_installed` until it is) |
 
 ### 6.1 What `job.log` mirrors

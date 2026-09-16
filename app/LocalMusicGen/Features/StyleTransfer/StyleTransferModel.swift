@@ -528,8 +528,17 @@ final class StyleTransferModel {
             return false
         }
         pendingPreset = nil
-        apply(preset: preset, presetName: presetName, source: newSource,
-              models: models)
+        guard apply(preset: preset, presetName: presetName,
+                    source: newSource, models: models) else {
+            // `apply` refuses while a chain is running, and the preset used to
+            // be gone at that point — `pendingPreset` is what the "Apply
+            // preset" button is bound to, so clearing it took away the only
+            // way to act on the notice's own advice ("wait for it, or dismiss
+            // it"). Held instead, and the caller is told nothing was applied.
+            pendingPreset = PendingPreset(preset: preset, name: presetName,
+                                          source: newSource)
+            return false
+        }
         return true
     }
 
@@ -542,12 +551,13 @@ final class StyleTransferModel {
 
     var pendingPreset: PendingPreset?
 
-    /// Accept the preset that `seed` held back.
+    /// Accept the preset that `seed` held back. Kept on offer if it cannot be
+    /// applied yet — same reason as in `seed`.
     func applyPendingPreset(models: [ModelInfo]) {
         guard let pending = pendingPreset else { return }
+        guard apply(preset: pending.preset, presetName: pending.name,
+                    source: pending.source, models: models) else { return }
         pendingPreset = nil
-        apply(preset: pending.preset, presetName: pending.name,
-              source: pending.source, models: models)
     }
 
     func dismissPendingPreset() {
@@ -555,13 +565,15 @@ final class StyleTransferModel {
         notice = nil
     }
 
+    /// Whether it applied. False means a chain is in flight and the caller
+    /// still owns the preset.
     private func apply(preset: StylePreset, presetName: String?,
                        source newSource: PickedMaterial?,
-                       models: [ModelInfo]) {
+                       models: [ModelInfo]) -> Bool {
         guard !isChainRunning else {
             notice = "A chain is still running. Wait for it, or dismiss it, "
                 + "before starting something else."
-            return
+            return false
         }
         presetId = preset.id
         self.presetName = presetName
@@ -589,6 +601,7 @@ final class StyleTransferModel {
         outputName = ""
         notice = preset.notice
         reconcileSelection(in: models)
+        return true
     }
 
     /// Put a source in without disturbing anything else — the Library's

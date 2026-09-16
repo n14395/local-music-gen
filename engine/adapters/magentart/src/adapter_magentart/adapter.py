@@ -27,7 +27,7 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb)
+                                     ProgressCb, release_accelerator_memory)
 
 REPO_ID = "google/magenta-realtime-2"
 
@@ -220,10 +220,19 @@ class MagentaRTAdapter(ModelAdapter):
         # Notes and drums were pinned at 1.0 because nothing was driving them;
         # now that both channels can carry real conditioning, each gets the
         # dial the exported graph already had.
+        # `is not None`, not `or`: both note dials are declared -1.0-7.0,
+        # and `0.0 or 3.0` is 3.0 — so asking for "ignore the notes", the most
+        # meaningful end of each slider, silently rendered at hard
+        # note-following instead (audit 09-B4). guidance_scale's own range
+        # starts at 0.5, so it cannot be bitten, but it reads the same way.
+        def _scale(key: str, default: float) -> float:
+            value = params.get(key)
+            return float(value) if value is not None else default
+
         cfg_scales = {
-            "musiccoca": float(params.get("guidance_scale") or 3.0),
-            "notes": float(params.get("notes_guidance") or 3.0),
-            "drums": float(params.get("drums_guidance") or 3.0)}
+            "musiccoca": _scale("guidance_scale", 3.0),
+            "notes": _scale("notes_guidance", 3.0),
+            "drums": _scale("drums_guidance", 3.0)}
 
         def style_input(path_key: str, text: str | None):
             """A Waveform for an audio param, else the text, else None."""
@@ -330,9 +339,4 @@ class MagentaRTAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.mrt = None
-        try:
-            import mlx.core as mx
-
-            mx.clear_cache()
-        except Exception:  # noqa: BLE001 — unload must never raise
-            pass
+        release_accelerator_memory()

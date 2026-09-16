@@ -11,11 +11,14 @@ model that had nothing to say.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import sys
 import tempfile
+import threading
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,8 +27,10 @@ sys.path.insert(0, str(ROOT / "engine/protocol/src"))
 
 from engine_protocol.adapter import AUX_DIRS, AUX_LEGACY_DIRS  # noqa: E402
 from engine_protocol.staging import INCOMPLETE_MARKER  # noqa: E402
-from supervisor import envs                         # noqa: E402
+from supervisor import envs, events                 # noqa: E402
 from supervisor.config import Settings              # noqa: E402
+from supervisor.jobqueue import (JobQueue, SubmitError,  # noqa: E402
+                                 _number)
 from supervisor.logmirror import LogMirror          # noqa: E402
 from supervisor.registry import Registry            # noqa: E402
 from supervisor.worker import Worker                # noqa: E402
@@ -326,6 +331,125 @@ def check_snapshot_twin() -> None:
                 os.environ["HF_HOME"] = saved_hf
 
 
+# MARK: - submit validation
+
+
+def check_submit_numbers() -> None:
+    """`count` and `duration_s` are coerced through one helper that refuses in
+    the contract's shape. They used to be bare int()/float(): a present-but-null
+    key does not take `body.get`'s default, so `{"duration_s": null}` was a
+    TypeError nothing caught and uvicorn's 500 in plain text."""
+    def refusal(body, key, default):
+        try:
+            _number(body, key, float, default)
+        except SubmitError as e:
+            return (e.status, e.code)
+        return None
+
+    check("a present-but-null number takes the default",
+          _number({"duration_s": None}, "duration_s", float, 30.0) == 30.0)
+    check("an absent number takes the default",
+          _number({}, "count", int, 1) == 1)
+    check("a numeric string is still accepted",
+          _number({"duration_s": "12"}, "duration_s", float, 30.0) == 12.0)
+    for bad in ("two", [], {}, True):
+        check(f"{bad!r} is a 422, not a 500",
+              refusal({"count": bad}, "count", 1) == (422, "VALIDATION"),
+              repr(refusal({"count": bad}, "count", 1)))
+
+
+# MARK: - memory pressure
+
+
+def _fake_worker(killed: list[str], family: str, model_id: str,
+                 idle: float | None):
+    w = types.SimpleNamespace(family=family, loaded_model_id=model_id,
+                              idle_since=idle)
+    w.kill = lambda: killed.append(model_id)
+    return w
+
+
+def check_memory_relief() -> None:
+    """When the guard trips, idle warm workers go before the warning does.
+
+    Built without __init__ on purpose (the real one starts two threads); the
+    five attributes below are the whole of what the method touches.
+    """
+    killed: list[str] = []
+    q = object.__new__(JobQueue)
+    q.lock = threading.RLock()
+    culprit = _fake_worker(killed, "dsp", "dsp-mixdown", None)
+    idle = _fake_worker(killed, "analysis", "analysis-essentia", 100.0)
+    busy = _fake_worker(killed, "msst", "msst-sep", None)
+    resident = _fake_worker(killed, "acestep", "acestep-v1", 0.0)
+    q.small_workers = {"dsp": culprit, "analysis": idle, "msst": busy}
+    q.worker = resident
+    q.active = None
+    q.pinned_model_id = None
+    q.bus = _FakeBus()
+
+    freed = q.relieve_memory_pressure(culprit)
+    check("the idle pool member is dropped", "analysis-essentia" in freed)
+    check("so is the idle resident model", "acestep-v1" in freed)
+    check("the worker that tripped the guard is not",
+          "dsp-mixdown" not in freed and q.small_workers.get("dsp") is culprit)
+    check("nor is one that is mid-job",
+          "msst-sep" not in freed and q.small_workers.get("msst") is busy)
+    check("everything freed is actually killed", sorted(killed) == sorted(freed),
+          f"{killed} vs {freed}")
+    check("and the titlebar is told the resident went",
+          ("worker.state", {"state": "stopped", "model_id": "acestep-v1",
+                            "family": "acestep"}) in q.bus.events)
+
+    # The pin is the user asking for this model to stay loaded; the idle loop
+    # would reload it within the second, which is worse than the pressure.
+    killed.clear()
+    q2 = object.__new__(JobQueue)
+    q2.lock = threading.RLock()
+    pinned = _fake_worker(killed, "acestep", "acestep-v1", 0.0)
+    q2.small_workers, q2.worker, q2.active = {}, pinned, None
+    q2.pinned_model_id = "acestep-v1"
+    q2.bus = _FakeBus()
+    check("a pinned resident model is never evicted",
+          q2.relieve_memory_pressure(
+              _fake_worker(killed, "x", "x", None)) == [] and not killed)
+
+
+# MARK: - event stream
+
+
+def check_event_overflow() -> None:
+    """A subscriber that stops reading is dropped, not buffered forever — and
+    it is told, so it reconnects with Last-Event-ID and the ring replays what
+    it missed. A frame silently dropped from the middle of its queue would be
+    a hole its resume point has already moved past."""
+    async def run() -> tuple[int, str, int]:
+        cap = events.SUBSCRIBER_QUEUE_MAX
+        events.SUBSCRIBER_QUEUE_MAX = 5
+        try:
+            bus = events.EventBus(asyncio.get_running_loop())
+            stream = bus.stream(None)
+            first = asyncio.create_task(stream.__anext__())
+            await asyncio.sleep(0)          # let it subscribe
+            bus.emit("job.progress", {"i": 0})
+            await first
+            for i in range(50):             # nobody is reading now
+                bus.emit("job.progress", {"i": i})
+            subscribers = len(bus.subscribers)
+            frames = [f async for f in stream]
+            return subscribers, frames[-1] if frames else "", len(frames)
+        finally:
+            events.SUBSCRIBER_QUEUE_MAX = cap
+
+    subscribers, last, count = asyncio.run(run())
+    check("a stalled subscriber is dropped from the bus", subscribers == 0)
+    check("its backlog is dropped with it", count <= 2, f"{count} frames left")
+    check("and it gets one frame saying so",
+          last.startswith("event: stream.overflow"), repr(last))
+    check("that frame carries no id, so the resume point stands",
+          "id:" not in last, repr(last))
+
+
 def check_required_inputs() -> None:
     """Submit now presence-checks non-nullable audio/midi/json params for
     every task, generate included. That is only safe while `nullable: false`
@@ -351,6 +475,9 @@ if __name__ == "__main__":
     check_envs_husk()
     check_relocate_tombstone()
     check_snapshot_twin()
+    check_submit_numbers()
+    check_memory_relief()
+    check_event_overflow()
     check_required_inputs()
     print()
     if FAILURES:

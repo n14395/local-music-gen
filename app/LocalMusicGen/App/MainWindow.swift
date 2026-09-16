@@ -54,6 +54,9 @@ struct MainWindow: View {
     /// `measuredWidth`.
     private final class WidthBox { var value: CGFloat = 0 }
 
+    /// The score Track ▸ Show Notation opened — see `openRequestedNotation`.
+    @State private var openScore: NotationDocument?
+
     /// Bump when the recommended set changes enough to be worth re-offering.
     private static let onboardingVersionCurrent = 1
 
@@ -261,6 +264,18 @@ struct MainWindow: View {
         // thing than what it holds.
         .sheet(isPresented: $shell.showShortcuts) {
             KeyboardShortcutsSheet { shell.showShortcuts = false }
+        }
+        // Track ▸ Show Notation. Consumed here rather than by the song's
+        // detail pane, unlike Rename and Edit Notes: the item is enabled
+        // from a part row and from the Editor, where no song pane is on
+        // screen to consume it. `initial` for the reason the pane's
+        // mailboxes give — the request may already be set on first draw.
+        .onChange(of: shell.notationRequest, initial: true) {
+            openRequestedNotation()
+        }
+        .sheet(item: $openScore) { score in
+            NotationSheet(document: score, playback: env.playback,
+                          onRenderNotes: renderNotesAction)
         }
 
         .onChange(of: env.catalog.hasLoaded) { offerOnboarding() }
@@ -702,6 +717,21 @@ struct MainWindow: View {
         return (material.name, fields.joined(separator: ", ") + ",")
     }
 
+    /// The Track menu's request: the newest ABC document on the song, with
+    /// the notes its job produced. The mailbox is cleared before the sheet
+    /// opens, so one request opens one sheet — and a song that has lost its
+    /// documents since the menu was drawn opens nothing rather than a blank.
+    private func openRequestedNotation() {
+        guard let songId = shell.notationRequest else { return }
+        shell.notationRequest = nil
+        guard let doc = NotationDocument.newest(
+            in: env.textStore.docs(for: songId, kind: .abc)) else { return }
+        let title = env.library.song(id: songId)?.title ?? "Notation"
+        let parts = (try? env.partsRepo.allParts(forSong: songId)) ?? []
+        openScore = NotationDocument.resolve(doc: doc, parts: parts,
+                                             songTitle: title)
+    }
+
     /// "Render…" on a MIDI part, available only while a SoundFont renderer is
     /// installed. Returning nil is a supported state, not a stub: the Library
     /// dims the control and says what is missing rather than hiding it.
@@ -1049,11 +1079,26 @@ struct SidebarFooterCard: View {
                     .foregroundStyle(Bench.Palette.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let fraction = env.telemetry.memoryFraction {
+            if showsTelemetry, let fraction = env.telemetry.memoryFraction {
                 BenchProgressBar(fraction: fraction,
                                  tint: isRendering ? Bench.Palette.accent
                                                    : Bench.Palette.ok)
             }
+        }
+    }
+
+    /// Whether there is an engine behind the numbers.
+    ///
+    /// Telemetry only ever arrives from a live engine, so a card drawn while
+    /// the phase says "Stopped", "Failed" or "Starting…" would be printing the
+    /// last reading the dead one gave — which is exactly what it used to do,
+    /// memory bar and all. `TelemetryStore.reset()` clears the moving figures
+    /// on disconnect; this is the other half, for the ones that outlive it
+    /// (the accelerator's working set, and the "— / 36 GB" line it makes).
+    private var showsTelemetry: Bool {
+        switch env.backendStatus.phase {
+        case .ready, .degraded: true
+        default: false
         }
     }
 
@@ -1079,7 +1124,9 @@ struct SidebarFooterCard: View {
             lines.append(env.backendStatus.workerModelState == "loading"
                          ? "\(name) loading…" : "\(name) loaded")
         }
-        if let usage = isRendering ? env.telemetry.busyLine : env.telemetry.memoryLine {
+        if showsTelemetry,
+           let usage = isRendering ? env.telemetry.busyLine
+                                   : env.telemetry.memoryLine {
             lines.append(usage)
         }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")

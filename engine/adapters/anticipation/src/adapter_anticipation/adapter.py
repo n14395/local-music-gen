@@ -20,7 +20,7 @@ import secrets
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, release_accelerator_memory)
 
 
 class AnticipationAdapter(ModelAdapter):
@@ -246,3 +246,6 @@ class AnticipationAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
+        # load() puts the LM on MPS when it is available; dropping the
+        # reference does not hand its Metal blocks back.
+        release_accelerator_memory()

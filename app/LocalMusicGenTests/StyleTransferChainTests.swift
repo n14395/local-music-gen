@@ -391,3 +391,50 @@ final class StyleTransferChainTests: XCTestCase {
         }
     }
 }
+
+/// What an Actions card handed to a workspace that is busy.
+@MainActor
+final class StyleTransferPresetHandoffTests: XCTestCase {
+
+    private func running() -> StyleTransferModel {
+        let workspace = StyleTransferModel()
+        let plan = StyleTransferChain(
+            steps: [.restyle(modelId: "m", modelName: "M",
+                             kinds: ["stem.drums"])],
+            keptKinds: ["stem.vocals"], replacedKinds: ["stem.drums"],
+            blockedReason: nil, warnings: [], needsSplitFirst: false)
+        workspace.chain = .init(id: "run-1", plan: plan, progress: .init())
+        return workspace
+    }
+
+    /// A preset offered while a chain runs is held, not thrown away: the
+    /// "Apply preset" button is bound to `pendingPreset`, so clearing it took
+    /// away the only way to act on the notice's own advice.
+    func testAPresetOfferedDuringAChainIsKept() {
+        let workspace = running()
+        XCTAssertTrue(workspace.isChainRunning)
+        let preset = StylePreset(id: "restyle-this", mode: .cover,
+                                 promptSeed: "brass band")
+
+        let applied = workspace.seed(preset: preset, presetName: "Restyle",
+                                     source: nil, models: [])
+        XCTAssertFalse(applied, "nothing was applied, so do not say it was")
+        XCTAssertNotNil(workspace.pendingPreset)
+        XCTAssertEqual(workspace.prompt, "", "the chain still owns the setup")
+
+        // …and it can be taken up once the chain is out of the way.
+        workspace.dismissChain()
+        workspace.applyPendingPreset(models: [])
+        XCTAssertNil(workspace.pendingPreset)
+        XCTAssertEqual(workspace.prompt, "brass band")
+    }
+
+    /// The offer survives a press that is still too early.
+    func testApplyingTooEarlyKeepsTheOffer() {
+        let workspace = running()
+        workspace.seed(preset: StylePreset(id: "p", mode: .cover),
+                       presetName: "P", source: nil, models: [])
+        workspace.applyPendingPreset(models: [])
+        XCTAssertNotNil(workspace.pendingPreset)
+    }
+}

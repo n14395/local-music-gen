@@ -292,6 +292,10 @@ final class MenuCommandTests: XCTestCase {
         // `ShortcutCatalog.delete`.
         XCTAssertEqual(ShortcutCatalog.delete.display,
                        "\u{21E7}\u{2318}\u{232B}")
+        // The transport bar's A/B tooltip renders this one rather than naming
+        // a key of its own — it used to say "Tab", and pressing Tab moves
+        // focus.
+        XCTAssertEqual(ShortcutCatalog.switchSide.display, "\u{2325}\u{21E5}")
     }
 
     /// Keys AppKit has already given to the field editor.
@@ -407,6 +411,30 @@ final class MenuCommandTests: XCTestCase {
         XCTAssertEqual(ShellCommandRouting.duration(605), "10:05")
     }
 
+    // MARK: - Show Notation
+
+    /// Notation is filed on songs, so the item aims at the song a picked
+    /// part came from — and at nothing when nothing is picked. It carries no
+    /// key on purpose: the shortcut table is deliberately small, and it is
+    /// not in `installed`, which is what the collision test walks.
+    func testShowNotationAimsAtTheSongOfThePickedRow() {
+        XCTAssertEqual(
+            ShellCommandRouting.notationSongId(song: makeSong(), part: nil),
+            "s1")
+        let part = PartRecord(
+            id: "p1", songId: "s1", kind: "notes.piano", name: "piano",
+            fileName: "p1.mid", format: "midi", previewFileName: nil,
+            modelId: "bp", modelName: "Basic Pitch", jobId: "job_1",
+            splitParamsJSON: "{}", durationS: nil, sampleRate: nil,
+            createdAt: Date())
+        XCTAssertEqual(ShellCommandRouting.notationSongId(song: nil, part: part),
+                       "s1")
+        XCTAssertNil(ShellCommandRouting.notationSongId(song: nil, part: nil))
+        XCTAssertFalse(ShortcutCatalog.installed.contains {
+            $0.title == "Show Notation"
+        })
+    }
+
     // MARK: - Shell mailboxes
 
     /// The Settings pane, the notes field and the shortcuts sheet are all
@@ -417,6 +445,7 @@ final class MenuCommandTests: XCTestCase {
         let shell = freshShell()
         XCTAssertNil(shell.settingsPane)
         XCTAssertNil(shell.notesRequest)
+        XCTAssertNil(shell.notationRequest)
         XCTAssertNil(shell.pendingBatchDelete)
         XCTAssertFalse(shell.showShortcuts)
         // Not a mailbox: a display preference the View menu toggles, and the

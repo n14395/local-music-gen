@@ -52,7 +52,25 @@ final class MultiPartPlayer {
         var left: Double
         var right: Double
     }
-    var metersEnabled = false
+    /// Opt-in metering. Flipping it while the graph is up installs or removes
+    /// the tap there and then: only `teardown` ever removed it, so switching
+    /// meters off mid-preview left a 2048-frame tap running for the rest of
+    /// it, hopping to the main actor ~21x a second to publish a level nobody
+    /// was drawing. With the graph down there is nothing to install on —
+    /// `prepare` puts the tap in once the engine is started, which is also
+    /// the only point the mixer's output format is resolved.
+    var metersEnabled = false {
+        didSet {
+            guard metersEnabled != oldValue, engine.isRunning else { return }
+            if metersEnabled {
+                if !meterTapInstalled { installMeterTap() }
+            } else if meterTapInstalled {
+                engine.mainMixerNode.removeTap(onBus: 0)
+                meterTapInstalled = false
+                meterDb = nil
+            }
+        }
+    }
     /// The workbench sums its items, so headroom scales with their count.
     /// The Editor's items are one timeline cut into pieces — never more than
     /// two sounding at once (a crossfade) — and scaling by segment count
@@ -436,7 +454,11 @@ final class MultiPartPlayer {
         ) { @Sendable [weak self] buffer, _ in
             guard let value = Self.peakDb(in: buffer) else { return }
             Task { @MainActor in
-                guard let self, self.state == .playing else { return }
+                // `metersEnabled` as well as the state: a buffer that was
+                // already on its way when the meter was switched off must not
+                // publish a level after the tap has gone.
+                guard let self, self.metersEnabled,
+                      self.state == .playing else { return }
                 // Gated: this fires about twenty-one times a second for the
                 // length of the preview, and a level that has not moved is a
                 // redraw of the meter for nothing. `MeterLevel` is a struct

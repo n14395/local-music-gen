@@ -767,22 +767,35 @@ final class EditorStore {
 
     // MARK: edit actions
 
+    /// Every range action needs a range with length in it.
+    ///
+    /// `EditProgram.apply` refuses a zero-length range, but `perform` had
+    /// already appended the op — so dragging the selection's end handle back
+    /// onto its start and pressing Delete left a "0:00.00 → 0:00.00" row in
+    /// the edit list, an undo step, `isDirty`, and an "Apply 1 edit" button
+    /// for a render that changes nothing. The ⌫ key command always gated on
+    /// length; the toolbar buttons did not, so the guard belongs here.
+    private var actionableSelection: EditRange? {
+        guard let selection, selection.length > 0 else { return nil }
+        return selection
+    }
+
     func trimToSelection() {
-        guard let selection else { return }
+        guard let selection = actionableSelection else { return }
         perform("Trim") { $0.ops.append(EditOp(kind: .trim(selection))) }
         self.selection = nil
         cursorS = 0
     }
 
     func deleteSelection() {
-        guard let selection else { return }
+        guard let selection = actionableSelection else { return }
         perform("Delete") { $0.ops.append(EditOp(kind: .delete(selection))) }
         self.selection = nil
         cursorS = selection.start.clamped(to: 0...max(0, timelineDurationS))
     }
 
     func silenceSelection() {
-        guard let selection else { return }
+        guard let selection = actionableSelection else { return }
         perform("Silence") { $0.ops.append(EditOp(kind: .silence(selection))) }
     }
 
@@ -799,7 +812,7 @@ final class EditorStore {
     }
 
     func reverseSelection() {
-        guard let selection else { return }
+        guard let selection = actionableSelection else { return }
         perform("Reverse") { $0.ops.append(EditOp(kind: .reverse(selection))) }
         ensureReversedSource()
     }

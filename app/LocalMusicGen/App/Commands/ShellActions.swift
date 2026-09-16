@@ -126,7 +126,7 @@ struct ShellActions {
             edit: { env.studio.pending = .edit(materialId: $0.id) },
             playOriginal: { song in
                 env.playback.play(url: song.backupURL,
-                                  songId: song.id + ".original",
+                                  songId: song.originalPlaybackId,
                                   title: song.title,
                                   duration: song.durationS,
                                   subtitle: "ORIGINAL \u{00B7} "
@@ -164,7 +164,12 @@ struct ShellActions {
     func revert(_ song: SongRecord) {
         // By id: the Editor may be holding a different track mid-edit, and
         // taking that session over to act on this one is a surprise.
-        if !env.editor.revert(songId: song.id) {
+        if env.editor.revert(songId: song.id) {
+            // The restore sweeps the backup the A/B switch may be auditioning
+            // under its own transport id; a player holding a deleted file is
+            // a stall with no error.
+            env.playback.stop(songId: song.originalPlaybackId)
+        } else {
             shell.revertBlocked = env.editor.renderingTitle ?? "another track"
         }
     }
@@ -223,6 +228,16 @@ struct ShellActions {
         guard case .song(let id) = target else { return }
         revealSongForEditing(id)
         shell.notesRequest = id
+    }
+
+    /// Open the notation viewer on a song's newest ABC document. `MainWindow`
+    /// consumes the request, so unlike the two field mailboxes above this
+    /// needs no pane revealed first: it works from a part row and from the
+    /// Editor, where no song pane is on screen.
+    func showNotation(songId: String?) {
+        guard let songId else { return }
+        shell.notationRequest = songId
+        ShellWindow.focus()
     }
 
     /// Land on the Library, on the scope that lists this track, with it
@@ -286,7 +301,11 @@ struct ShellActions {
     /// itself and lands the user on the imported track.
     func importAudio() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.audio]
+        // The same rule as `AudioDrop.isAudio`, which the drop target and
+        // `importFolder()` both use. With `[.audio]` alone the panel greyed out
+        // the `.mov`/`.mp4` captures that a drag of the very same files
+        // imported fine.
+        panel.allowedContentTypes = [.audio, .audiovisualContent]
         panel.allowsMultipleSelection = true
         panel.prompt = "Import"
         panel.message = "Choose audio to add to the library"
@@ -417,7 +436,10 @@ struct ShellActions {
         switch which {
         case .song(let id):
             guard let song = env.library.song(id: id) else { return }
+            // Both ids: the stashed original auditions under its own transport
+            // id and is disposed with the track.
             env.playback.stop(songId: song.id)
+            env.playback.stop(songId: song.originalPlaybackId)
             env.library.delete(song)
             if shell.selectedSongId == id { shell.selectedSongId = nil }
             shell.checked.remove(id)
@@ -539,7 +561,10 @@ struct ShellActions {
         }
         // Anything playing out of a file about to go is stopped first; a
         // player holding a deleted file is a stall with no error.
-        for song in selection.songs { env.playback.stop(songId: song.id) }
+        for song in selection.songs {
+            env.playback.stop(songId: song.id)
+            env.playback.stop(songId: song.originalPlaybackId)
+        }
         for part in selection.parts { env.playback.stop(songId: part.id) }
         env.library.delete(selection.songs)
         env.partsStore.delete(selection.parts)

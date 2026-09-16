@@ -79,6 +79,42 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(try repo.search(filters).count, 0)
     }
 
+    /// `FTS5Pattern(matchingAllPrefixesIn:)` is failable, and the nil it
+    /// hands back for a query it finds no token in bound as SQL NULL — which
+    /// `MATCH` rejects as a syntax error, so the throw emptied the entire
+    /// library through `(try? repo.search(filters)) ?? []`. A query with no
+    /// searchable word in it narrows nothing.
+    func testPunctuationOnlyQueryNarrowsNothing() throws {
+        let repo = try makeRepo()
+        try repo.insert(song(title: "Synthwave dream", prompt: "dreamy"))
+        try repo.insert(song(title: "Lo-fi", prompt: "warm vinyl crackle"))
+
+        var filters = LibraryRepository.Filters()
+        for query in ["!!!", "--", "&", "\"", "  ?  "] {
+            filters.query = query
+            XCTAssertEqual(try repo.search(filters).count, 2,
+                           "\(query) must not empty the library")
+        }
+    }
+
+    /// Nothing ever deleted a `tag` row, so every name typed once stayed in
+    /// the Library's filter menu forever — and picking one showed an empty
+    /// library.
+    func testTagRowsGoWhenNothingCarriesThem() throws {
+        let repo = try makeRepo()
+        try repo.insert(song(id: "t1", title: "One", prompt: "p"))
+        try repo.insert(song(id: "t2", title: "Two", prompt: "p"))
+        try repo.setTags(["chill", "demo"], for: "t1")
+        try repo.setTags(["demo"], for: "t2")
+        XCTAssertEqual(try repo.allTags(), ["chill", "demo"])
+
+        // "chill" is nobody's now; "demo" is still t2's.
+        try repo.setTags([], for: "t1")
+        XCTAssertEqual(try repo.allTags(), ["demo"])
+        try repo.setTags([], for: "t2")
+        XCTAssertEqual(try repo.allTags(), [])
+    }
+
     func testDelete() throws {
         let repo = try makeRepo()
         try repo.insert(song(id: "g1", title: "One", prompt: "p", group: "grp_x"))

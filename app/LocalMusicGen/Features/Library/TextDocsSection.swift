@@ -17,6 +17,11 @@ struct TextDocsSection: View {
     let playback: PlaybackController?
     /// What "Describe…" does — routes to the listening card. nil hides it.
     var onDescribe: (() -> Void)?
+    /// What "Open" on a notation slot does. The host resolves the document
+    /// into a `NotationDocument` and presents `NotationSheet`, because only
+    /// the host knows the song's parts and has a route to the renderer. nil
+    /// hides the button.
+    var onOpenNotation: ((TextDocRecord) -> Void)?
 
     @Environment(TextStore.self) private var textStore: TextStore?
     @Environment(AppSettings.self) private var appSettings: AppSettings?
@@ -24,9 +29,36 @@ struct TextDocsSection: View {
     @State private var editingId: String?
     @State private var draft = ""
     @State private var confirmDeleteId: String?
+    /// A "Write my own ＋" document that is being typed but has not been
+    /// written yet. The row used to be inserted blank the moment the button was
+    /// pressed, so Cancel — and Done on an untouched draft — left a permanent
+    /// empty card attributed to YOU.
+    @State private var pendingDoc: TextDocRecord?
+    /// Notation slots showing their ABC source instead of the engraving.
+    @State private var showingABCText: Set<String> = []
+    /// What the page said about each notation slot's last engraving. A report
+    /// of no tunes switches the slot to its text; one taller than the cap adds
+    /// "Open to see all". Cleared when the text is edited, so a document
+    /// typed into real notation is engraved again rather than staying prose.
+    @State private var renders: [String: NotationRender] = [:]
+
+    /// How tall a slot's score may grow before it defers to the sheet. A
+    /// four-voice transcription is a page of SVG, and the pane is a column.
+    static let scoreHeightCap: CGFloat = 360
 
     private var docs: [TextDocRecord] {
         textStore?.docs(for: ownerId) ?? []
+    }
+
+    /// The stored documents of one kind, plus the uncommitted new one while it
+    /// is the slot being edited.
+    private func rows(of kind: TextDocKind) -> [TextDocRecord] {
+        var rows = docs.filter { $0.kindValue == kind }
+        if let pendingDoc, pendingDoc.kindValue == kind,
+           editingId == pendingDoc.id {
+            rows.append(pendingDoc)
+        }
+        return rows
     }
 
     /// Kinds in reading order: what it is, what it says, what it sang,
@@ -35,10 +67,11 @@ struct TextDocsSection: View {
         [.description, .caption, .qa, .lyrics, .tags, .abc]
 
     var body: some View {
-        if textStore != nil, !(docs.isEmpty && onDescribe == nil) {
+        if textStore != nil,
+           !(docs.isEmpty && pendingDoc == nil && onDescribe == nil) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Self.kindOrder, id: \.self) { kind in
-                    let group = docs.filter { $0.kindValue == kind }
+                    let group = rows(of: kind)
                     if !group.isEmpty {
                         Text(Self.eyebrow(kind, count: group.count)).eyebrow()
                         ForEach(group) { doc in
@@ -91,6 +124,8 @@ struct TextDocsSection: View {
                         .fill(Bench.Palette.inset))
             } else if !segments.isEmpty {
                 segmentLines(segments)
+            } else if doc.kindValue == .abc, showsScore(doc) {
+                score(doc)
             } else {
                 Text(doc.text)
                     .font(doc.kindValue == .abc ? Bench.Typo.mono(12)
@@ -99,37 +134,120 @@ struct TextDocsSection: View {
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 8) {
-                Text(attribution(doc))
-                    .font(Bench.Typo.mono(10))
-                    .foregroundStyle(Bench.Palette.textFaintest)
-                Spacer()
-                if editingId == doc.id {
-                    Button("Cancel") { editingId = nil }
-                        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
-                    Button("Done") { commit(doc) }
-                        .buttonStyle(BenchSecondaryButtonStyle())
-                } else {
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(doc.text,
-                                                       forType: .string)
-                    }
-                    .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
-                    Button("Edit") {
-                        draft = doc.text
-                        editingId = doc.id
-                    }
-                    .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
-                    Button("Delete") { requestDelete(doc) }
-                        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+                if renders[doc.id]?.isEmpty == true {
+                    // A prose reply filed as ABC — the bug `abc_convert`
+                    // fixed on the engine side, still in old rows. abcjs's
+                    // "no tunes" is the whole test; the source still reads,
+                    // and says why it is the source you are reading.
+                    Text("Could not draw this as notation — showing the source.")
+                        .font(Bench.Typo.small)
+                        .foregroundStyle(Bench.Palette.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            verbRow(doc)
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10)
             .fill(Bench.Palette.inset.opacity(0.6)))
+    }
+
+    /// Whether a notation slot draws its score: not while the source is
+    /// open, and not once the page has said there is no score in it.
+    private func showsScore(_ doc: TextDocRecord) -> Bool {
+        !showingABCText.contains(doc.id) && renders[doc.id]?.isEmpty != true
+    }
+
+    /// The engraving, at the pane's density and capped in height; past the
+    /// cap the sheet is where the rest is.
+    private func score(_ doc: TextDocRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            NotationView(abc: doc.text, scale: 0.8,
+                         maxHeight: Self.scoreHeightCap,
+                         onRendered: { renders[doc.id] = $0 })
+            if let render = renders[doc.id],
+               CGFloat(render.height) > Self.scoreHeightCap {
+                Text(onOpenNotation == nil ? "Showing the first part"
+                                           : "Open to see all")
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textFaint)
+            }
+        }
+    }
+
+    /// Attribution and the slot's verbs.
+    ///
+    /// A notation slot has two verbs more than any other, and five quiet
+    /// buttons beside a `BASIC PITCH · 2 D AGO` line do not fit a 344 pt
+    /// pane on one row — the labels came out as "Sh…" and "De…". That slot
+    /// stacks the attribution over a wrapping row instead; every other slot
+    /// keeps the one-line shape it always had.
+    @ViewBuilder
+    private func verbRow(_ doc: TextDocRecord) -> some View {
+        if doc.kindValue == .abc, editingId != doc.id {
+            VStack(alignment: .leading, spacing: 6) {
+                attributionText(doc)
+                FlowLayout(spacing: 6, rowSpacing: 6) {
+                    if let onOpenNotation {
+                        Button("Open") { onOpenNotation(doc) }
+                            .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+                    }
+                    // Nothing to switch to once the page has said the text is
+                    // not a score: the slot is already showing the source.
+                    if renders[doc.id]?.isEmpty != true {
+                        Button(showingABCText.contains(doc.id)
+                               ? "Show score" : "Show ABC") {
+                            if showingABCText.contains(doc.id) {
+                                showingABCText.remove(doc.id)
+                            } else {
+                                showingABCText.insert(doc.id)
+                            }
+                        }
+                        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+                    }
+                    verbs(doc)
+                }
+            }
+        } else {
+            HStack(spacing: 8) {
+                attributionText(doc)
+                Spacer()
+                if editingId == doc.id {
+                    Button("Cancel") { cancelEdit() }
+                        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+                    Button("Done") { commit(doc) }
+                        .buttonStyle(BenchSecondaryButtonStyle())
+                } else {
+                    verbs(doc)
+                }
+            }
+        }
+    }
+
+    private func attributionText(_ doc: TextDocRecord) -> some View {
+        Text(attribution(doc))
+            .font(Bench.Typo.mono(10))
+            .foregroundStyle(Bench.Palette.textFaintest)
+    }
+
+    /// Copy · Edit · Delete — the verbs every slot has.
+    @ViewBuilder
+    private func verbs(_ doc: TextDocRecord) -> some View {
+        Button("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(doc.text, forType: .string)
+        }
+        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+        Button("Edit") {
+            // One draft buffer: starting another edit abandons an
+            // untyped new document rather than stranding it.
+            pendingDoc = nil
+            draft = doc.text
+            editingId = doc.id
+        }
+        .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
+        Button("Delete") { requestDelete(doc) }
+            .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
     }
 
     /// Transcribed lyrics as tappable timestamped lines: a tap seeks the
@@ -171,7 +289,9 @@ struct TextDocsSection: View {
                     segmentsJSON: nil, question: nil, language: nil,
                     modelId: "", modelName: "You", jobId: nil,
                     edited: false, createdAt: Date(), updatedAt: Date())
-                textStore?.insert(doc)
+                // Held, not inserted: nothing reaches the database until Done
+                // with something in it.
+                pendingDoc = doc
                 draft = ""
                 editingId = doc.id
             }
@@ -181,10 +301,32 @@ struct TextDocsSection: View {
 
     // MARK: - Mutations
 
+    private func cancelEdit() {
+        editingId = nil
+        pendingDoc = nil    // never written, so there is nothing to clean up
+        draft = ""
+    }
+
     private func commit(_ doc: TextDocRecord) {
         editingId = nil
+        // The engraving starts over for the new text: a verdict of "no
+        // tunes" on the old text must not keep a corrected score in prose.
+        renders[doc.id] = nil
+        showingABCText.remove(doc.id)
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pendingDoc?.id == doc.id {
+            // Not in the database yet, so an empty draft means "never written"
+            // rather than "emptied slot to delete".
+            pendingDoc = nil
+            guard !text.isEmpty else { return }
+            var created = doc
+            created.text = text
+            created.updatedAt = Date()
+            textStore?.insert(created)
+            return
+        }
         var updated = doc
-        updated.text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.text = text
         guard updated.text != doc.text else { return }
         if updated.text.isEmpty {
             // An emptied slot is a deleted slot — a blank card with a model

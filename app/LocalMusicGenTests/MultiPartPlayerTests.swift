@@ -233,6 +233,47 @@ final class MultiPartPlayerTests: XCTestCase {
         XCTAssertNil(player.meterDb, "a stopped player must not hold a level")
     }
 
+    /// Turning meters off mid-preview used to leave the tap installed for the
+    /// rest of it — only `teardown` ever removed it — so a 2048-frame tap went
+    /// on hopping to the main actor ~21x a second to publish a level nobody
+    /// was drawing.
+    func testTurningMetersOffMidPreviewRemovesTheTap() throws {
+        let a = try synthWav("meter-off", freq: 440, seconds: 6)
+        defer { try? FileManager.default.removeItem(at: a) }
+        let player = MultiPartPlayer()
+        player.metersEnabled = true
+        player.sumsConcurrently = false
+        guard player.play(items: [
+            MultiPartPlayer.Item(id: "a", url: a, offsetS: 0, gainDb: 0,
+                                 muted: false),
+        ]) else {
+            throw XCTSkip("audio hardware unavailable: "
+                          + (player.lastError ?? "unknown"))
+        }
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline, (player.meterDb?.left ?? -80) < -40 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertNotNil(player.meterDb, "no meter level arrived")
+
+        player.metersEnabled = false
+        XCTAssertNil(player.meterDb, "a meter that is off holds no level")
+        // The tap fires roughly every 46 ms at 2048 frames, so half a second
+        // is ten buffers' worth of chances to publish one.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertNil(player.meterDb, "the tap is still installed")
+        XCTAssertTrue(player.isPlaying, "removing the tap must not stop it")
+
+        // And back on again, without restarting the graph.
+        player.metersEnabled = true
+        let back = Date().addingTimeInterval(2.0)
+        while Date() < back, player.meterDb == nil {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertNotNil(player.meterDb, "re-enabling must reinstall the tap")
+        player.stop()
+    }
+
     /// Pins the isolation the fix depends on: peak reading is callable from
     /// off the main actor, which is where the audio thread calls it.
     func testPeakDbReadsBothChannelsOffTheMainActor() async throws {

@@ -77,6 +77,10 @@ class Worker:
         self.working_set_bytes: int | None = None
         self.mem_limit = settings.mem_guard_bytes
         self._mem_warned = False
+        # Set by the job queue on every worker it spawns: what to try before
+        # the memory warning goes out. Only the queue knows which workers are
+        # idle, so the policy lives there and this is the hook.
+        self.on_memory_pressure = None  # Callable[[Worker], list[str]] | None
         self._send_lock = threading.Lock()
         self.messages: queue.Queue[dict | None] = queue.Queue()
 
@@ -165,11 +169,19 @@ class Worker:
                         if not self._mem_warned:
                             self._mem_warned = True
                             self._log_write(f"[mem-warning] {line}\n".encode())
+                            # Act first, warn second: an idle warm worker is
+                            # memory nobody is using, and dropping one is
+                            # strictly better than telling the user to pick a
+                            # smaller model.
+                            freed = self._relieve_memory()
                             text = (f"generation is using ~{self.mem_bytes >> 30} GB "
                                     f"of memory (warning level "
                                     f"{self.mem_limit >> 30} GB) — the Mac may slow "
                                     f"down; consider a shorter duration or a "
                                     f"smaller model")
+                            if freed:
+                                text += (f" (unloaded {', '.join(freed)} to "
+                                         f"make room)")
                             self.bus.emit_threadsafe("engine.warning",
                                                      {"message": text})
                             if self.current_job_id:
@@ -188,6 +200,21 @@ class Worker:
             self._log_write(f"[stdout reader died] {e!r}\n".encode())
         finally:
             self.messages.put(None)  # EOF sentinel
+
+    def _relieve_memory(self) -> list[str]:
+        """Ask the queue to drop its idle workers; the ids it dropped, if any.
+
+        Never raises: this runs on the stdout reader thread, and a reader
+        thread that dies takes the job's only end-of-stream signal with it.
+        """
+        relieve = self.on_memory_pressure
+        if relieve is None:
+            return []
+        try:
+            return relieve(self)
+        except Exception as e:  # noqa: BLE001 — see above
+            self._log_write(f"[mem-relief failed] {e!r}\n".encode())
+            return []
 
     @property
     def current_job_id(self) -> str | None:
@@ -327,6 +354,16 @@ class Worker:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 self.proc.kill()
+            # Reaped here, not by luck: subprocess only reaps late, via
+            # Popen.__del__, and these Popen objects stay referenced for as
+            # long as something holds the Worker — so every displaced or
+            # expired worker used to leave a zombie for the rest of the
+            # session. A SIGKILLed process is gone in milliseconds; the short
+            # timeout is only there because kill() runs under the queue lock.
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
         try:
             self._log.close()
         except OSError:

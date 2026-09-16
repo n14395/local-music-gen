@@ -20,10 +20,18 @@ class Settings:
 
     @property
     def mem_guard_bytes(self) -> int:
-        """Accelerator-memory ceiling for workers; breach = kill before swap.
-        macOS won't OOM-kill a runaway Metal allocator — it swaps until the
-        machine crawls — so the guard fails the job cleanly instead. Default 90%
-        of physical RAM; LOCALMUSICGEN_MEM_GUARD_BYTES overrides (0 disables)."""
+        """Accelerator-memory **warning level** for workers — reporting only.
+
+        macOS won't OOM-kill a runaway Metal allocator (it swaps until the
+        machine crawls), and no more will this: crossing the level emits one
+        `engine.warning` plus a `job.log` line, re-arming below 85 % of it, and
+        the job runs on. Transient allocator spikes cross it during legitimate
+        generations, so stopping the render would cost more renders than it
+        saved. What it does do is drop idle warm workers first — see
+        `JobQueue.relieve_memory_pressure`. This docstring used to say "breach =
+        kill before swap", which was never true of the code and is the opposite
+        of what the contract promises. Default 90 % of physical RAM;
+        LOCALMUSICGEN_MEM_GUARD_BYTES overrides (0 disables)."""
         env = os.environ.get("LOCALMUSICGEN_MEM_GUARD_BYTES")
         if env is not None:
             return int(env or 0)

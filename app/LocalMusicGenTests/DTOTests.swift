@@ -6,6 +6,34 @@ final class DTOTests: XCTestCase {
         try BackendClient.decoder.decode(T.self, from: Data(json.utf8))
     }
 
+    /// The warm pool is a *list* on the wire (`transient_model_ids`, contract
+    /// §4.3). This decoded into a singular `transientModelId` — a key the
+    /// engine has never sent — so the property was permanently nil under a
+    /// comment claiming the engine had always sent it.
+    func testSystemInfoDecodesTheWarmPoolAsAList() throws {
+        let json = """
+        {"ram_bytes": 36000000000, "free_disk_bytes": 100000000000,
+         "machine": "Mac16,6", "warm_family": "acestep",
+         "warm_model_id": "acestep-base",
+         "transient_model_ids": ["qwen3-1.7b", "clap-base"],
+         "pinned_model_id": null, "active_job_id": null,
+         "engine_versions": {}}
+        """
+        let system = try decode(SystemInfo.self, json)
+        XCTAssertEqual(system.transientModelIds, ["qwen3-1.7b", "clap-base"])
+        XCTAssertEqual(system.warmModelId, "acestep-base")
+    }
+
+    /// An engine too old to report the pool at all still decodes.
+    func testSystemInfoWithoutAWarmPoolStillDecodes() throws {
+        let json = """
+        {"ram_bytes": 1, "free_disk_bytes": 2, "machine": "Mac16,6",
+         "warm_family": null, "warm_model_id": null, "pinned_model_id": null,
+         "active_job_id": null, "engine_versions": {}}
+        """
+        XCTAssertNil(try decode(SystemInfo.self, json).transientModelIds)
+    }
+
     /// The library payload carries three roots (contract 4.4): the shared
     /// Hugging Face folder, whose figures stay scoped to it, and the two the
     /// engine owns outright, which are what `totalBytes` adds on top.

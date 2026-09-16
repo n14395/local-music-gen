@@ -17,7 +17,6 @@ actually stands at that step rather than a guess at it.
 
 from __future__ import annotations
 
-import gc
 import inspect
 import json
 import os
@@ -29,7 +28,28 @@ import soundfile as sf
 import torch
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb, preview_stride)
+                                     ModelAdapter, ProgressCb, preview_stride,
+                                     release_accelerator_memory)
+
+
+def _takes_callback(fn) -> bool:
+    """Does `fn` accept a `callback=` keyword?
+
+    True for an explicit parameter and for a `**kwargs` catch-all — this
+    library declares `**sampler_kwargs` and forwards `callback` to the
+    sampler from there. Asked up front rather than discovered by catching
+    TypeError: the old `except TypeError` wrapped the whole render, so a
+    TypeError raised anywhere inside the model, the conditioner or the
+    preview decode ran the entire diffusion a second time with no progress
+    and no cancel, and reported the retry's traceback instead of the real
+    one (audit 09-B5).
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):   # a C builtin has no signature
+        return False
+    return any(p.name == "callback" or p.kind is inspect.Parameter.VAR_KEYWORD
+               for p in params.values())
 
 
 def _pcm16(wav: np.ndarray) -> bytes:
@@ -82,7 +102,10 @@ class StableAudioAdapter(ModelAdapter):
 
         assert self.model is not None
         duration_s = float(params.get("duration_s", 5.0))
-        steps = int(params.get("steps", 8))
+        # Same rule as cfg_scale below, and the same disagreement: Open Small
+        # is tuned at 8 steps, Open 1.0 at 100. A caller that omits `steps`
+        # used to get 8 whatever the entry advertises (audit 09-B9).
+        steps = int(params.get("steps", self.settings.get("steps_default", 8)))
         # The fallback comes from the entry, not from a constant: this
         # family's checkpoints disagree about it (Open Small is tuned at
         # 1.0, Open 1.0 at 7.0), and a hardcoded 1.0 quietly contradicted
@@ -179,16 +202,16 @@ class StableAudioAdapter(ModelAdapter):
                 params.get("init_noise_level", 0.9))
         # conditioning (T5 + duration embeddings) runs first inside the call
         progress_cb(None, "encoding prompt", phase="prompt_encode")
-        try:
+        if _takes_callback(generate_diffusion_cond):
+            kwargs["callback"] = sampler_callback
             progress_cb(0.0, f"diffusion 0/{steps}", phase="diffusion",
                         step=0, steps=steps)
-            audio = generate_diffusion_cond(callback=sampler_callback, **kwargs)
-        except TypeError:
-            # older stable-audio-tools without a callback parameter: the phase
-            # is still known, the step count is not, so it goes without one
+        else:
+            # an older build without a callback parameter: the phase is still
+            # known, the step count is not, so it goes without one
             progress_cb(None, "diffusing (this build reports no steps)",
                         phase="diffusion")
-            audio = generate_diffusion_cond(**kwargs)
+        audio = generate_diffusion_cond(**kwargs)
         if cancel.cancelled:
             raise CancelledError()
 
@@ -265,6 +288,4 @@ class StableAudioAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
-        gc.collect()
-        if self.device == "mps":
-            torch.mps.empty_cache()
+        release_accelerator_memory()

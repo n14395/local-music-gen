@@ -1,0 +1,35 @@
+abcjs 6.7.0 — https://github.com/paulrosen/abcjs
+
+Vendored file: abcjs-basic-min.js, taken unmodified from the npm package
+  https://registry.npmjs.org/abcjs/-/abcjs-6.7.0.tgz  (dist/abcjs-basic-min.js)
+  tarball sha1 77ebb0dddf90a65c6fbeb2678db8860713842171, fetched 2026-09-16.
+
+Why a vendored copy: the app must draw notation with no network, and the
+project keeps exactly one Swift package on purpose. Upgrade by replacing the
+file and this note; the page (notation.js) uses only renderAbc and the
+options staffwidth, scale, visualTranspose, add_classes, padding* and
+foregroundColor, all of which exist in 6.x.
+
+Licence (MIT), verbatim from LICENSE.md in the package:
+
+Copyright (c) 2009-2026 Paul Rosen and Gregory Dyke
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+**This text is from: http://opensource.org/licenses/MIT**

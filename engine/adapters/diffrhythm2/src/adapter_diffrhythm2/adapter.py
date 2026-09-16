@@ -29,6 +29,7 @@ import glob
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,7 @@ class DiffRhythm2Adapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
         self.device = str(self.settings.get("device") or "cpu")
+        self.proc: subprocess.Popen | None = None
 
     def load(self, progress_cb: ProgressCb) -> None:
         if not os.path.exists(ESPEAK_DYLIB):
@@ -119,91 +121,119 @@ class DiffRhythm2Adapter(ModelAdapter):
         steps = max(4, min(32, int(params.get("steps") or 8)))
         cfg = float(params.get("guidance_scale") or 2.0)
 
+        # $TMPDIR, not self.work_dir: work_dir is the app's output
+        # directory, and a scratch tree belongs nowhere near the takes.
         work = tempfile.mkdtemp(prefix="dr2-")
-        lrc_path = os.path.join(work, "lyrics.lrc")
-        with open(lrc_path, "w") as f:
-            # [inst] is the model's own instrumental tag; the old
-            # "[00:00.00]la la la" fallback got the timestamp *sung*
-            # (nothing parses LRC times here — audit §3).
-            f.write(lyrics or "[inst]")
-        style_path = params.get("style_audio")
-        style = (style_path if style_path and os.path.isfile(style_path)
-                 else (prompt or "Pop, catchy, clean production"))
-        jsonl = os.path.join(work, "input.jsonl")
-        with open(jsonl, "w") as f:
-            json.dump({"song_name": "take", "style_prompt": style,
-                       "lyrics": lrc_path}, f)
-            f.write("\n")
-        out_dir = os.path.join(work, "out")
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            lrc_path = os.path.join(work, "lyrics.lrc")
+            with open(lrc_path, "w") as f:
+                # [inst] is the model's own instrumental tag; the old
+                # "[00:00.00]la la la" fallback got the timestamp *sung*
+                # (nothing parses LRC times here — audit §3).
+                f.write(lyrics or "[inst]")
+            style_path = params.get("style_audio")
+            style = (style_path if style_path and os.path.isfile(style_path)
+                     else (prompt or "Pop, catchy, clean production"))
+            jsonl = os.path.join(work, "input.jsonl")
+            with open(jsonl, "w") as f:
+                json.dump({"song_name": "take", "style_prompt": style,
+                           "lyrics": lrc_path}, f)
+                f.write("\n")
+            out_dir = os.path.join(work, "out")
+            os.makedirs(out_dir, exist_ok=True)
 
-        # Their CLI has no --seed, and the render happens in a child process,
-        # so the seed is set inside the bootstrap that starts it — the same
-        # place the fp16 shims go. Reported back as `seed_used`, which was a
-        # flat None before this.
-        seed = params.get("seed")
-        seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
+            # Their CLI has no --seed, and the render happens in a child
+            # process, so the seed is set inside the bootstrap that starts
+            # it — the same place the fp16 shims go. Reported back as
+            # `seed_used`, which was a flat None before this.
+            seed = params.get("seed")
+            seed = (int(seed) if seed is not None
+                    else secrets.randbelow(2 ** 32))
 
-        argv = ["inference.py", "--repo-id", REPO_ID,
-                "--input-jsonl", jsonl, "--output-dir", out_dir,
-                "--steps", str(steps), "--cfg-strength", str(cfg),
-                "--max-secs", str(duration_s)]
-        fake_stereo = params.get("fake_stereo")
-        if fake_stereo is not None and not bool(fake_stereo):
-            # Their argparse uses type=bool, where every non-empty string is
-            # truthy — the empty string is the only spelling of False.
-            argv += ["--fake-stereo", ""]
-        env = {**os.environ, "PHONEMIZER_ESPEAK_LIBRARY": ESPEAK_DYLIB,
-               "LOCALMUSICGEN_DEVICE": self.device}
-        if self.device == "mps":
-            env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-        code = (BOOTSTRAP.replace("ARGV", repr(argv))
-                         .replace("SEED", str(seed)))
+            argv = ["inference.py", "--repo-id", REPO_ID,
+                    "--input-jsonl", jsonl, "--output-dir", out_dir,
+                    "--steps", str(steps), "--cfg-strength", str(cfg),
+                    "--max-secs", str(duration_s)]
+            fake_stereo = params.get("fake_stereo")
+            if fake_stereo is not None and not bool(fake_stereo):
+                # Their argparse uses type=bool, where every non-empty
+                # string is truthy — the empty string is the only False.
+                argv += ["--fake-stereo", ""]
+            env = {**os.environ, "PHONEMIZER_ESPEAK_LIBRARY": ESPEAK_DYLIB,
+                   "LOCALMUSICGEN_DEVICE": self.device}
+            if self.device == "mps":
+                env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+            code = (BOOTSTRAP.replace("ARGV", repr(argv))
+                             .replace("SEED", str(seed)))
 
-        progress_cb(None, "rendering (GPU flow matching — MPS, fp32)"
-                          if self.device == "mps" else
-                          "rendering (CPU flow matching — minutes, not "
-                          "seconds; ~11 s of compute per second of song)")
-        proc = subprocess.Popen([sys.executable, "-c", code], cwd=self.repo,
-                                env=env, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, text=True)
-        tail: list[str] = []
-        assert proc.stderr is not None
-        # The upstream tqdm bar was already on this stderr — split on \r so
-        # its in-place redraws surface as real per-step progress instead of
-        # one message for the whole render (audit §5).
-        for line in iter_progress_lines(proc.stderr):
-            if cancel.cancelled:
-                proc.kill()
+            progress_cb(None, "rendering (GPU flow matching — MPS, fp32)"
+                              if self.device == "mps" else
+                              "rendering (CPU flow matching — minutes, not "
+                              "seconds; ~11 s of compute per second of song)")
+            proc = subprocess.Popen([sys.executable, "-c", code],
+                                    cwd=self.repo, env=env,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True)
+            self.proc = proc
+            tail: list[str] = []
+            assert proc.stderr is not None
+            try:
+                # The upstream tqdm bar was already on this stderr — split on
+                # \r so its in-place redraws surface as real per-step progress
+                # instead of one message for the render (audit §5).
+                for line in iter_progress_lines(proc.stderr):
+                    if cancel.cancelled:
+                        proc.kill()
+                        proc.wait()
+                        raise CancelledError()
+                    tail.append(line)
+                    tail = tail[-30:]
+                    got = parse_tqdm(line)
+                    if got:
+                        step, total = got
+                        progress_cb(min(0.98, step / total),
+                                    f"flow matching — step {step}/{total}",
+                                    step=step, steps=total)
                 proc.wait()
+            except BaseException:
+                # progress_cb itself raises CancelledError on a cancelled job,
+                # so the loop can exit without passing the branch above and
+                # leave the render running for the rest of the session.
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                raise
+            finally:
+                self.proc = None
+            if cancel.cancelled:
                 raise CancelledError()
-            tail.append(line)
-            tail = tail[-30:]
-            got = parse_tqdm(line)
-            if got:
-                step, total = got
-                progress_cb(min(0.98, step / total),
-                            f"flow matching — step {step}/{total}",
-                            step=step, steps=total)
-        proc.wait()
-        if cancel.cancelled:
-            raise CancelledError()
-        if proc.returncode != 0:
-            raise RuntimeError("DiffRhythm2 failed: " + " / ".join(tail[-4:]))
+            if proc.returncode != 0:
+                raise RuntimeError("DiffRhythm2 failed: "
+                                   + " / ".join(tail[-4:]))
 
-        produced = sorted(glob.glob(os.path.join(out_dir, "*.mp3"))
-                          + glob.glob(os.path.join(out_dir, "*.wav")))
-        if not produced:
-            raise RuntimeError("DiffRhythm2 produced no audio")
-        audio, sr = sf.read(produced[0], dtype="float32", always_2d=True)
-        tmp = out_path + ".part"
-        sf.write(tmp, audio, sr, format="WAV", subtype="PCM_16")
-        os.replace(tmp, out_path)
-        return GenerateResult(
-            wav_path=out_path,
-            duration_s=round(audio.shape[0] / sr, 3),
-            sample_rate=int(sr),
-            seed_used=seed)
+            produced = sorted(glob.glob(os.path.join(out_dir, "*.mp3"))
+                              + glob.glob(os.path.join(out_dir, "*.wav")))
+            if not produced:
+                raise RuntimeError("DiffRhythm2 produced no audio")
+            audio, sr = sf.read(produced[0], dtype="float32", always_2d=True)
+            tmp = out_path + ".part"
+            sf.write(tmp, audio, sr, format="WAV", subtype="PCM_16")
+            os.replace(tmp, out_path)
+            return GenerateResult(
+                wav_path=out_path,
+                duration_s=round(audio.shape[0] / sr, 3),
+                sample_rate=int(sr),
+                seed_used=seed)
+        finally:
+            # Every render used to leave the .lrc, the input jsonl and the
+            # produced mp3 (tens of MB for a 3½-minute song) under $TMPDIR
+            # — on success, failure and cancel alike.
+            shutil.rmtree(work, ignore_errors=True)
 
     def unload(self) -> None:
-        pass
+        # Nothing is held in this process — but a run that ended by exception
+        # may have left the render subprocess alive, holding the GPU.
+        proc, self.proc = self.proc, None
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()

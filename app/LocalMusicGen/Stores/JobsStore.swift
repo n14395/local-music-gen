@@ -419,6 +419,12 @@ final class JobsStore {
     var pendingContext: [String: JobContext] = [:] {
         didSet { refreshShellState() }
     }
+    /// The last *submission* the engine (or the app) refused — what the
+    /// Action screens bind their error banner to. Ingest failures are
+    /// deliberately not written here: they belong on the row through
+    /// `failIngest`, or in the job's own log through `noteIngestProblem`.
+    /// One slot for both meant a background split's ingest diagnosis drew as
+    /// the open action card's own failure.
     var lastError: String?
 
     /// The engine's queue hold (contract §5.7): nothing new starts. It does not
@@ -461,6 +467,11 @@ final class JobsStore {
     /// Settings' "hold the seed" reuses on the next submit. Session-scoped,
     /// like the queue itself.
     private(set) var lastSeedUsed: Int64?
+    /// The same, per model. "Hold the seed" reads this one: `lastSeedUsed` is
+    /// whatever job landed last, a Style Transfer or Workbench run on another
+    /// model included, so holding it could pin a number nothing on the Studio
+    /// screen ever rolled.
+    private(set) var lastSeedByModel: [String: Int64] = [:]
 
     /// Ever-increasing id for `RenderLogLine`. Store-wide rather than
     /// per-job: ids only have to be unique within the list that draws them,
@@ -631,11 +642,23 @@ final class JobsStore {
     }
 
     /// Upload a local audio file for an "audio" param; nil (with lastError set)
-    /// if the file is unreadable or the engine rejects it.
+    /// if the file is unreadable, too big for the engine, or refused by it.
     func uploadAudio(fileURL: URL) async -> String? {
         guard let client else { return nil }
         let accessing = fileURL.startAccessingSecurityScopedResource()
         defer { if accessing { fileURL.stopAccessingSecurityScopedResource() } }
+        // The engine's cap, checked before the transfer rather than after it.
+        // It reads an oversized body all the way to the end so that its 422 is
+        // deliverable, so a 25-minute WAV used to go over the wire in full and
+        // land in the queue row as "upload exceeds 256 MB" — minutes spent to
+        // be told something the file's size said up front.
+        if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            .fileSize,
+           let message = Self.uploadTooLargeMessage(
+            fileName: fileURL.lastPathComponent, bytes: Int64(size)) {
+            lastError = message
+            return nil
+        }
         do {
             // Streamed from disk. Reading the file into a `Data` here first
             // put a whole WAV — tens of megabytes — into memory on the main
@@ -648,6 +671,18 @@ final class JobsStore {
             lastError = error.localizedDescription
             return nil
         }
+    }
+
+    /// What to say about a source the engine would refuse, or nil when it
+    /// fits. Pure and static so the wording can be tested without a file.
+    nonisolated static func uploadTooLargeMessage(
+        fileName: String, bytes: Int64,
+        cap: Int64 = BackendClient.maxUploadBytes) -> String? {
+        guard bytes > cap else { return nil }
+        return "“\(fileName)” is \(bytes.formatted(.byteCount(style: .file)))"
+            + " and the engine accepts at most "
+            + "\(cap.formatted(.byteCount(style: .file))). Trim it, or export"
+            + " a shorter section and use that."
     }
 
     /// Split a library song into parts (task "separate").
@@ -1777,22 +1812,20 @@ final class JobsStore {
             pendingContext[jobId] {
             var parts: [PartRecord] = []
             let outputs = result.outputs ?? []
-            // `lastError` is a store-wide slot, so only a *fresh* one belongs
-            // on this row.
-            let priorError = lastError
+            var failure: String?
             if let output = outputs.first {
                 if let part = insertGenerativePart(
                     songId: songId, kind: kind,
                     filePath: output.path, sampleRate: output.sampleRate,
-                    durationS: output.durationS, job: job) {
+                    durationS: output.durationS, job: job,
+                    failure: &failure) {
                     parts.append(part)
                 }
             }
             if parts.isEmpty, !outputs.isEmpty {
                 // The render finished and its audio could not be filed: a
                 // green row with no part behind it is a lie about lost work.
-                let fresh = lastError != priorError ? lastError : nil
-                failIngest(jobId, fresh ?? "the part could not be saved")
+                failIngest(jobId, failure ?? "the part could not be saved")
                 return
             }
             active[jobId]?.status = .succeeded
@@ -1906,7 +1939,10 @@ final class JobsStore {
                 count: max(job.takesInBatch, index + 1)))
         guard !state.ingested.contains(index),
               index < state.names.count else { return .alreadyLanded }
-        if index == 0, let seed = output.seedUsed { lastSeedUsed = seed }
+        if index == 0, let seed = output.seedUsed {
+            lastSeedUsed = seed
+            lastSeedByModel[job.modelId] = seed
+        }
         let title = (try? repo.uniqueTitle(state.names[index],
                                            reserved: state.usedTitles))
             ?? state.names[index]
@@ -1934,6 +1970,19 @@ final class JobsStore {
                                             message: message)
         dropBatchIngestIfFinished(jobId)
         onJobSettledFailed(jobId, message)
+    }
+
+    /// A problem during ingest that did not cost the whole job — one stem of
+    /// six that could not be filed beside five that were.
+    ///
+    /// It goes in the job's own log, not in `lastError`. That slot is the
+    /// Action screens' *submit* error banner (`SimpleActionViews` and friends
+    /// bind straight to it), so a background split's ingest diagnosis used to
+    /// surface as the open card's own failure — and on the Studio path, where
+    /// nothing binds it, as nothing at all. Whole-job ingest failures go
+    /// through `failIngest`, which puts the message on the row.
+    private func noteIngestProblem(_ jobId: String, _ message: String) {
+        appendLog(jobId: jobId, line: message)
     }
 
     /// Let go of a batch's shared naming state once no take of it is still
@@ -1978,10 +2027,11 @@ final class JobsStore {
             try FileManager.default.moveItem(
                 at: URL(fileURLWithPath: output.path), to: dest)
         } catch {
-            let message = "Could not move finished audio: "
-                + error.localizedDescription
-            lastError = message
-            return .failed(message)
+            // Returned, not put in `lastError`: that slot is the Action
+            // screens' submit-error banner, and this message reaches the row
+            // through `failIngest` (see `noteIngestProblem`).
+            return .failed("Could not move finished audio: "
+                           + error.localizedDescription)
         }
         // The take's own `meta` is stored alongside the params it was made
         // with. For a model that plans before it renders, that is the plan
@@ -2023,9 +2073,7 @@ final class JobsStore {
             // that StorageStore keeps counting, so it goes back out: the
             // insert is the transaction, and this is its rollback.
             try? FileManager.default.removeItem(at: dest)
-            let message = "Could not save song: \(error.localizedDescription)"
-            lastError = message
-            return .failed(message)
+            return .failed("Could not save song: \(error.localizedDescription)")
         }
         // A model that renders the song as parts hands them over with the
         // take. They land exactly where a separation job's stems land, so the
@@ -2069,7 +2117,8 @@ final class JobsStore {
                 // audio file the library cannot see is one StorageStore counts
                 // and nothing can play or delete.
                 try? fm.removeItem(at: dest)
-                lastError = "Could not save the stem “\(label)”."
+                noteIngestProblem(job.jobId,
+                                  "Could not save the stem “\(label)”.")
             }
         }
         return parts
@@ -2158,20 +2207,20 @@ final class JobsStore {
             // Render task jobs (notes → SoundFont audio): the single audio
             // artifact becomes a part of the source song.
             var parts: [PartRecord] = []
-            let priorError = lastError
+            var failure: String?
             let audio = artifacts.first(where: { $0.kind == "audio" })
             if let audio,
                let part = insertGenerativePart(
                    songId: ownerSongId, kind: kind,
                    filePath: audio.path, sampleRate: audio.sampleRate,
-                   durationS: audio.durationS, job: job) {
+                   durationS: audio.durationS, job: job,
+                   failure: &failure) {
                 parts.append(part)
             }
             if parts.isEmpty, audio != nil {
                 // Same rule as every other landing: audio that arrived and
                 // could not be filed is a failed row, not a green one.
-                let fresh = lastError != priorError ? lastError : nil
-                failIngest(jobId, fresh ?? "the part could not be saved")
+                failIngest(jobId, failure ?? "the part could not be saved")
                 return
             }
             active[jobId]?.status = .succeeded
@@ -2179,10 +2228,26 @@ final class JobsStore {
             onPartsIngested(parts)
             return
         default:
-            // Unknown contexts (post-relaunch reconciliation) have nowhere to
-            // route artifacts.
-            active[jobId]?.status = .succeeded
-            active[jobId]?.progress = nil
+            // No routing context. `pendingContext` is in-memory only, so a
+            // task job adopted by `reconcile()` after a relaunch — or in
+            // attach mode, where the engine's queue outlives the app — has
+            // nowhere to put what it made. Calling that success discarded a
+            // finished split's stems and a transcribe's midi without a word;
+            // the row has to admit the work is gone.
+            //
+            // A job that produced nothing for the library is still an honest
+            // success: `assist` and `plan` answer entirely in `result.meta`,
+            // `MetaJobRunner` reads that itself, and their rows are only here
+            // because the queue adopts every job the engine announces.
+            let routable = ["stem", "midi", "analysis", "text", "audio"]
+            guard artifacts.contains(where: { routable.contains($0.kind) })
+            else {
+                active[jobId]?.status = .succeeded
+                active[jobId]?.progress = nil
+                return
+            }
+            failIngest(jobId, "finished while the app was away; "
+                       + "its results were not kept")
             return
         }
 
@@ -2218,7 +2283,8 @@ final class JobsStore {
                     try fm.moveItem(at: URL(fileURLWithPath: artifact.path),
                                     to: dest)
                 } catch {
-                    lastError = "Could not move part: \(error.localizedDescription)"
+                    noteIngestProblem(jobId, "Could not move part: "
+                                      + error.localizedDescription)
                     continue
                 }
                 var previewFileName: String?
@@ -2259,7 +2325,8 @@ final class JobsStore {
                         try? fm.removeItem(at: StoragePaths.libraryParts
                             .appendingPathComponent(previewFileName))
                     }
-                    lastError = "Could not save part: \(error.localizedDescription)"
+                    noteIngestProblem(jobId, "Could not save part: "
+                                      + error.localizedDescription)
                 }
             case "analysis":
                 ingestAnalysis([artifact], ownerId: songId, ownerType: "song",
@@ -2361,9 +2428,8 @@ final class JobsStore {
             }
             try partsRepo.setIngredients(rows, songId: songId)
         } catch {
-            let message = "Could not save the mix: \(error.localizedDescription)"
-            lastError = message
-            insertFailure = message
+            insertFailure = "Could not save the mix: "
+                + error.localizedDescription
         }
         if let insertFailure, songs.isEmpty {
             // The mixdown is already renamed into Library/Audio with no row
@@ -2406,7 +2472,8 @@ final class JobsStore {
                 // No row, so nothing would ever point at the file just moved
                 // in — see the same rollback in `ingestTakeStems`.
                 try? fm.removeItem(at: partDest)
-                lastError = "Could not save the stem “\(label)”."
+                noteIngestProblem(jobId,
+                                  "Could not save the stem “\(label)”.")
             }
         }
 
@@ -2454,7 +2521,8 @@ final class JobsStore {
                 try repo.insertTextDoc(doc)
                 docs.append(doc)
             } catch {
-                lastError = "Could not save text: \(error.localizedDescription)"
+                noteIngestProblem(job.jobId, "Could not save text: "
+                                  + error.localizedDescription)
                 continue
             }
             if context.applyTags, context.ownerType == "song" {
@@ -2649,11 +2717,19 @@ final class JobsStore {
     /// separator already cut, the `-2` is the honest reading: they are two
     /// versions of the same thing, told apart by the model badge beside them
     /// and renameable to whatever the user prefers.
+    ///
+    /// `failure` is how it says why it returned nil. It used to say so in
+    /// `lastError` and the caller compared that slot before and after — a
+    /// store-wide slot the Action screens read as their own submit error.
     private func insertGenerativePart(songId: String, kind: String,
                                       filePath: String,
                                       sampleRate: Int?, durationS: Double?,
-                                      job: JobInfo) -> PartRecord? {
-        guard let partsRepo else { return nil }
+                                      job: JobInfo,
+                                      failure: inout String?) -> PartRecord? {
+        guard let partsRepo else {
+            failure = "no parts library available"
+            return nil
+        }
         let partId = UUID().uuidString.lowercased()
         let fileName = "\(partId).wav"
         let fm = FileManager.default
@@ -2663,7 +2739,7 @@ final class JobsStore {
         do {
             try fm.moveItem(at: URL(fileURLWithPath: filePath), to: dest)
         } catch {
-            lastError = "Could not move part: \(error.localizedDescription)"
+            failure = "Could not move part: \(error.localizedDescription)"
             return nil
         }
         let provenance = job.params.filter { _, value in
@@ -2688,7 +2764,7 @@ final class JobsStore {
             // Rolled back like the song insert: the audio is already in
             // Library/Parts and nothing would point at it.
             try? fm.removeItem(at: dest)
-            lastError = "Could not save part: \(error.localizedDescription)"
+            failure = "Could not save part: \(error.localizedDescription)"
             return nil
         }
     }

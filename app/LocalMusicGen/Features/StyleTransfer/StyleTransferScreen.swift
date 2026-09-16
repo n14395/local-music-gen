@@ -537,7 +537,8 @@ struct StyleTransferScreen: View {
             ActionOptionsCard(eyebrow: "LYRICS") {
                 LyricsEditor(lyrics: $model.lyrics,
                              tags: chosen.capabilities.lyricsTags ?? [],
-                             hint: chosen.capabilities.lyricsHint)
+                             hint: chosen.capabilities.lyricsHint,
+                             isRequired: chosen.capabilities.needsLyrics)
                     .frame(minHeight: 140)
             }
         }

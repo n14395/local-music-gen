@@ -33,7 +33,18 @@ actor AudioImporter {
         let ext = source.pathExtension.lowercased()
         if Self.passthroughExtensions.contains(ext) {
             let dest = directory.appendingPathComponent("\(songId).\(ext)")
-            try FileManager.default.copyItem(at: source, to: dest)
+            let preexisting = FileManager.default.fileExists(atPath: dest.path)
+            do {
+                try FileManager.default.copyItem(at: source, to: dest)
+            } catch {
+                // `copyItem` can fail part-way — a full disk, a source that
+                // vanished — and the caller only reports the error, it never
+                // inserts a row. Nothing prunes Library/Audio, so the stub
+                // would sit there forever. Only what this call created is
+                // taken back: a file already at `dest` belongs to a row.
+                if !preexisting { try? FileManager.default.removeItem(at: dest) }
+                throw error
+            }
             let meta = Self.metadata(of: dest)
             return Imported(fileName: dest.lastPathComponent,
                             durationS: meta.durationS,
@@ -42,6 +53,17 @@ actor AudioImporter {
         }
         let src = try AVAudioFile(forReading: source)
         let dest = directory.appendingPathComponent("\(songId).wav")
+        // Same reason as the copy above: `AVAudioFile(forWriting:)` creates
+        // the file and the read/write loop below can throw at any point — a
+        // truncated m4a, a disk that filled — which used to leave a partial
+        // WAV nothing referenced and nothing ever deleted.
+        let preexistingWav = FileManager.default.fileExists(atPath: dest.path)
+        var completed = false
+        defer {
+            if !completed, !preexistingWav {
+                try? FileManager.default.removeItem(at: dest)
+            }
+        }
         let format = src.processingFormat
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
@@ -64,6 +86,7 @@ actor AudioImporter {
             if buffer.frameLength == 0 { break }
             try dst.write(from: buffer)
         }
+        completed = true
         return Imported(fileName: dest.lastPathComponent,
                         durationS: Double(src.length) / format.sampleRate,
                         sampleRate: Int(format.sampleRate),

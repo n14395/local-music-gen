@@ -92,7 +92,24 @@ private struct OpenSettingsButton: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor let env = AppEnvironment()
+    @MainActor private var madeEnv: AppEnvironment?
+
+    /// Built on first use rather than stored.
+    ///
+    /// `@NSApplicationDelegateAdaptor` constructs the delegate while the `App`
+    /// value is being initialised — *before* `applicationWillFinishLaunching`
+    /// — so a stored `AppEnvironment()` had a duplicate launch create the data
+    /// directories, migrate the shared `library.sqlite`, write defaults and
+    /// claim the media keys from the running instance, all before the
+    /// single-instance check had run and exited. Nothing is touched until that
+    /// check has passed.
+    @MainActor
+    var env: AppEnvironment {
+        if let madeEnv { return madeEnv }
+        let made = AppEnvironment()
+        madeEnv = made
+        return made
+    }
 
     /// Runs before any window is created and before the engine is started, so a
     /// duplicate launch never gets far enough to fight the running instance for
@@ -100,6 +117,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationWillFinishLaunching(_ notification: Notification) {
         SingleInstance.deferToRunningInstanceIfNeeded()
+        // Past the guard: this launch owns the data directory, so build the
+        // environment here rather than leaving it to whichever menu or window
+        // asks for it first.
+        _ = env
         // The Bench palette is dark-only, and `preferredColorScheme` reaches
         // only SwiftUI's own views — menus, alerts, popovers and the open
         // panel would still come back light on a light Mac.

@@ -125,6 +125,11 @@ struct ParameterFormView: View {
     /// a thing the app downloads and keeps — so the host offers its own
     /// library of them.
     var customPicker: ((ParamSpec) -> Bool)?
+    /// Values the submitter is going to inject for params this form has left
+    /// unset (param key → value). Settings ▸ "Hold the seed" does exactly that
+    /// with `seed`: the RANDOM pill used to light, and the row print "—", over
+    /// a run that was going to reuse the last number.
+    var heldValues: [String: Double] = [:]
 
     /// The audio/MIDI param a library pick is currently open for.
     private struct MaterialPick: Identifiable {
@@ -354,6 +359,14 @@ struct ParameterFormView: View {
         let current = state.stringValue(spec)
         let label = choices.first { $0.value == current }?.label ?? current
         return Menu {
+            // §4.1: nullable ⇒ the UI offers an unset state. Without this item
+            // a nullable enum was a one-way door — once you picked a value
+            // there was no way back to the model's own default short of
+            // resetting the whole form.
+            if spec.nullable {
+                Button("Default (—)") { state.setNull(spec) }
+                Divider()
+            }
             ForEach(choices) { choice in
                 Button(choice.label) { state.setString(spec, choice.value) }
             }
@@ -380,29 +393,48 @@ struct ParameterFormView: View {
 
     /// A nullable numeric: RANDOM lights up when the value is unset, and the
     /// number stays on screen either way.
+    ///
+    /// Unless something is *holding* the value — then the pill says HELD and
+    /// the number it is going to be submitted with is printed beside it, since
+    /// "random" would be a lie about the next render.
     private func randomisable(_ spec: ParamSpec) -> some View {
         let isRandom = state.isNull(spec)
+        let held = isRandom ? heldValues[spec.key] : nil
         return HStack(spacing: 8) {
             Button {
                 if isRandom {
-                    state.setDouble(spec, spec.default.doubleValue ?? spec.min ?? 0)
+                    // Pinning a held value takes the held number, not the
+                    // declared default: the pill is showing that number, and a
+                    // press that changed it would be a trap.
+                    state.setDouble(spec, held
+                        ?? spec.default.doubleValue ?? spec.min ?? 0)
                 } else {
                     state.setNull(spec)
                 }
             } label: {
-                Text("RANDOM")
+                Text(held == nil ? "RANDOM" : "HELD")
                     .font(Bench.Typo.mono(12, .semibold))
                     .foregroundStyle(isRandom ? Bench.Palette.onAccent
                                               : Bench.Palette.textSecondary)
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.control)
-                        .fill(isRandom ? Bench.Palette.accent : Bench.Palette.control))
+                        .fill(isRandom ? (held == nil ? Bench.Palette.accent
+                                                      : Bench.Palette.warn)
+                                       : Bench.Palette.control))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isRandom ? "The engine picks a value" : "Let the engine pick")
+            .help(held != nil
+                  ? "Held from the last take — press to keep this value"
+                  : (isRandom ? "The engine picks a value"
+                              : "Let the engine pick"))
 
-            if isRandom {
+            if let held {
+                BenchValueField(text: Self.plain(held, spec),
+                                alignment: .leading,
+                                foreground: Bench.Palette.warn)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if isRandom {
                 // Nothing true to show: the engine has not chosen yet, and
                 // printing the last value would imply it is going to be reused.
                 BenchValueField(text: "—", alignment: .leading,
@@ -415,6 +447,13 @@ struct ParameterFormView: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// One number, printed the way the spec's type reads it — shared with
+    /// Studio's summary line so the two cannot disagree.
+    static func plain(_ value: Double, _ spec: ParamSpec) -> String {
+        spec.type == .int ? String(Int(value.rounded()))
+                          : String(format: "%g", value)
     }
 
     @ViewBuilder

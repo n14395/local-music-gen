@@ -632,8 +632,11 @@ class AceStepCppAdapter(ModelAdapter):
                     "this model has no LoRA pack installed — reinstall the "
                     "entry to fetch it")
             request["adapter"] = f"{adapter}.safetensors"
-            request["adapter_scale"] = float(
-                params.get("adapter_scale") or 1.0)
+            # `or 1.0` ate a legal 0.0 — the bottom of the declared 0.0-2.0
+            # range, and the one value that means "merge nothing" — and sent
+            # full strength instead (audit 09-B4).
+            scale = params.get("adapter_scale")
+            request["adapter_scale"] = float(scale) if scale is not None else 1.0
 
         lm_total = max(1, int(duration_s * LM_CODE_RATE))
 
@@ -694,9 +697,14 @@ class AceStepCppAdapter(ModelAdapter):
                     ref_audio: str | None, out_path: str, lm_progress,
                     synth_progress, progress_cb: ProgressCb,
                     cancel: CancelToken) -> int:
+        # Same `is not None` rule as the request above, and it matters more
+        # here: this key decides whether the resident server is restarted, so
+        # coercing 0.0 to 1.0 collided two different merged-weight sets into
+        # one key and kept the wrong DiT loaded (audit 09-B4).
+        scale = request.get("adapter_scale")
         key = (str(request.get("synth_model") or ""),
                str(request.get("adapter") or ""),
-               float(request.get("adapter_scale") or 1.0))
+               float(scale) if scale is not None else 1.0)
         self._ensure_server(key)
 
         if task_type == "text2music":

@@ -44,11 +44,34 @@ struct StudioParameterPanel: View {
     /// shown somewhere without a length slider simply does not offer it.
     var unlockLength: Binding<Bool>?
     var materialPicker: MaterialPickerContext?
+    /// Passed straight to the form: params the host is going to submit a value
+    /// for even though the form leaves them unset ("Hold the seed").
+    var heldValues: [String: Double] = [:]
 
     @AppStorage("studio.presets") private var storedPresetsJSON = "[]"
     @State private var naming = false
     @State private var draftName = ""
     @State private var appliedPreset: String?
+    /// The model, and the form, the highlight belongs to.
+    ///
+    /// The panel's view identity survives a model switch in Studio, so the chip
+    /// used to stay lit after a change of model — and built-in preset names are
+    /// derived from a step range, so two models often produce the same
+    /// "Draft 6-step". It also used to stay lit after a knob was moved, even
+    /// though `changedCount` is this panel's stated signal that a preset is no
+    /// longer what you are looking at. Comparing rather than clearing on a
+    /// notification keeps the answer true whatever order SwiftUI applies the
+    /// preset in.
+    @State private var appliedModelId: String?
+    @State private var appliedValues: [String: JSONValue]?
+
+    /// The chip to draw as active: the applied preset, but only while the form
+    /// is still exactly what it left behind.
+    private var litPreset: String? {
+        guard let appliedPreset, appliedModelId == model?.id,
+              appliedValues == state.values else { return nil }
+        return appliedPreset
+    }
 
     var body: some View {
         Group {
@@ -85,7 +108,9 @@ struct StudioParameterPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     unlockLengthRow
-                    ParameterFormView(state: state, materialPicker: materialPicker)
+                    ParameterFormView(state: state,
+                                      materialPicker: materialPicker,
+                                      heldValues: heldValues)
                 }
                 .padding(.horizontal, 18).padding(.vertical, 16)
             }
@@ -108,7 +133,8 @@ struct StudioParameterPanel: View {
             }
             unlockLengthRow
             ParameterFormView(state: state, allowsTwoColumns: true,
-                              materialPicker: materialPicker)
+                              materialPicker: materialPicker,
+                              heldValues: heldValues)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -164,19 +190,21 @@ struct StudioParameterPanel: View {
     private var presetRow: some View {
         HStack(spacing: 6) {
             ForEach(presets) { preset in
+                let lit = litPreset == preset.name
                 Button {
-                    appliedPreset = preset.name
+                    // Applied first, then noted: the snapshot has to be the
+                    // form as the preset left it.
                     onApplyPreset(preset)
+                    noteApplied(preset.name)
                 } label: {
                     Text(preset.name)
                         .font(Bench.Typo.caption)
-                        .foregroundStyle(appliedPreset == preset.name
-                                         ? Bench.Palette.onAccent
-                                         : Bench.Palette.textSecondary)
+                        .foregroundStyle(lit ? Bench.Palette.onAccent
+                                             : Bench.Palette.textSecondary)
                         .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(RoundedRectangle(cornerRadius: Bench.Metrics.Radius.control)
-                            .fill(appliedPreset == preset.name ? Bench.Palette.accent
-                                                               : Bench.Palette.control))
+                            .fill(lit ? Bench.Palette.accent
+                                      : Bench.Palette.control))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -228,12 +256,23 @@ struct StudioParameterPanel: View {
         var all = stored.filter { !($0.name == name && $0.modelId == model.id) }
         all.append(StudioPreset(name: name, modelId: model.id, values: overrides))
         write(all)
+        noteApplied(name)
+    }
+
+    /// Remember which preset the form currently *is* — see `litPreset`.
+    private func noteApplied(_ name: String) {
         appliedPreset = name
+        appliedModelId = model?.id
+        appliedValues = state.values
     }
 
     private func delete(_ preset: StudioPreset) {
         write(stored.filter { $0 != preset })
-        if appliedPreset == preset.name { appliedPreset = nil }
+        if appliedPreset == preset.name {
+            appliedPreset = nil
+            appliedValues = nil
+            appliedModelId = nil
+        }
     }
 
     private func write(_ presets: [StudioPreset]) {

@@ -30,7 +30,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     clear_stale_link)
+                                     clear_stale_link,
+                                     release_accelerator_memory)
 from engine_protocol.staging import fetch_tarball_tree, staged
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
@@ -370,3 +371,6 @@ class SongGenAdapter(ModelAdapter):
     def unload(self) -> None:
         self.model = None
         self.processor = None
+        # 5 GB of weights: the references go here, the allocator's blocks
+        # only go back when it is told.
+        release_accelerator_memory()

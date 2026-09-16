@@ -60,6 +60,48 @@ final class AudioImporterTests: XCTestCase {
         XCTAssertNil(imported.artist)
     }
 
+    /// An import that throws must leave nothing behind. Nothing prunes
+    /// `Library/Audio`, so a destination created before the failure sits
+    /// there forever with no row pointing at it.
+    func testAFailedImportLeavesNoFileBehind() async throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Not audio, and not a passthrough extension: this takes the
+        // transcode branch, the one that creates its destination first.
+        let source = dir.appendingPathComponent("junk.m4a")
+        try Data("this is not an m4a".utf8).write(to: source)
+
+        do {
+            _ = try await AudioImporter.shared.importFile(
+                at: source, songId: "junk", into: dir)
+            XCTFail("an unreadable source must throw")
+        } catch {
+            XCTAssertFalse(FileManager.default.fileExists(
+                atPath: dir.appendingPathComponent("junk.wav").path))
+        }
+    }
+
+    /// The cleanup only takes back what the failed import itself created: a
+    /// file already at the destination belongs to a row, and deleting it
+    /// would be losing somebody's audio over a name collision.
+    func testAPreexistingDestinationSurvivesAFailedImport() async throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("tone.wav")
+        try makeWav(at: source)
+        let taken = Data("someone else's audio".utf8)
+        let dest = dir.appendingPathComponent("taken.wav")
+        try taken.write(to: dest)
+
+        do {
+            _ = try await AudioImporter.shared.importFile(
+                at: source, songId: "taken", into: dir)
+            XCTFail("copying onto an existing file must throw")
+        } catch {
+            XCTAssertEqual(try Data(contentsOf: dest), taken)
+        }
+    }
+
     /// Tags are read off the source, which matters most here: this file is
     /// transcoded to bare PCM, so reading the destination would lose them.
     func testTagsSurviveTheTranscode() async throws {

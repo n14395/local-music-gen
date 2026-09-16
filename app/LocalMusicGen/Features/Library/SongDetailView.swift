@@ -29,6 +29,16 @@ struct SongActions {
     var revertEdits: (SongRecord) -> Void = { _ in }
 }
 
+extension SongRecord {
+    /// The transport id the stashed pre-edit original plays under. It has to
+    /// differ from `id`, or the transport reads an audition as the same track
+    /// and merely toggles pause — and it is named once here because every
+    /// *stop* site needs the same string as every play site. Deleting a track
+    /// while its original was sounding used to leave the transport on a file
+    /// that had just been disposed.
+    var originalPlaybackId: String { id + ".original" }
+}
+
 /// Everything about one track: its waveform, metadata, and the fields that
 /// edit it. Shown as the library's 404 pt inspector and, via
 /// `songDetailPopover`, over any list row elsewhere in the app — one source so
@@ -43,6 +53,11 @@ struct SongDetailView: View {
     let playback: PlaybackController
     let actions: SongActions
     let onDeleted: () -> Void
+    /// "Render notes…" for a score whose MIDI has no preview yet — threaded
+    /// in from `MainWindow` the way `LibraryScreen` receives it, and only by
+    /// the Library: the popover hosts have no route to a renderer, and the
+    /// sheet says so. Defaulted so every existing construction still builds.
+    var onRenderNotes: ((PartRecord) -> Void)? = nil
 
     @State private var editor = SongEditor()
     @State private var confirmDelete = false
@@ -67,6 +82,9 @@ struct SongDetailView: View {
     /// Why the last export failed. The save panel closes on its own, so
     /// without this a refused copy was indistinguishable from a finished one.
     @State private var exportError: String?
+    /// The score the notation viewer is open on, resolved from a NOTATION
+    /// slot's Open — see `NotationSheet`.
+    @State private var openScore: NotationDocument?
     /// Ambient, optional: previews and tests host this pane without an
     /// environment, and "no settings" must read as "ask", the safe default.
     @Environment(AppSettings.self) private var appSettings: AppSettings?
@@ -112,7 +130,8 @@ struct SongDetailView: View {
                         }
                         TextDocsSection(ownerId: song.id, ownerType: "song",
                                         playback: playback,
-                                        onDescribe: { actions.describe(song) })
+                                        onDescribe: { actions.describe(song) },
+                                        onOpenNotation: { openScore = score($0) })
                             .padding(.top, 6)
                         Text("NOTES").eyebrow()
                             .padding(.top, 6)
@@ -168,6 +187,20 @@ struct SongDetailView: View {
                 deleteNow()
             }
         }
+        .sheet(item: $openScore) { score in
+            NotationSheet(document: score, playback: playback,
+                          onRenderNotes: onRenderNotes)
+        }
+    }
+
+    /// A NOTATION slot's document, with the notes the same job produced —
+    /// resolved here rather than in the section, because the section knows
+    /// nothing about parts and this pane already owns the repository.
+    private func score(_ doc: TextDocRecord) -> NotationDocument {
+        let parts = ((try? library.partsRepo?.allParts(forSong: song.id)) ?? nil)
+            ?? []
+        return NotationDocument.resolve(doc: doc, parts: parts,
+                                        songTitle: song.title)
     }
 
     /// The shell's `revertEdits` already confirms (once, for every surface
@@ -182,7 +215,11 @@ struct SongDetailView: View {
     }
 
     private func deleteNow() {
+        // Both ids: the A/B switch auditions the backup under its own id, and
+        // `LibraryStore` disposes the backup along with the track, so stopping
+        // only `song.id` left the transport on a deleted file.
         playback.stop(songId: song.id)
+        playback.stop(songId: song.originalPlaybackId)
         library.delete(song)
         onDeleted()
     }
@@ -292,7 +329,7 @@ struct SongDetailView: View {
                 Button("Play original") {
                     playingOriginal = true
                     playback.play(url: song.backupURL,
-                                  songId: song.id + ".original",
+                                  songId: song.originalPlaybackId,
                                   title: song.title,
                                   duration: originalDuration ?? song.durationS,
                                   subtitle: "ORIGINAL · "
@@ -479,7 +516,7 @@ struct SongDetailView: View {
                 // A distinct songId, or the transport treats this as the
                 // same track and just toggles pause.
                 playback.play(url: song.backupURL,
-                              songId: song.id + ".original",
+                              songId: song.originalPlaybackId,
                               title: song.title,
                               duration: originalDuration ?? song.durationS,
                               subtitle: "ORIGINAL · "

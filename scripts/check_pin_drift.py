@@ -84,18 +84,56 @@ IGNORE_MISSING = {
 }
 
 
+# Runs inside each env, so it has to travel as a string. Two things it has to
+# survive. The triage envs live on an ExFAT volume, which carries an AppleDouble
+# sidecar next to every file: each `*.dist-info` has a `._*.dist-info` twin
+# whose METADATA is a binary resource fork, and reading one raises
+# UnicodeDecodeError. That killed the whole dict comprehension, so `versions()`
+# returned None and every family with a triage env on the SSD printed
+# `SKIP (app=y triage=n)` — the guard reporting nothing at all, which is the
+# state it was fixed out of once already. Skip the twins by name, and keep a
+# per-distribution try/except for whatever else a package's metadata does.
+PROBE = """
+import importlib.metadata as md, json, os
+out = {}
+for dist in md.distributions():
+    path = getattr(dist, '_path', None)
+    if path is not None and os.path.basename(str(path)).startswith('._'):
+        continue
+    try:
+        name, version = dist.metadata['Name'], dist.version
+    except Exception:
+        continue
+    if name:
+        out[name.lower().replace('_', '-')] = version
+print(json.dumps(out))
+"""
+
+
 def versions(python):
+    """This env's installed versions, or None if there is no such env.
+
+    A probe that RUNS and fails is reported rather than folded into None: a
+    broken probe and a missing env both printed SKIP, which is how the
+    AppleDouble bug above went unnoticed.
+    """
     if not os.path.exists(python):
         return None
     try:
-        out = subprocess.run(
-            [python, "-c",
-             "import importlib.metadata as md, json;"
-             "print(json.dumps({d.metadata['Name'].lower().replace('_','-'): "
-             "d.version for d in md.distributions() if d.metadata['Name']}))"],
-            capture_output=True, text=True, timeout=60)
+        out = subprocess.run([python, "-c", PROBE],
+                             capture_output=True, text=True, timeout=60)
+    except Exception as e:  # noqa: BLE001 — a dead interpreter is a report
+        print(f"  probe failed ({python}): {e!r}")
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        tail = (out.stderr or "").strip().splitlines()
+        print(f"  probe failed ({python}): "
+              f"{tail[-1] if tail else 'no output'}")
+        return None
+    try:
         return json.loads(out.stdout)
-    except Exception:
+    except ValueError as e:
+        print(f"  probe returned no JSON ({python}): {e}")
         return None
 
 

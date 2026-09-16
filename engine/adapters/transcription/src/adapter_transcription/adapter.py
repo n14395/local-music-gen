@@ -17,7 +17,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult, aux_dir)
+                                     TaskResult, aux_dir,
+                                     release_accelerator_memory)
 
 from .render_midi import ensure_soundfont, render_midi
 
@@ -295,13 +296,33 @@ class TranscriptionAdapter(ModelAdapter):
             url = ("https://zenodo.org/record/4034264/files/"
                    "CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1")
             part = checkpoint + ".part"
-            with urllib.request.urlopen(url, timeout=300) as resp, \
-                    open(part, "wb") as f:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            # Per-megabyte reporting, like _stage_yourmt3 above: this used to
+            # run behind one message for the whole 172 MB, and since
+            # progress_cb raises CancelledError on a cancelled job, saying
+            # nothing meant Cancel was ignored for the whole transfer.
+            try:
+                with urllib.request.urlopen(url, timeout=300) as resp, \
+                        open(part, "wb") as f:
+                    length = resp.headers.get("Content-Length")
+                    total = int(length) if length and length.isdigit() else 0
+                    done = 0
+                    while True:
+                        chunk = resp.read(1 << 20)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        done += len(chunk)
+                        progress_cb(0.05,
+                                    f"fetching the piano model — "
+                                    f"{done >> 20} MB"
+                                    + (f" of {total >> 20} MB"
+                                       if total else ""))
+            except BaseException:
+                try:
+                    os.unlink(part)
+                except OSError:
+                    pass
+                raise
             os.replace(part, checkpoint)
 
         audio, in_sr = sf.read(src, dtype="float32", always_2d=True)
@@ -355,6 +376,14 @@ class TranscriptionAdapter(ModelAdapter):
         path = os.path.join(out_dir, "melody.mid")
         export_to_midi(notes, path, track_name="Melody")
         return [("melody", path, len(notes))]
+
+    def unload(self) -> None:
+        # There was no unload at all. The piano transcriber is kept across
+        # jobs, and the MT3 route runs on MPS inside its own library — which
+        # leaves an arena behind whether or not this adapter holds a
+        # reference to what filled it.
+        self._piano = None
+        release_accelerator_memory()
 
 
 def _safe(label: str) -> str:

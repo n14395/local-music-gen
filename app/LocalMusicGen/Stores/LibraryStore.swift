@@ -102,6 +102,12 @@ final class LibraryStore {
     @discardableResult
     func importSongs(urls: [URL]) async -> [SongRecord] {
         var imported: [SongRecord] = []
+        // Names allocated earlier in this batch are not in the database yet —
+        // the same bookkeeping `JobsStore.landTake` keeps across a batch of
+        // takes. Importing one file twice, or two files whose tags agree, used
+        // to put two rows under one title, which is exactly what the rename
+        // path refuses and what part naming assumes cannot happen.
+        var reserved: Set<String> = []
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -111,10 +117,13 @@ final class LibraryStore {
                     at: url, songId: songId, into: StoragePaths.libraryAudio)
                 // The file's own title wins over its filename: "Midnight Drive"
                 // reads, "03 midnight_drive_final_v3" does not.
+                let wanted = file.title
+                    ?? url.deletingPathExtension().lastPathComponent
+                let title = uniqueTitle(wanted, reserved: reserved)
+                reserved.insert(title)
                 let song = SongRecord(
                     id: songId,
-                    title: file.title
-                        ?? url.deletingPathExtension().lastPathComponent,
+                    title: title,
                     prompt: "", lyrics: nil, modelId: "imported",
                     modelName: "Imported", groupId: nil, paramsJSON: "{}",
                     durationS: file.durationS, sampleRate: file.sampleRate,

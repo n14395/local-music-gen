@@ -26,6 +26,7 @@ path-ladder looks for `./ckpt/...` entries.
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import secrets
@@ -35,8 +36,9 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir, clear_stale_link)
-from engine_protocol.progress import iter_progress_lines
+                                     ProgressCb, aux_dir, clear_stale_link,
+                                     release_accelerator_memory)
+from engine_protocol.progress import iter_progress_lines, parse_tqdm
 from engine_protocol.staging import fetch_tarball_tree, staged
 
 REPO_COMMIT = "bb2ff7d86ae66d17e4a82e7bcd95c00a1f5a2b77"
@@ -229,15 +231,23 @@ class LeVoAdapter(ModelAdapter):
             raise CancelledError()
 
         npz = os.path.join(self.work_dir, "levo-tokens.npz")
-        np.savez(npz, tokens=np.array(tokens))
+        token_array = np.array(tokens)
+        np.savez(npz, tokens=token_array)
         raw = os.path.join(self.work_dir, "levo-decode.wav")
         if os.path.exists(raw):
             os.unlink(raw)
 
         # The decoder bridge: ~6 s of wall time per song second on the port
         # author's Apple Silicon measurements — the longer half of a render.
+        # The decode is paced across upstream's chunker: code2sound pads the
+        # token stream to 750·k + 250 frames at a 1000-frame window on a
+        # 750-frame hop and runs k windows (generate_septoken, pinned), each
+        # one its own 10-step ODE bar that restarts at zero.
+        frames = int(token_array.shape[-1])
+        windows = max(1, math.ceil((max(frames, 1000) - 250) / 750))
         progress_cb(0.55, "decoding with Flow1dVAE (the slow half — "
-                          "10 diffusion steps per chunk)")
+                          "10 diffusion steps per chunk)",
+                    step=0, steps=windows)
         env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1"}
         proc = subprocess.Popen(
             [self.decoder_python,
@@ -251,14 +261,43 @@ class LeVoAdapter(ModelAdapter):
             env=env)
         self.proc = proc
         assert proc.stdout is not None
+        done, last_step, last_total = 0, 0, 0
         try:
             # \r-aware like the YuE adapter: the decoder's tqdm bars redraw
             # in place and a plain line iterator would sit silent.
             for line in iter_progress_lines(proc.stdout):
                 if cancel.cancelled:
                     proc.kill()
+                    proc.wait()      # or the child is left a zombie
                     raise CancelledError()
                 print(line, flush=True)
+                # Every bar update is also a cancel checkpoint. Without this
+                # the longer half of the render reported one message and the
+                # bar sat at 0.55 for minutes.
+                bar = parse_tqdm(line)
+                if not bar:
+                    continue
+                step, total = bar
+                if total != last_total:
+                    # A different bar family (a checkpoint-shard loader
+                    # before the decode); start the window count at it.
+                    done, last_total = 0, total
+                elif step < last_step:
+                    done = min(done + 1, windows - 1)
+                last_step = step
+                frac = (done + step / total) / windows
+                progress_cb(min(0.95, 0.55 + 0.4 * frac),
+                            f"decoding with Flow1dVAE — window "
+                            f"{done + 1}/{windows}",
+                            step=done + 1, steps=windows)
+        except BaseException:
+            # progress_cb itself raises CancelledError on a cancelled job, so
+            # the loop can exit without passing the branch above — and an
+            # unreaped decoder keeps the GPU for the rest of the session.
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
         finally:
             self.proc = None
         if proc.wait() != 0:
@@ -278,5 +317,14 @@ class LeVoAdapter(ModelAdapter):
             seed_used=seed)
 
     def unload(self) -> None:
+        # A render that ended by exception can leave the decoder child alive,
+        # and it owns the GPU the next model wants.
+        proc, self.proc = self.proc, None
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         self.model = None
         self.tokenizer = None
+        # The token LM is MLX and in-process: dropping the reference leaves
+        # its buffers in MLX's cache until the allocator is told.
+        release_accelerator_memory()

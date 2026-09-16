@@ -302,10 +302,60 @@ final class DownloadsStore {
         }
     }
 
+    /// Did what this transfer was fetching actually arrive — asked of the
+    /// catalog, per model.
+    ///
+    /// `reconcile()` needs it because the engine pops a finished download out
+    /// of its own table (`downloader.py`'s `finally`), so `GET /v1/downloads`
+    /// lists only live transfers and a completion is indistinguishable from a
+    /// failure by absence alone. Injected as a closure rather than a reference
+    /// so this store keeps no dependency on `ModelCatalogStore`;
+    /// `AppEnvironment` refreshes the catalog immediately before reconciling.
+    /// The default cannot tell, and "cannot tell" settles as a failure — a
+    /// transfer whose weights nobody can confirm did not finish.
+    var installCompleted: @MainActor (_ modelId: String,
+                                      _ runtimeOnly: Bool) -> Bool = { _, _ in
+        false
+    }
+
     func reconcile() async {
         guard let client else { return }
-        if let list = try? await client.downloads() {
-            downloads = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+        guard let list = try? await client.downloads() else { return }
+        applyListing(list)
+    }
+
+    /// Adopt the engine's live list, settling whatever is no longer on it.
+    ///
+    /// Internal rather than private so the gap this exists for — a transfer
+    /// that ended while the stream was down — can be tested without an engine.
+    func applyListing(_ list: [DownloadInfo]) {
+        let live = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+        // Replacing the dictionary wholesale, as this used to, made those
+        // transfers vanish with no finished row and no `failures` entry — the
+        // very "a download that vanished without a word read as one that had
+        // finished" this machinery exists to prevent.
+        let vanished = downloads.values.filter { live[$0.downloadId] == nil }
+        downloads = live
+        for info in vanished { settleVanished(info) }
+    }
+
+    /// Give a transfer that disappeared from the engine's list the finished
+    /// row it never got an event for.
+    private func settleVanished(_ info: DownloadInfo) {
+        heldByPauseAll.remove(info.downloadId)
+        if installCompleted(info.modelId, info.isRuntimeOnly) {
+            failures.removeValue(forKey: info.modelId)
+            record(id: info.downloadId, modelId: info.modelId,
+                   runtimeOnly: info.isRuntimeOnly,
+                   bytes: info.bytesTotal, outcome: .completed)
+        } else {
+            let message = "The download stopped while the app was not "
+                + "listening, and the files are not installed."
+            failures[info.modelId] = DownloadFailure(
+                modelId: info.modelId, code: "INTERRUPTED", message: message)
+            record(id: info.downloadId, modelId: info.modelId,
+                   runtimeOnly: info.isRuntimeOnly,
+                   bytes: info.bytesDone, outcome: .failed(message))
         }
     }
 
@@ -401,7 +451,11 @@ final class DownloadsStore {
     /// first-seen stamp to keep.
     @discardableResult
     func sweepFinished(now: Date = Date()) -> Bool {
-        guard let after = autoClearAfterS() else { return !finished.isEmpty }
+        // False, not `!finished.isEmpty`: this answer is the 5-second loop's
+        // only exit, so returning true with the policy switched off kept the
+        // timer waking for as long as one undismissed row sat on the list.
+        // `JobsStore.sweepFinished` has always returned false here.
+        guard let after = autoClearAfterS() else { return false }
         finished.removeAll { now.timeIntervalSince($0.finishedAt) >= after }
         return !finished.isEmpty
     }

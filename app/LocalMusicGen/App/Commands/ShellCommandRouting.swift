@@ -117,6 +117,15 @@ enum ShellCommandRouting {
             : String(repeating: "\u{2605}", count: stars)
     }
 
+    /// Which song Track ▸ Show Notation opens for the picked row.
+    ///
+    /// Notation is filed on songs — a transcription's `abc:<track>` documents
+    /// land on the source song beside its notes parts — so a picked part
+    /// means the song it came from, and nothing picked means nothing.
+    static func notationSongId(song: SongRecord?, part: PartRecord?) -> String? {
+        song?.id ?? part?.songId
+    }
+
     /// What "Show/Hide Sidebar" should say next.
     ///
     /// Takes the *effective* state, not the preference: a window too narrow to

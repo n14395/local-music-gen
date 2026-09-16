@@ -505,10 +505,18 @@ struct EditorScreen: View {
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Bench.Palette.danger.opacity(0.18),
                               lineWidth: 1))
-            .opacity(store.selection == nil ? 0.5 : 1)
-            .disabled(store.selection == nil)
+            .opacity(hasRange ? 1 : 0.5)
+            .disabled(!hasRange)
         }
     }
+
+    /// A selection with no length is not something a range action can act on.
+    ///
+    /// `EditProgram.apply` refuses a zero-length range, so these buttons used
+    /// to record a "0:00.00 → 0:00.00" no-op row, an undo step and an
+    /// "Apply 1 edit" for a render that changes nothing. The ⌫ key command
+    /// always gated on length; the toolbar and the overflow menu did not.
+    private var hasRange: Bool { (store.selection?.length ?? 0) > 0 }
 
     private var divider: some View {
         Rectangle().fill(Color.white.opacity(0.09))
@@ -551,9 +559,9 @@ struct EditorScreen: View {
     private var overflowMenu: some View {
         Menu {
             Button("Cut") { store.cutSelection() }
-                .disabled(store.selection == nil)
+                .disabled(!hasRange)
             Button("Copy") { store.copySelection() }
-                .disabled(store.selection == nil)
+                .disabled(!hasRange)
             Button("Paste") { store.paste() }
                 .disabled(!store.canPaste)
             // A copied slice points into the file it came from, so it cannot
@@ -565,7 +573,7 @@ struct EditorScreen: View {
             }
             Divider()
             Button("Reverse selection") { store.reverseSelection() }
-                .disabled(store.selection == nil)
+                .disabled(!hasRange)
             Menu("Auto-trim silence") {
                 ForEach(EditorStore.autoTrimThresholdsDb, id: \.self) { db in
                     Button(String(format: "Below %.0f dB", db)) {

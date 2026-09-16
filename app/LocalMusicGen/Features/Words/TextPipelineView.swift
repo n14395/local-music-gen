@@ -91,6 +91,9 @@ struct TextPipelineView: View {
     @State private var draft = ""
     @State private var choosingSource = false
     @State private var starting = false
+    /// The score the notation viewer is open on — "View" on the ABC output
+    /// row, once a document has landed on the source song.
+    @State private var openScore: NotationDocument?
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
 
     private var slot: Slot? { recipe.slots.first }
@@ -188,6 +191,12 @@ struct TextPipelineView: View {
                 library: library, parts: parts, jobs: jobs,
                 playback: playback, onOpenModels: onOpenModels,
                 onPick: { source = $0 })
+        }
+        // No renderer route from here: the Actions pages never had one, and
+        // the sheet's Hear it says where the render lives instead.
+        .sheet(item: $openScore) { score in
+            NotationSheet(document: score, playback: playback,
+                          onRenderNotes: nil)
         }
     }
 
@@ -373,6 +382,12 @@ struct TextPipelineView: View {
                         : "This is what the model heard. Rewrite anything "
                             + "before it becomes music.",
                     fills: true)
+                // The score follows the typing, a beat behind, so editing
+                // ABC by hand stops being blind: a broken bar shows up as a
+                // warning under the staff before Compose is pressed.
+                if effectiveKind == .abcEdited {
+                    NotationLivePreview(abc: draft)
+                }
             }
         } else if let text = activeRun?.progress.effectiveText,
                   !text.isEmpty {
@@ -476,10 +491,31 @@ struct TextPipelineView: View {
              ActionOutput(id: "song", name: "\(rounds) takes", meta: "AUDIO",
                           kind: "song.mix")]
         case .abcRoundTrip, .abcEdited:
-            [ActionOutput(id: "abc", name: "ABC notation", meta: "TEXT"),
+            [ActionOutput(id: "abc", name: "ABC notation", meta: "TEXT",
+                          onOpen: latestScore.map { doc in { open(score: doc) } }),
              ActionOutput(id: "notes", name: "Composed notes", meta: "MIDI",
                           kind: "notes.melody")]
         }
+    }
+
+    /// The newest ABC document on the run's source song, once one has
+    /// landed — the output row is drawn before the run has produced any, and
+    /// only offers "View" when there is something to view.
+    private var latestScore: TextDocRecord? {
+        guard let songId = activeRun?.sourceSongId ?? source?.songId else {
+            return nil
+        }
+        return NotationDocument.newest(in: textStore.docs(for: songId,
+                                                          kind: .abc))
+    }
+
+    private func open(score doc: TextDocRecord) {
+        let songParts = (try? parts.repository.allParts(forSong: doc.ownerId))
+            ?? []
+        let title = ((try? library.repository.song(id: doc.ownerId)) ?? nil)?
+            .title ?? activeRun?.sourceTitle ?? source?.sourceTitle ?? "Notation"
+        openScore = NotationDocument.resolve(doc: doc, parts: songParts,
+                                             songTitle: title)
     }
 
     private var explanation: String {

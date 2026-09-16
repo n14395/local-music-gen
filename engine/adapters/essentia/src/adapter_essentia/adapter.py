@@ -120,17 +120,41 @@ class EssentiaAdapter(ModelAdapter):
         return list(wanted)
 
     def _fetch(self, url: str, dest: str, progress_cb: ProgressCb) -> None:
+        """Download `url` to `dest`, reporting bytes and honouring Cancel.
+
+        This ran behind one indeterminate message for the whole transfer, so
+        Cancel was ignored through a first-use fetch of the embedder and every
+        head. Reporting per megabyte is also the cancel checkpoint: there is
+        no CancelToken in load(), but `progress_cb` raises CancelledError on a
+        cancelled job.
+        """
         if os.path.exists(dest):
             return
-        progress_cb(None, f"fetching {os.path.basename(dest)} from UPF")
+        what = os.path.basename(dest)
+        progress_cb(None, f"fetching {what} from UPF")
         part = dest + ".part"
-        with urllib.request.urlopen(url, timeout=120) as resp, \
-                open(part, "wb") as f:
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk)
+        try:
+            with urllib.request.urlopen(url, timeout=120) as resp, \
+                    open(part, "wb") as f:
+                length = resp.headers.get("Content-Length")
+                total = int(length) if length and length.isdigit() else 0
+                done = 0
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    progress_cb(None, f"fetching {what} — {done >> 20} MB"
+                                      + (f" of {total >> 20} MB"
+                                         if total else ""))
+        except BaseException:
+            # A cancelled transfer must not leave its part file behind.
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
+            raise
         os.replace(part, dest)
 
     def load(self, progress_cb: ProgressCb) -> None:

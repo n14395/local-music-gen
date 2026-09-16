@@ -219,4 +219,14 @@ final class LibrarySelectionTests: XCTestCase {
             .contentsOfDirectory(atPath: dir.path).sorted()
         XCTAssertEqual(leftovers, ["source.wav", "take.wav"])
     }
+
+    /// The stashed original plays under an id of its own, and every delete
+    /// path has to stop *both* — deleting a track while its original was
+    /// sounding used to leave the transport over a disposed file. Named once
+    /// so a stop site cannot spell it differently from a play site.
+    func testTheStashedOriginalHasATransportIdOfItsOwn() {
+        let track = song("a")
+        XCTAssertEqual(track.originalPlaybackId, "a.original")
+        XCTAssertNotEqual(track.originalPlaybackId, track.id)
+    }
 }

@@ -26,7 +26,8 @@ import types
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter, ProgressCb,
+                                     release_accelerator_memory)
 
 MAX_DURATION_S = 30.0
 
@@ -61,6 +62,8 @@ class MelodyFlowAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.model = None
         self.device = str(self.settings.get("device") or "cpu")
+        # The checkpoint's own cfg_coef, read once at load — see generate().
+        self._cfg_default = None
 
     def _snapshot(self) -> str:
         if not self.model_paths:
@@ -76,6 +79,13 @@ class MelodyFlowAdapter(ModelAdapter):
         # isdir path), so nothing reaches for the network.
         self.model = MelodyFlow.get_pretrained(self._snapshot(),
                                                device=self.device)
+        # cfg_coef is a persistent field of the flow LM, so assigning it in
+        # generate() used to stick: the first take that set it made the
+        # catalog's declared default (null = "the checkpoint's own value")
+        # unreachable for every later take in this worker (audit 09-B3).
+        # Remembered here so a null param can put it back.
+        lm = getattr(self.model, "lm", None)
+        self._cfg_default = getattr(lm, "cfg_coef", None)
         progress_cb(None, f"MelodyFlow ready on {self.device}")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
@@ -115,13 +125,19 @@ class MelodyFlowAdapter(ModelAdapter):
         # Guidance is an attribute of the flow model rather than a generation
         # parameter — `FlowMatchingModel.generate` takes no cfg argument and
         # reads `self.cfg_coef` at the step (`flow.py`), which is why this is
-        # a field assignment and not a kwarg. None leaves the checkpoint's own
-        # value alone. On an edit it applies to the pass that travels towards
-        # the new description; the inversion pass runs unguided by
-        # construction, upstream forces cfg to 0 there to stop it diverging.
+        # a field assignment and not a kwarg. None RESTORES the checkpoint's
+        # own value (captured in load): the field sticks, so "leave it alone"
+        # had to become "put it back". On an edit it applies to the pass that
+        # travels towards the new description; the inversion pass runs
+        # unguided by construction, upstream forces cfg to 0 there to stop it
+        # diverging.
         cfg = params.get("cfg_coef")
-        if cfg is not None and getattr(self.model, "lm", None) is not None:
-            self.model.lm.cfg_coef = float(cfg)
+        lm = getattr(self.model, "lm", None)
+        if lm is not None:
+            if cfg is not None:
+                lm.cfg_coef = float(cfg)
+            elif self._cfg_default is not None:
+                lm.cfg_coef = self._cfg_default
 
         src = params.get("src_audio")
         with torch.no_grad():
@@ -187,3 +203,9 @@ class MelodyFlowAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
+        self._cfg_default = None
+        # settings.device is "mps" for this entry, and dropping the reference
+        # leaves torch's caching allocator holding every block the model
+        # touched — the next model of this family then loads against a full
+        # arena (audit 09-B7).
+        release_accelerator_memory()

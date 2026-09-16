@@ -12,7 +12,6 @@ calls, not estimates — and the no-hook fallback path reports no phase at all.
 
 from __future__ import annotations
 
-import gc
 import os
 import secrets
 
@@ -21,7 +20,8 @@ import soundfile as sf
 import torch
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb)
+                                     ModelAdapter, ProgressCb,
+                                     release_accelerator_memory)
 
 
 class MiniMaxAdapter(ModelAdapter):
@@ -29,6 +29,8 @@ class MiniMaxAdapter(ModelAdapter):
         super().__init__(*args, **kwargs)
         self.pipe = None
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+        # The guider's own guidance_scale, read once at load — see generate().
+        self._cfg_default = None
 
     def _snapshot(self) -> str:
         return next(iter(self.model_paths.values()))
@@ -49,6 +51,13 @@ class MiniMaxAdapter(ModelAdapter):
         if vocoder is not None and dtype != torch.float32:
             vocoder.to(torch.float32)
         self.pipe = pipe
+        # guidance_scale is a persistent field of the guider, not a call
+        # argument, so assigning it per generate used to stick: a take that
+        # raised it left every later take in this worker raised too, whatever
+        # the slider said (audit 09-B3, the same shape as MelodyFlow's
+        # cfg_coef). Remembered here so a null param can put it back.
+        guider = getattr(pipe, "guider", None)
+        self._cfg_default = getattr(guider, "guidance_scale", None)
         progress_cb(None, f"MiniMax Music 3 on {self.device}")
 
     def generate(self, prompt: str, lyrics: str | None, params: dict,
@@ -63,9 +72,11 @@ class MiniMaxAdapter(ModelAdapter):
         steps = max(4, min(150, int(params.get("steps") or 30)))
         cfg = params.get("cfg_scale")
         guider = getattr(self.pipe, "guider", None)
-        if cfg is not None and guider is not None \
-                and hasattr(guider, "guidance_scale"):
-            guider.guidance_scale = float(cfg)
+        if guider is not None and hasattr(guider, "guidance_scale"):
+            if cfg is not None:
+                guider.guidance_scale = float(cfg)
+            elif self._cfg_default is not None:
+                guider.guidance_scale = self._cfg_default
         # Drawn rather than left to chance when the job did not pin one:
         # an unreproducible take is one you cannot come back to after
         # changing a single other setting. `seed_used` reports it back.
@@ -224,6 +235,5 @@ class MiniMaxAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.pipe = None
-        gc.collect()
-        if self.device == "mps":
-            torch.mps.empty_cache()
+        self._cfg_default = None
+        release_accelerator_memory()

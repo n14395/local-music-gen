@@ -33,6 +33,10 @@ actor BackendProcessManager {
     /// loser sees a stale one and leaves.
     private var generation = 0
     private var stderrLog: FileHandle?
+    /// The read end of the running child's stderr pipe, kept so the handler
+    /// installed on it can be taken off again — at `stop()`, and before the
+    /// next spawn installs its own.
+    private var stderrReader: FileHandle?
 
     private let modeOverride: BackendLaunchMode?
     /// Settings' engine knobs, read fresh at every spawn so a restart picks
@@ -95,6 +99,18 @@ actor BackendProcessManager {
             await awaitExit(of: process, gracePeriod: 5)
         }
         try? FileManager.default.removeItem(at: StoragePaths.enginePidFile)
+        // The child is gone, so the pipe is at EOF and its handler would
+        // otherwise keep firing on nothing (see `clearStderrHandler`), and the
+        // day's log would be held open by a manager with no engine.
+        clearStderrHandler()
+        closeStderrLog()
+        // A handshake file left behind points at a port nothing answers on.
+        // Only a spawned engine's file is ours to remove: in attach mode it
+        // belongs to the dev's engine, which we did not start and are not
+        // stopping.
+        if case .spawn = mode {
+            try? FileManager.default.removeItem(at: StoragePaths.engineHandshake)
+        }
         process = nil
         client = nil
         await setPhase(.stopped)
@@ -169,6 +185,11 @@ actor BackendProcessManager {
     // MARK: spawn path
 
     private func spawn(command: [String]) async {
+        // Whatever the last child left installed goes first: a restart or a
+        // crash respawn replaces `process`, and the old pipe's handler kept
+        // appending the dead (or orphaned) engine's output into the live
+        // stderr tail and today's log, interleaved with this one's.
+        clearStderrHandler()
         cleanStaleProcess()
         try? FileManager.default.removeItem(at: StoragePaths.engineHandshake)
         try? StoragePaths.ensureDirectories()
@@ -195,9 +216,18 @@ actor BackendProcessManager {
         openStderrLog()
         let logHandle = stderrLog
         let statusStore = status
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        let reader = stderrPipe.fileHandleForReading
+        stderrReader = reader
+        reader.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            // An empty read is EOF, and a dispatch read source stays readable
+            // at EOF for ever: without this the handler re-fired in a tight
+            // loop from the moment the engine died until the `Pipe` was
+            // released — the whole 1/4/15 s crash backoff, spinning a core.
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
             try? logHandle?.write(contentsOf: data)
             if let text = String(data: data, encoding: .utf8) {
                 let lines = text.split(separator: "\n").map(String.init)
@@ -274,6 +304,17 @@ actor BackendProcessManager {
 
     private enum HandshakeStall { case idle, cap, childExited }
 
+    /// The wire contract this app speaks (`docs/api-contract.md`).
+    static let contract = 1
+
+    /// What the sidebar says when the engine answers in a contract this app
+    /// does not know — a future bump, or a stale app beside a newer engine in
+    /// attach mode.
+    static func contractMismatchReason(_ theirs: Int) -> String {
+        "This engine speaks contract \(theirs); this app speaks \(contract). "
+            + "Update the app (or run the engine that shipped with it)."
+    }
+
     private func connect(handshakeFile: URL) async {
         let gen = generation
         let start = Date()
@@ -284,9 +325,19 @@ actor BackendProcessManager {
         var stall = HandshakeStall.idle
         while !stopping {
             if let data = try? Data(contentsOf: handshakeFile),
-               let hs = try? BackendClient.decoder.decode(Handshake.self, from: data),
-               hs.contract == 1
+               let hs = try? BackendClient.decoder.decode(Handshake.self,
+                                                          from: data)
             {
+                // A contract this app does not speak used to be folded into
+                // the condition above, so the file was skipped in silence and
+                // the wait reported it minutes later as a timeout. The field
+                // exists precisely so we can say what is actually wrong.
+                guard hs.contract == Self.contract else {
+                    guard !stopping, generation == gen else { return }
+                    await setPhase(.failed(
+                        reason: Self.contractMismatchReason(hs.contract)))
+                    return
+                }
                 // The handshake may be from a previous run; verify liveness below.
                 let candidate = BackendClient(port: hs.port, token: token)
                 if (try? await candidate.health()) != nil {
@@ -484,6 +535,17 @@ actor BackendProcessManager {
 
     private func setPhase(_ phase: BackendPhase) async {
         await MainActor.run { [status] in status.phase = phase }
+    }
+
+    /// Take the handler off the child's stderr pipe and let the pipe go.
+    private func clearStderrHandler() {
+        stderrReader?.readabilityHandler = nil
+        stderrReader = nil
+    }
+
+    private func closeStderrLog() {
+        try? stderrLog?.close()
+        stderrLog = nil
     }
 
     private func openStderrLog() {

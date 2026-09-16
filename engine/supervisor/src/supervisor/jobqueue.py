@@ -142,6 +142,29 @@ class SubmitError(Exception):
         self.code = code
 
 
+def _number(body: dict, key: str, kind, default):
+    """One numeric field of a submit body, or a 422 saying which one.
+
+    `body.get(key, default)` is not enough: a key that is *present and null*
+    returns None rather than the default, so `float(None)` raised a TypeError
+    that no handler caught and uvicorn answered with a 500 and a plain-text
+    body — the one error shape the contract says never goes out. Every other
+    refusal in submit() is a SubmitError; these used to be the exceptions.
+    """
+    raw = body.get(key)
+    if raw is None:
+        return default
+    # bool is an int in Python, and `count: true` meaning 1 take is nobody's
+    # intent.
+    if isinstance(raw, bool) or isinstance(raw, (list, dict)):
+        raise SubmitError(422, "VALIDATION", f"'{key}' must be a number")
+    try:
+        return kind(raw)
+    except (TypeError, ValueError):
+        raise SubmitError(422, "VALIDATION",
+                          f"'{key}' must be a number, not {raw!r}") from None
+
+
 class Job:
     def __init__(self, group_id: str, model_id: str, prompt: str,
                  lyrics: str | None, duration_s: float | None, count: int,
@@ -253,11 +276,14 @@ class JobQueue:
         if task not in (caps.get("tasks") or ["generate"]):
             raise SubmitError(422, "VALIDATION",
                               f"{mid} does not support task '{task}'")
+        count = _number(body, "count", int, 1)
+        if count < 1:
+            raise SubmitError(422, "VALIDATION", "count must be at least 1")
         if task != "generate":
             if lyrics:
                 raise SubmitError(422, "VALIDATION",
                                   f"task '{task}' does not accept lyrics")
-            if int(body.get("count", 1)) != 1:
+            if count != 1:
                 raise SubmitError(422, "VALIDATION",
                                   f"task '{task}' jobs run exactly one take")
         if lyrics and not caps["supports_lyrics"]:
@@ -271,7 +297,7 @@ class JobQueue:
         if preview and not caps.get("supports_preview"):
             raise SubmitError(422, "VALIDATION",
                               f"{mid} cannot preview while it renders")
-        if int(body.get("count", 1)) > caps["outputs_per_job_max"]:
+        if count > caps["outputs_per_job_max"]:
             raise SubmitError(422, "VALIDATION",
                               f"count exceeds max for {mid}")
         if not force and model["requirements"]["min_ram_bytes"] > physical_ram_bytes():
@@ -285,7 +311,8 @@ class JobQueue:
         # that reports queue state are all waiting on this same lock. Nothing
         # below touches queue state until the jobs themselves are created.
         if task == "generate":
-            dur = float(body.get("duration_s", caps["duration"]["default_s"]))
+            dur = _number(body, "duration_s", float,
+                          caps["duration"]["default_s"])
             # `unlocked_max_s` is the ceiling when a model declares one —
             # the lock is an app-side affordance (a toggle behind a
             # warning), not a second server-side rule. Clamping to max_s
@@ -297,11 +324,14 @@ class JobQueue:
             dur = max(caps["duration"]["min_s"], min(ceiling, dur))
         else:
             # output length derives from the input; echo what was sent
-            raw_dur = body.get("duration_s")
-            dur = float(raw_dur) if raw_dur is not None else None
+            dur = _number(body, "duration_s", float, None)
         known = {p["key"] for p in caps["params"]}
         defaults = {p["key"]: p.get("default") for p in caps["params"]}
         raw = body.get("params") or {}
+        if not isinstance(raw, dict):
+            # `raw.items()` below is an AttributeError on a list, which reached
+            # the caller as a 500 in plain text rather than a refusal.
+            raise SubmitError(422, "VALIDATION", "params must be an object")
         params = {k: v for k, v in raw.items() if k in known}
         dropped = set(raw) - known
         # params of type "audio"/"midi" carry an upload id; the worker gets a path
@@ -368,7 +398,7 @@ class JobQueue:
             # They still run one after another on the same warm worker (the
             # runner is serial and the worker keeps its loaded model), so the
             # split costs nothing but honesty.
-            takes = int(body.get("count", 1))
+            takes = count
             jobs = [Job(group_id, mid, prompt, lyrics, dur, 1, params,
                         task=task, preview=preview, take_index=i,
                         take_of=takes)
@@ -760,6 +790,58 @@ class JobQueue:
                             ran.family) is ran:
                         ran.idle_since = now
                     self._expire_small_locked(now)
+                    # Released here and nowhere earlier: this is the last read
+                    # of job.worker, and the job is terminal by now (cancel and
+                    # the cancel watchdog both skip terminal jobs). It used to
+                    # be held for the life of the history row, so a session
+                    # that switched models kept a dead Worker — its Popen, its
+                    # log handle, its message queue — for up to
+                    # JOB_HISTORY_CAP jobs at a time.
+                    job.worker = None
+
+    def relieve_memory_pressure(self, culprit: Worker) -> list[str]:
+        """Drop idle warm workers when the memory guard trips; what was
+        dropped, so the warning can name it.
+
+        Called from the offending worker's stdout reader thread (see
+        `Worker._relieve_memory`), so the lock covers a couple of dict
+        operations and the kills happen outside it — a reader thread blocked on
+        this lock is a worker that cannot drain its stdout.
+
+        Only idle workers go, and never the one that tripped the guard. The
+        pool exists because its members are cheap to rebuild, so dropping one
+        is strictly better than telling the user to pick a smaller model — and
+        the guard only warns, so before this there was no response to memory
+        pressure at all. The resident slot goes too when no job is using it,
+        unless it holds the pinned model: the idle loop would reload that
+        immediately, and a reload loop under memory pressure is worse than the
+        pressure.
+        """
+        freed: list[str] = []
+        doomed: list[Worker] = []
+        with self.lock:
+            for family, worker in list(self.small_workers.items()):
+                if worker is culprit or worker.idle_since is None:
+                    continue
+                del self.small_workers[family]
+                doomed.append(worker)
+                freed.append(worker.loaded_model_id or family)
+            resident = self.worker
+            busy = self.active.worker if self.active else None
+            if (resident is not None and resident is not culprit
+                    and resident is not busy
+                    and resident.loaded_model_id != self.pinned_model_id):
+                self.worker = None
+                doomed.append(resident)
+                freed.append(resident.loaded_model_id or resident.family)
+                # The titlebar must stop claiming this model is loaded, so this
+                # eviction announces itself where a displacement does not.
+                self.bus.emit_threadsafe("worker.state", {
+                    "state": "stopped", "model_id": resident.loaded_model_id,
+                    "family": resident.family})
+        for worker in doomed:
+            worker.kill()
+        return freed
 
     def _drop_small_locked(self, family: str) -> None:
         """Caller holds self.lock."""
@@ -874,6 +956,9 @@ class JobQueue:
         while True:
             spawned = Worker(family, python, self.settings, self.bus,
                              log_suffix="transient" if small else None)
+            # The memory guard's first move is to drop idle warm workers, and
+            # only the queue knows which those are.
+            spawned.on_memory_pressure = self.relieve_memory_pressure
             with self.lock:
                 if self._install_worker_locked(spawned, small, family):
                     return spawned

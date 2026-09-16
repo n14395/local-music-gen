@@ -71,7 +71,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .models:
             ("Reveal model library", .modelLibrary)
         case .engine:
-            ("Reveal engine logs", .engineLogs)
+            ("Open engine logs", .engineLogs)
         default:
             nil
         }

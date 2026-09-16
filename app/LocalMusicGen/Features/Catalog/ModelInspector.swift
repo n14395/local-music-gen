@@ -163,7 +163,7 @@ struct ModelInspector: View {
                         fact("Takes", "up to \(caps.outputsPerJobMax) per run")
                     }
                 }
-                fact("Output", "\(caps.sampleRate / 1000) kHz")
+                fact("Output", Self.rate(caps.sampleRate))
                 let knobs = caps.params.filter { $0.isInternal != true }
                 if !knobs.isEmpty {
                     fact("Parameters", "\(knobs.count) — "
@@ -295,6 +295,13 @@ struct ModelInspector: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A sample rate as kHz. Integer division used to print 44100 Hz as
+    /// "44 kHz" — three quarters of the catalog declares 44 100. `%g` drops
+    /// the trailing zeros, so 44100 → "44.1 kHz" and 48000 → "48 kHz".
+    static func rate(_ hz: Int) -> String {
+        String(format: "%g kHz", Double(hz) / 1000)
     }
 
     private func fact(_ label: String, _ value: String) -> some View {

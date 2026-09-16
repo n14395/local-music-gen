@@ -262,3 +262,45 @@ class ModelAdapter(ABC):
 
     def unload(self) -> None:  # noqa: B027 — optional hook
         pass
+
+
+def release_accelerator_memory() -> None:
+    """Hand cached Metal/MLX blocks back after an adapter drops its model.
+
+    Rebinding ``self.model = None`` frees the Python objects, but both
+    allocators keep their arenas: torch's MPS caching allocator and MLX's
+    buffer cache hold every block the model ever touched until told
+    otherwise. In a warm worker that then loads the next model of the same
+    family (worker_main calls unload() first for exactly that reason) the
+    second model used to be allocated against a full arena — nine families
+    dropped their references and freed nothing (audit 2026-09-16, 09-B7 and
+    10-B12). Call this at the END of unload(), after every reference is
+    gone: a cache flush with the tensors still referenced returns nothing.
+
+    Only runtimes the process has already imported are flushed, so a family
+    that never touched torch does not pay for importing it here. Every step
+    is best-effort; unload must never raise.
+    """
+    import gc
+    import sys
+
+    gc.collect()
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        try:
+            mps = getattr(torch.backends, "mps", None)
+            if mps is not None and mps.is_available():
+                torch.mps.empty_cache()
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+    mx = sys.modules.get("mlx.core")
+    if mx is not None:
+        try:
+            mx.clear_cache()
+        except Exception:  # noqa: BLE001 — best effort
+            pass

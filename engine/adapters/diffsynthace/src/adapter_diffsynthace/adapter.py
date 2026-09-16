@@ -27,7 +27,8 @@ import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
-                                     GenerateResult, ModelAdapter, ProgressCb)
+                                     GenerateResult, ModelAdapter, ProgressCb,
+                                     release_accelerator_memory)
 
 CORE_REPO = "ACE-Step/Ace-Step1.5"
 DIT_REPO = "ACE-Step/acestep-v15-xl-sft"
@@ -291,10 +292,4 @@ class DiffSynthAceAdapter(ModelAdapter):
     def unload(self) -> None:
         self.pipe = None
         self.template = None
-        try:
-            import torch
-
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-        except Exception:  # noqa: BLE001 — unload must never raise
-            pass
+        release_accelerator_memory()

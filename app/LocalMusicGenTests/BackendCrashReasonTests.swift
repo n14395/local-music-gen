@@ -43,4 +43,15 @@ final class BackendCrashReasonTests: XCTestCase {
         XCTAssertTrue(reason.hasSuffix(line))
         XCTAssertFalse(reason.contains("\u{2026}"))
     }
+
+    /// A handshake declaring a contract this app does not speak used to be
+    /// skipped in silence and reported, a minute later, as a timeout — for a
+    /// mismatch the handshake had stated outright.
+    func testAContractMismatchNamesBothSides() {
+        let reason = BackendProcessManager.contractMismatchReason(2)
+        XCTAssertTrue(reason.contains("contract 2"), reason)
+        XCTAssertTrue(reason.contains("this app speaks 1"), reason)
+        XCTAssertEqual(BackendProcessManager.contract, 1,
+                       "the app's own contract, as the handshake check reads it")
+    }
 }

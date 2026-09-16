@@ -53,4 +53,40 @@ final class ParameterFormTests: XCTestCase {
         state.setNull(s)
         XCTAssertEqual(state.params["seed"], .null)
     }
+
+    /// §4.1: `nullable` means the UI offers an unset state. The enum menu had
+    /// no way back to null once a choice was picked, which is a one-way door
+    /// on 18 catalog entries — the state itself always could.
+    func testNullableEnumGoesBackToUnset() {
+        let s = spec("track", .enum, default: .null, nullable: true,
+                     choices: [EnumChoice(value: "vocals", label: "Vocals"),
+                               EnumChoice(value: "bgm", label: "Backing")])
+        let state = ParameterFormState(specs: [s])
+        XCTAssertTrue(state.isNull(s))
+        state.setString(s, "vocals")
+        XCTAssertEqual(state.params["track"], .string("vocals"))
+        state.setNull(s)
+        XCTAssertEqual(state.params["track"], .null)
+        XCTAssertEqual(state.stringValue(s), "")
+    }
+
+    /// What the HELD pill and Studio's summary line print. One formatter for
+    /// both, so the row and the line cannot disagree about the same number.
+    func testPlainPrintsIntsWholeAndFloatsShort() {
+        let seed = spec("seed", .int, default: .null, nullable: true)
+        let guidance = spec("guidance", .float, default: .double(3))
+        XCTAssertEqual(ParameterFormView.plain(1_843_293_012, seed),
+                       "1843293012")
+        XCTAssertEqual(ParameterFormView.plain(7, guidance), "7")
+        XCTAssertEqual(ParameterFormView.plain(7.5, guidance), "7.5")
+    }
+
+    /// 75 of the 136 catalog entries declare 44 100 Hz, and integer division
+    /// printed every one of them as "44 kHz".
+    func testSampleRateReadsAsKilohertz() {
+        XCTAssertEqual(ModelInspector.rate(44_100), "44.1 kHz")
+        XCTAssertEqual(ModelInspector.rate(48_000), "48 kHz")
+        XCTAssertEqual(ModelInspector.rate(32_000), "32 kHz")
+        XCTAssertEqual(ModelInspector.rate(16_000), "16 kHz")
+    }
 }

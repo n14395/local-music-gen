@@ -68,9 +68,12 @@ final class StyleTransferModeTests: XCTestCase {
      "default": 0.7, "nullable": false, "min": 0.0, "max": 1.0, "step": 0.05}
     """
 
+    /// The catalog's own spec, re-ranged by the 2026-09-16 audit: 1.0 is
+    /// `sigma_max`, i.e. the source is ignored, so it is the top of the range
+    /// rather than a sensible default.
     private let noiseParam = """
-    {"key": "init_noise_level", "type": "float", "label": "Noise",
-     "default": 1.0, "nullable": false, "min": 0.1, "max": 10.0}
+    {"key": "init_noise_level", "type": "float", "label": "Reimagine amount",
+     "default": 0.9, "nullable": false, "min": 0.05, "max": 1.0}
     """
 
     /// Stands in for `acestep-base`: turbo, so cover and repaint but no
@@ -230,17 +233,19 @@ final class StyleTransferModeTests: XCTestCase {
         XCTAssertEqual(dial.wireValue(styleAmount: 0.3), 0.7, accuracy: 0.0001)
     }
 
-    func testNoiseLevelIsLogarithmicSoTheModelDefaultLandsMidSlider() {
-        // 0.1…10 spans two decades. Mapped linearly the model's own default of
-        // 1.0 would sit at 9% of the travel and the top 90% of the slider would
-        // be unusable noise.
+    func testNoiseLevelIsMappedGeometrically() {
+        // 0.05…1 — 1.0 is sigma_max, where nothing of the source is left.
+        // Mapped geometrically, so half the travel is spent on 0.05…0.22,
+        // where the arrangement is plainly intact and the differences are
+        // worth hearing.
         guard let dial = StyleTransferMode.shape.dial else {
             return XCTFail("shape has a strength dial")
         }
         XCTAssertEqual(dial.key, "init_noise_level")
-        XCTAssertEqual(dial.wireValue(styleAmount: 0), 0.1, accuracy: 0.0001)
-        XCTAssertEqual(dial.wireValue(styleAmount: 0.5), 1.0, accuracy: 0.0001)
-        XCTAssertEqual(dial.wireValue(styleAmount: 1), 10.0, accuracy: 0.0001)
+        XCTAssertEqual(dial.wireValue(styleAmount: 0), 0.05, accuracy: 0.0001)
+        XCTAssertEqual(dial.wireValue(styleAmount: 0.5), sqrt(0.05),
+                       accuracy: 0.0001)
+        XCTAssertEqual(dial.wireValue(styleAmount: 1), 1.0, accuracy: 0.0001)
     }
 
     func testDialRoundTrips() {
@@ -263,12 +268,22 @@ final class StyleTransferModeTests: XCTestCase {
         XCTAssertEqual(
             StyleTransferMode.cover.dial?.defaultStyleAmount(spec: spec) ?? -1,
             0.3, accuracy: 0.0001)
+    }
 
-        let sao = stableAudio()
-        let noise = StyleTransferMode.shape.dialSpec(for: sao)
-        XCTAssertEqual(
-            StyleTransferMode.shape.dial?.defaultStyleAmount(spec: noise) ?? -1,
-            0.5, accuracy: 0.0001)
+    /// …except where the model's default does not do what the mode says.
+    /// "Keep the shape" opened at the catalog's 0.9, which is 96 % of the
+    /// travel and leaves almost nothing of the arrangement — under a card
+    /// promising the arrangement survives. It rests at its own wire value now.
+    func testKeepTheShapeRestsWhereTheArrangementSurvives() {
+        let noise = StyleTransferMode.shape.dialSpec(for: stableAudio())
+        guard let dial = StyleTransferMode.shape.dial else {
+            return XCTFail("shape has a strength dial")
+        }
+        let resting = dial.defaultStyleAmount(spec: noise)
+        XCTAssertEqual(dial.wireValue(styleAmount: resting, spec: noise), 0.3,
+                       accuracy: 0.0001, "seven parts source to three of noise")
+        XCTAssertLessThan(resting, 0.7, "not hard over, which is the bug")
+        XCTAssertGreaterThan(resting, 0.4, "and not a no-op either")
     }
 
     func testDialHonoursACatalogThatWidensTheRange() {

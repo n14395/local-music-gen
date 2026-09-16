@@ -622,14 +622,19 @@ struct ActionOutput: Identifiable {
     var qualifier: String?
     var meta: String
     var kind: String?
+    /// Opens the output once it exists — a "View" button on the row. nil for
+    /// the common case of an output the rail can only promise; the Words
+    /// pages set it on their notation row once a document has landed.
+    var onOpen: (() -> Void)?
 
     init(id: String, name: String, qualifier: String? = nil,
-         meta: String, kind: String? = nil) {
+         meta: String, kind: String? = nil, onOpen: (() -> Void)? = nil) {
         self.id = id
         self.name = name
         self.qualifier = qualifier
         self.meta = meta
         self.kind = kind
+        self.onOpen = onOpen
     }
 }
 
@@ -692,6 +697,10 @@ struct ActionRail: View {
             .lineLimit(1)
             Spacer(minLength: 6)
             Text(output.meta).metaLine()
+            if let onOpen = output.onOpen {
+                Button("View", action: onOpen)
+                    .buttonStyle(.bench(.quiet))
+            }
         }
         .padding(.horizontal, 13).padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)

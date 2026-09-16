@@ -59,9 +59,14 @@ struct TransportBar: View {
 
     var body: some View {
         HStack(spacing: 18) {
+            // Dimmed with nothing loaded: `PlaybackController.toggle()` no-ops
+            // when there is no current song, so on launch the bar offered a
+            // full-brightness play button that did nothing when clicked. The
+            // Playback menu has always dimmed its own Play for this.
             BenchTransportButton(isPlaying: playback.isPlaying) {
                 playback.toggle()
             }
+            .disabled(playback.currentSongId == nil)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(playback.currentTitle)
@@ -162,7 +167,11 @@ struct TransportBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(active ? "Playing \(letter)" : "Switch to \(letter) — Tab")
+        // The key comes from the catalog, which is what actually installs it:
+        // this tooltip used to hand-write "Tab" while the binding was ⌥Tab, so
+        // following it moved focus instead of switching sides.
+        .help(active ? "Playing \(letter)"
+                     : "Switch to \(letter) — \(ShortcutCatalog.switchSide.display)")
     }
 
     // MARK: - Engine

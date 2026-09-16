@@ -21,7 +21,7 @@ import time
 
 from engine_protocol.adapter import (Artifact, CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter, ProgressCb,
-                                     TaskResult)
+                                     TaskResult, release_accelerator_memory)
 
 from .dialects import for_family
 from .kinds import KINDS, build_messages
@@ -104,7 +104,12 @@ class AssistantAdapter(ModelAdapter):
         messages = build_messages(kind, inp, dialect, lyric_tags)
         temperature = _clamp(params.get("temperature"), DEFAULT_TEMPERATURE,
                              0.0, 2.0)
-        max_tokens = int(params.get("max_tokens") or kind.max_tokens)
+        # The catalog declares 64…2048 and nothing enforced it: the
+        # supervisor does no numeric range validation, and mlx_lm reads -1 as
+        # "an infinite generator" — a job that ran to EOS with no ceiling,
+        # with the bar stuck at 0.95 (produced / max(1, -1)).
+        max_tokens = max(64, min(2048, int(params.get("max_tokens")
+                                           or kind.max_tokens)))
 
         started = time.monotonic()
         text = self._chat(messages, temperature=temperature,
@@ -189,6 +194,14 @@ class AssistantAdapter(ModelAdapter):
                 fraction = min(produced / max(1, max_tokens), _PROGRESS_CEILING)
                 progress_cb(fraction, label)
         return "".join(chunks)
+
+    def unload(self) -> None:
+        # There was no unload at all, so switching between the two assistant
+        # entries in a warm worker kept the first model referenced AND its
+        # MLX buffers cached while the second loaded.
+        self.model = None
+        self.tokenizer = None
+        release_accelerator_memory()
 
 
 def _thinking_kwarg(tokenizer, messages: list[dict]) -> dict:

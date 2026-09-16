@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  The page behind NotationWebView. It is a picture, not a document: nothing
+  here scrolls, selects, links or zooms. The SwiftUI side sizes the web view
+  to the height this page reports back, and the palette arrives with every
+  render request, so this file holds no colours of its own.
+-->
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    cursor: default;
+  }
+  #score svg, #export svg { display: block; }
+  /* Rendered off-screen but laid out, because abcjs measures text with
+     getBBox, which returns zeros for display:none. */
+  #export { position: absolute; left: -100000px; top: 0; }
+</style>
+<script src="abcjs-basic-min.js"></script>
+<script src="notation.js"></script>
+</head>
+<body>
+<div id="score"></div>
+<div id="export"></div>
+</body>
+</html>

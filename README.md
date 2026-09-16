@@ -22,7 +22,8 @@ the machine.
   to each other.
 - **Transform** — stem separation, style transfer, timbre and voice conversion,
   re-amping, mixdown.
-- **Analyze** — transcription to MIDI and notation, tagging, captioning, key and tempo.
+- **Analyze** — transcription to MIDI and notation (engraved in the app: zoom,
+  transpose, hear it, export), tagging, captioning, key and tempo.
 - **Arrange** — stack and align parts on the Workbench, trim and tweak in the Editor.
 - **Library** — every song, part and render, searchable, alongside the settings that
   produced it.

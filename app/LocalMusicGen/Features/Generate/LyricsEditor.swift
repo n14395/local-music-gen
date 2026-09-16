@@ -16,14 +16,19 @@ struct LyricsEditor: View {
     /// Fills its container in Studio's Full-control column; a fixed height in
     /// the narrower action sheets.
     var fills = false
+    /// `capabilities.needs_lyrics`. The header used to say "optional" even on a
+    /// model whose Generate button was disabled with "NEEDS LYRICS" — two
+    /// statements on one screen, one of them false.
+    var isRequired = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Text("LYRICS").eyebrow()
-                Text("optional")
+                Text(isRequired ? "required" : "optional")
                     .font(Bench.Typo.caption)
-                    .foregroundStyle(Bench.Palette.textFaintest)
+                    .foregroundStyle(isRequired ? Bench.Palette.warn
+                                               : Bench.Palette.textFaintest)
                 Spacer()
             }
 

@@ -379,6 +379,20 @@ final class TrackTransformTests: XCTestCase {
     /// The three music-to-text ids are named here before their catalog
     /// entries ship — a card whose favourite is not installed opens on
     /// whatever else can do the job, which is the documented behaviour.
+    /// The chips go through the prefill mailbox, and a chip that moves the
+    /// take count to four without saying so is the surprise the notice band
+    /// exists to prevent. `applyStarter` used to drop `notice` on the floor;
+    /// this pins the data half of that — every starter that changes a setting
+    /// you cannot see carries the sentence explaining it.
+    func testEveryStarterThatChangesTheTakeCountExplainsItself() {
+        for starter in GeneratePreset.starters {
+            let preset = GeneratePreset.preset(id: starter.id)
+            guard preset?.takes != nil else { continue }
+            XCTAssertNotNil(preset?.notice,
+                            "\(starter.id) changes the take count silently")
+        }
+    }
+
     func testTheSpecialistCardsNameRealModels() {
         let preferred = RecipeCatalog.all.flatMap(\.prefersModelIds)
         XCTAssertEqual(Set(preferred),

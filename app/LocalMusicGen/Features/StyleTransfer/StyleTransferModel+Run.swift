@@ -324,9 +324,19 @@ extension StyleTransferModel {
     /// Turn a landed one-shot run into a take.
     ///
     /// Parts carry their `jobId`, so they match exactly. Songs do not — but
-    /// `ingestGenerate` sets the job to `.succeeded` immediately before calling
-    /// the ingest hook, so a tracked job reading succeeded at this moment is
-    /// the one that produced them.
+    /// the job row records what it put in the library (`producedSongIds`,
+    /// written before the ingest hook fires), so each song still names exactly
+    /// one job.
+    ///
+    /// That last part used to be "whichever tracked job reads succeeded",
+    /// taking `landed.values.first`. Two runs finishing together is not exotic
+    /// — `reconcile()` marks every finished job succeeded in one block and
+    /// only then ingests them one at a time — and then the take was stamped
+    /// with a dictionary-order stamp (so take A wore B's mode and dial, the
+    /// one number the rail uses to tell takes apart) and *both* entries were
+    /// dropped, so B's own hook returned at the guard above and its take never
+    /// appeared at all. Comparing two takes back to back is the workspace's
+    /// whole purpose.
     private func recordLandedTakes(songs: [SongRecord], parts: [PartRecord],
                                    jobs: JobsStore) {
         guard !pendingRuns.isEmpty else { return }
@@ -337,17 +347,48 @@ extension StyleTransferModel {
             recordTake(part: part, stamp: stamp)
             pendingRuns.removeValue(forKey: jobId)
         }
-        guard !songs.isEmpty else { return }
-        let landed = pendingRuns.filter { jobs.job($0.key)?.status == .succeeded }
-        guard let stamp = landed.values.first else { return }
-        for song in songs { recordTake(song: song, stamp: stamp) }
-        for jobId in landed.keys { pendingRuns.removeValue(forKey: jobId) }
+        var landed: Set<String> = []
+        for song in songs {
+            guard let run = pendingRuns.first(where: { entry in
+                jobs.job(entry.key)?.producedSongIds.contains(song.id) == true
+            }) else { continue }
+            recordTake(song: song, stamp: run.value)
+            landed.insert(run.key)
+        }
+        for jobId in landed { pendingRuns.removeValue(forKey: jobId) }
+        forgetRunsThatWillNeverLand(jobs)
     }
 
-    /// Stop waiting on runs the engine has forgotten — a cancelled job, or one
-    /// that failed before it produced anything.
+    /// Stop waiting on one run — the engine has forgotten it, or it finished
+    /// without leaving anything behind. `chainStepFailed` covers the jobs that
+    /// fail; the sweep below covers the rest.
     func forgetPendingJob(_ jobId: String) {
         pendingRuns.removeValue(forKey: jobId)
+    }
+
+    /// Drop the runs that have finished without giving this workspace a take.
+    ///
+    /// The sidebar's Style Transfer row spins on `pendingRuns`, and one shape
+    /// of finished job never cleared an entry: an `extract`/`layer` run whose
+    /// result carries no audio artifact at all is marked succeeded and
+    /// delivers `onPartsIngested([])`, so nothing above matched and the
+    /// spinner ran until the app was relaunched. (A failed or cancelled job
+    /// clears through `chainStepFailed`, which `AppEnvironment.noteJobFailed`
+    /// now calls for every settled-badly row; this is the other end of it.)
+    ///
+    /// Safe to sweep every settled row because a job hands its results over
+    /// exactly once, in the same turn its row is marked terminal — so anything
+    /// still pending here has already had its delivery, and a row that has
+    /// vanished from the queue entirely (dismissed, or pruned by retention)
+    /// will never have one.
+    private func forgetRunsThatWillNeverLand(_ jobs: JobsStore) {
+        for jobId in Array(pendingRuns.keys) {
+            guard let job = jobs.job(jobId) else {
+                forgetPendingJob(jobId)     // the row is gone from the queue
+                continue
+            }
+            if job.status.isTerminal { forgetPendingJob(jobId) }
+        }
     }
 
     /// A job landed; work out whether it was ours and move on if so.

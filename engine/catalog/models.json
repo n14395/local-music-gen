@@ -7443,8 +7443,8 @@
             "key": "sampler_type",
             "type": "enum",
             "label": "Sampler",
-            "default": null,
-            "nullable": true,
+            "default": "dpmpp-3m-sde",
+            "nullable": false,
             "choices": [
               {
                 "value": "dpmpp-3m-sde",
@@ -7467,7 +7467,7 @@
                 "label": "LMS"
               }
             ],
-            "help": "Which numerical sampler draws the audio — leave unset for the tool's default.",
+            "help": "Which numerical sampler draws the audio. DPM++ 3M SDE is this checkpoint's released recipe.",
             "group": "sampling"
           },
           {
@@ -7517,7 +7517,9 @@
       },
       "notes": "Accept the license on huggingface.co and add your token in Settings.",
       "settings": {
-        "cfg_scale_default": 7.0
+        "cfg_scale_default": 7.0,
+        "steps_default": 100,
+        "sampler_type": "dpmpp-3m-sde"
       },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-open-1.0",
       "tags": [
@@ -7688,6 +7690,10 @@
         "url": "https://stability.ai/community-license-agreement"
       },
       "notes": "Accept the Stable Audio 3 license on huggingface.co and add your token in Settings. One audio input per job: repaint > continue > reimagine.",
+      "settings": {
+        "steps_default": 8,
+        "cfg_scale_default": 1.0
+      },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-music",
       "tags": [
         "Instrumental & loops",
@@ -7859,7 +7865,9 @@
       "notes": "Accept the Stable Audio 3 license on huggingface.co and add your token in Settings. One audio input per job: repaint > continue > reimagine. Runs on the GPU (MPS); ~19 GB peak memory while rendering.",
       "settings": {
         "device": "mps",
-        "max_duration_s": 380.0
+        "max_duration_s": 380.0,
+        "steps_default": 8,
+        "cfg_scale_default": 1.0
       },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium",
       "tags": [
@@ -8032,7 +8040,9 @@
       "notes": "Speed on this hardware is unmeasured — the est scales the distilled Medium's by the step count. Same one-audio-input rule: repaint > continue > reimagine.",
       "settings": {
         "device": "mps",
-        "max_duration_s": 380.0
+        "max_duration_s": 380.0,
+        "steps_default": 50,
+        "cfg_scale_default": 7.0
       },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-3-medium-base",
       "tags": [
@@ -8204,7 +8214,9 @@
       },
       "notes": "Untested on this hardware — est is a guess from the small architecture. Gated repo (auto-approval): accept the license on huggingface.co and add your token in Settings.",
       "settings": {
-        "device": "mps"
+        "device": "mps",
+        "steps_default": 8,
+        "cfg_scale_default": 1.0
       },
       "homepage": "https://huggingface.co/stabilityai/stable-audio-3-small-sfx",
       "tags": [
@@ -8807,7 +8819,8 @@
       "settings": {
         "dit_config": "acestep-v15-base",
         "dit_repo": "ACE-Step/acestep-v15-base",
-        "shift": 1.0
+        "shift": 1.0,
+        "steps_default": 50
       },
       "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
@@ -9410,7 +9423,8 @@
       "settings": {
         "dit_config": "acestep-v15-sft",
         "dit_repo": "ACE-Step/acestep-v15-sft",
-        "shift": 1.0
+        "shift": 1.0,
+        "steps_default": 50
       },
       "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
@@ -9926,7 +9940,8 @@
       "settings": {
         "dit_config": "acestep-v15-xl-turbo",
         "dit_repo": "ACE-Step/acestep-v15-xl-turbo",
-        "shift": 3.0
+        "shift": 3.0,
+        "steps_default": 8
       },
       "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
@@ -10529,7 +10544,8 @@
       "settings": {
         "dit_config": "acestep-v15-xl-sft",
         "dit_repo": "ACE-Step/acestep-v15-xl-sft",
-        "shift": 1.0
+        "shift": 1.0,
+        "steps_default": 50
       },
       "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
@@ -11132,7 +11148,8 @@
       "settings": {
         "dit_config": "acestep-v15-xl-base",
         "dit_repo": "ACE-Step/acestep-v15-xl-base",
-        "shift": 1.0
+        "shift": 1.0,
+        "steps_default": 50
       },
       "homepage": "https://huggingface.co/ACE-Step/Ace-Step1.5",
       "tags": [
@@ -15241,6 +15258,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 100,
+        "guidance_scale_default": 3.5
+      },
       "homepage": "https://huggingface.co/cvssp/audioldm2-music",
       "tags": [
         "Instrumental & loops"
@@ -15358,6 +15379,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 100,
+        "guidance_scale_default": 3.5
+      },
       "homepage": "https://huggingface.co/cvssp/audioldm2",
       "tags": [
         "Instrumental & loops"
@@ -15475,6 +15500,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 100,
+        "guidance_scale_default": 3.5
+      },
       "homepage": "https://huggingface.co/cvssp/audioldm2-large",
       "tags": [
         "Instrumental & loops"
@@ -15581,6 +15610,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 50,
+        "guidance_scale_default": 2.5
+      },
       "homepage": "https://huggingface.co/cvssp/audioldm-s-full-v2",
       "tags": [
         "Instrumental & loops"
@@ -15687,6 +15720,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 50,
+        "guidance_scale_default": 2.5
+      },
       "homepage": "https://huggingface.co/cvssp/audioldm-m-full",
       "tags": [
         "Instrumental & loops"
@@ -15804,6 +15841,10 @@
         "url": null
       },
       "notes": null,
+      "settings": {
+        "steps_default": 100,
+        "guidance_scale_default": 2.0
+      },
       "homepage": "https://huggingface.co/ucsd-reach/musicldm",
       "tags": [
         "Instrumental & loops"

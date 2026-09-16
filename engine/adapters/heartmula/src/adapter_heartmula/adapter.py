@@ -31,7 +31,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir, clear_stale_link)
+                                     ProgressCb, aux_dir, clear_stale_link,
+                                     release_accelerator_memory)
 
 GEN_NEEDLE = "heartmulagen"          # tokenizer.json + gen_config.json
 MULA_NEEDLE = "heartmula-oss-3b"     # the LM (happy-new-year checkpoint)
@@ -225,3 +226,6 @@ class HeartMuLaAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.pipe = None
+        # 3 B bf16 LM + fp32 codec, both resident: dropping the reference
+        # frees the Python objects, not the Metal arena they filled.
+        release_accelerator_memory()

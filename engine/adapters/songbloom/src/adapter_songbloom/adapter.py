@@ -36,7 +36,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir)
+                                     ProgressCb, aux_dir,
+                                     release_accelerator_memory)
 from engine_protocol.staging import fetch_tarball_tree, staged
 
 # Read at torch import: lets any stray op the MPS backend lacks fall back
@@ -222,3 +223,6 @@ class SongBloomAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
+        # Rebinding frees the Python objects; the Metal arena the DiT and its
+        # codec filled stays checked out until the allocator is told.
+        release_accelerator_memory()

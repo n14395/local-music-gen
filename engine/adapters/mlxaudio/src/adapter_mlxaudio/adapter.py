@@ -13,7 +13,6 @@ reported — the fraction bands are estimates, the step counts are not.
 
 from __future__ import annotations
 
-import gc
 import os
 import secrets
 from pathlib import Path
@@ -23,7 +22,8 @@ import numpy as np
 import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb)
+                                     ModelAdapter, ProgressCb,
+                                     release_accelerator_memory)
 
 # Progress split between the two heavy stages (measured on M1 Max: the AR stage
 # and the flow-matching DiT take roughly 60/40 of the wall time).
@@ -198,5 +198,4 @@ class MLXAudioAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
-        gc.collect()
-        mx.clear_cache()
+        release_accelerator_memory()

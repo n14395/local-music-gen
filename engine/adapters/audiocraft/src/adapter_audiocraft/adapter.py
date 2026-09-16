@@ -48,7 +48,8 @@ import soundfile as sf
 import torch
 
 from engine_protocol.adapter import (CancelledError, CancelToken, GenerateResult,
-                                     ModelAdapter, ProgressCb)
+                                     ModelAdapter, ProgressCb,
+                                     release_accelerator_memory)
 
 
 _autocast_patched = False
@@ -377,6 +378,28 @@ class AudiocraftAdapter(ModelAdapter):
             is_style = bool(self.settings.get("style")
                             and params.get("style_audio"))
             continue_path = params.get("continue_audio")
+            if params.get("melody_audio") and params.get("style_audio"):
+                # Both ride the same `self_wav` slot, so only one can be used.
+                print("ignoring style_audio: melody_audio was supplied and "
+                      "both use the same conditioning slot",
+                      file=sys.stderr, flush=True)
+            if ref_path and continue_path and (self.settings.get("melody")
+                                               or is_style):
+                # It used to disappear without a word: the take came back
+                # looking like an ordinary style/melody render (audit 09-B10).
+                # stderr is mirrored into the render card's log.
+                print("ignoring continue_audio: this take conditions on the "
+                      "reference audio instead — render a continuation "
+                      "without a melody or style reference to use it",
+                      file=sys.stderr, flush=True)
+            if ref_path and not (self.settings.get("melody") or is_style):
+                # A reference in a slot this checkpoint cannot use, which is
+                # the same silent drop seen from the other side.
+                print(f"ignoring the reference audio: this checkpoint has no "
+                      f"conditioner for it (melody="
+                      f"{bool(self.settings.get('melody'))}, style="
+                      f"{bool(self.settings.get('style'))})",
+                      file=sys.stderr, flush=True)
             if ref_path and (self.settings.get("melody") or is_style):
                 wav, sr = sf.read(str(ref_path), dtype="float32",
                                   always_2d=True)
@@ -452,5 +475,4 @@ class AudiocraftAdapter(ModelAdapter):
 
     def unload(self) -> None:
         self.model = None
-        if self.device == "mps":
-            torch.mps.empty_cache()
+        release_accelerator_memory()

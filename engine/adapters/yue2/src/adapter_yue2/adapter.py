@@ -27,7 +27,8 @@ import soundfile as sf
 
 from engine_protocol.adapter import (CancelledError, CancelToken,
                                      GenerateResult, ModelAdapter,
-                                     ProgressCb, aux_dir, clear_stale_link)
+                                     ProgressCb, aux_dir, clear_stale_link,
+                                     release_accelerator_memory)
 
 MODEL_NEEDLE = "yue2-3b"
 VAE_NEEDLE = "yue2-vae"
@@ -204,4 +205,15 @@ class YuE2Adapter(ModelAdapter):
             extra=extra)
 
     def unload(self) -> None:
-        self.pipe = None
+        # close() is upstream's own teardown — it drops `_model` and `_vae`,
+        # which this adapter cannot reach — and only after it does dropping
+        # the pipe free anything. Rebinding alone left a 3.6 B bf16 model's
+        # Metal buffers checked out for the next model in a warm worker.
+        pipe, self.pipe = self.pipe, None
+        if pipe is not None:
+            try:
+                pipe.close()
+            except Exception:  # noqa: BLE001 — unload must never raise
+                pass
+        del pipe
+        release_accelerator_memory()

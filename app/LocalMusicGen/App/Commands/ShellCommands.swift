@@ -708,6 +708,12 @@ private struct TrackItems: View {
         // `ShellActions.ResolvedTarget`. Six items ask about the same row.
         let picked = actions.resolvedTarget
         let target = picked.kind
+        // Show Notation's song and whether it has any, off the same snapshot.
+        let notationSongId = ShellCommandRouting.notationSongId(
+            song: picked.song, part: picked.part)
+        let hasNotation = notationSongId.map {
+            env.textStore.hasDoc(ownerId: $0, kind: .abc)
+        } ?? false
         Group {
             Button("Edit in Editor\u{2026}", action: actions.editTarget)
                 .keyboardShortcut(ShortcutCatalog.editInEditor.shortcut)
@@ -760,6 +766,15 @@ private struct TrackItems: View {
                 ShellWindow.focus()
             }
             .disabled(!target.isPart)
+
+            // Enabled from a part row too: notation is filed on the song a
+            // part came from, and `MainWindow` hosts the sheet, so no pane
+            // has to be on screen for the item to work. No shortcut — the
+            // catalogue is deliberately small, and keys are the owner's call.
+            Button("Show Notation") {
+                actions.showNotation(songId: notationSongId)
+            }
+            .disabled(!hasNotation)
         }
     }
 }

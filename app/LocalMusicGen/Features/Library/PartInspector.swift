@@ -41,6 +41,8 @@ struct PartInspector: View {
     let onDeleted: () -> Void
 
     @State private var confirmDelete = false
+    /// The score the notation viewer is open on — see `SongDetailView`.
+    @State private var openScore: NotationDocument?
     /// Ambient, optional — see `SongDetailView`; absent means "ask".
     @Environment(AppSettings.self) private var appSettings: AppSettings?
     /// The buffered name and the part it was typed for.
@@ -86,7 +88,8 @@ struct PartInspector: View {
                         .padding(.horizontal, 20)
 
                     TextDocsSection(ownerId: part.id, ownerType: "part",
-                                    playback: playback, onDescribe: nil)
+                                    playback: playback, onDescribe: nil,
+                                    onOpenNotation: { openScore = score($0) })
                         .padding(.horizontal, 20).padding(.top, 12)
 
                     if !siblings.isEmpty {
@@ -141,6 +144,10 @@ struct PartInspector: View {
                 .padding(.top, 16).padding(.bottom, 20)
         }
         .background(Bench.Palette.panel)
+        .sheet(item: $openScore) { score in
+            NotationSheet(document: score, playback: playback,
+                          onRenderNotes: onRenderNotes)
+        }
         .task(id: part.id) { await loadFileSize() }
         .confirmationDialog("Delete “\(part.name)”?", isPresented: $confirmDelete) {
             Button("Delete part and its files", role: .destructive) {
@@ -161,6 +168,16 @@ struct PartInspector: View {
         playback.stop(songId: part.id)
         parts.delete(part)
         onDeleted()
+    }
+
+    /// A NOTATION slot's document with the notes its job produced — the
+    /// song's parts, because notation is filed on the song even when a part
+    /// carries a copy, and the linking job is one of the song's.
+    private func score(_ doc: TextDocRecord) -> NotationDocument {
+        let songParts = (try? parts.repository.allParts(forSong: part.songId))
+            ?? []
+        return NotationDocument.resolve(doc: doc, parts: songParts,
+                                        songTitle: sourceTitle)
     }
 
     /// Measure the part's file, off the actor.

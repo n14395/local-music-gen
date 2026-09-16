@@ -17,6 +17,7 @@ Port shims, all proven in triage:
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import subprocess
@@ -55,9 +56,16 @@ def getfilters():
     return getLangfilters()
 '''
 
+# Run in the subprocess with the config file as its one argument. Nothing is
+# substituted into this template: the run arguments carry three user-supplied
+# strings (lyrics, reference_text, the timbre content), and MODEL_PY used to be
+# replaced *after* the argv list had been spliced in — lyrics containing the
+# literal "MODEL_PY" rewrote the argv literal and the subprocess died with a
+# NameError reported as "YingMusic failed: …".
 BOOTSTRAP = '''
-import sys, runpy, torch
-sys.path.insert(0, SRC_DIR)
+import json, sys, runpy, torch
+_cfg = json.load(open(sys.argv[1]))
+sys.path.insert(0, _cfg["src_dir"])
 import singer.decoder.modules as M
 
 def sdpa_attention(q, k=None, v=None, q_lens=None, k_lens=None,
@@ -82,8 +90,8 @@ def sdpa_attention(q, k=None, v=None, q_lens=None, k_lens=None,
     return out.transpose(1, 2).to(q.dtype)
 
 M.flash_attention = sdpa_attention
-sys.argv = ARGV
-runpy.run_path(MODEL_PY, run_name="__main__")
+sys.argv = _cfg["argv"]
+runpy.run_path(_cfg["model_py"], run_name="__main__")
 '''
 
 
@@ -109,6 +117,7 @@ class YingMusicAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.repo: str | None = None
+        self.proc: subprocess.Popen | None = None
 
     def _snapshot(self) -> str:
         if not self.model_paths:
@@ -181,33 +190,47 @@ class YingMusicAdapter(ModelAdapter):
                 "--pitch_shift", str(shift)] + melody_args
         src_dir = os.path.join(self.repo, "src")
         model_py = os.path.join(src_dir, "singer", "model.py")
-        code = (BOOTSTRAP
-                .replace("SRC_DIR", repr(src_dir))
-                .replace("ARGV", repr(argv))
-                .replace("MODEL_PY", repr(model_py)))
+        os.makedirs(self.work_dir, exist_ok=True)
+        cfg_path = os.path.join(self.work_dir, "yingmusic-run.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"src_dir": src_dir, "model_py": model_py,
+                       "argv": argv}, f)
 
         progress_cb(None, "singing (about half a minute per line on CPU)")
-        proc = subprocess.Popen([sys.executable, "-c", code], cwd=self.repo,
+        proc = subprocess.Popen([sys.executable, "-c", BOOTSTRAP, cfg_path],
+                                cwd=self.repo,
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
+        self.proc = proc
         tail: list[str] = []
         assert proc.stderr is not None
-        # The CLI's tqdm (NFE steps per line) was on this stderr and
-        # discarded (audit §5); \r-splitting turns it into live progress.
-        for line in iter_progress_lines(proc.stderr):
-            if cancel.cancelled:
+        try:
+            # The CLI's tqdm (NFE steps per line) was on this stderr and
+            # discarded (audit §5); \r-splitting turns it into live progress.
+            for line in iter_progress_lines(proc.stderr):
+                if cancel.cancelled:
+                    proc.kill()
+                    proc.wait()
+                    raise CancelledError()
+                tail.append(line)
+                tail = tail[-30:]
+                got = parse_tqdm(line)
+                if got:
+                    step, total = got
+                    progress_cb(min(0.98, step / total),
+                                f"singing — {step}/{total}",
+                                step=step, steps=total)
+            proc.wait()
+        except BaseException:
+            # progress_cb itself raises CancelledError on a cancelled job, so
+            # the loop can exit without passing the branch above, leaving the
+            # singer running for the rest of the session.
+            if proc.poll() is None:
                 proc.kill()
                 proc.wait()
-                raise CancelledError()
-            tail.append(line)
-            tail = tail[-30:]
-            got = parse_tqdm(line)
-            if got:
-                step, total = got
-                progress_cb(min(0.98, step / total),
-                            f"singing — {step}/{total}",
-                            step=step, steps=total)
-        proc.wait()
+            raise
+        finally:
+            self.proc = None
         if cancel.cancelled:
             raise CancelledError()
         if proc.returncode != 0:
@@ -225,4 +248,9 @@ class YingMusicAdapter(ModelAdapter):
                   "seed_used": seed})
 
     def unload(self) -> None:
-        pass
+        # Nothing is held in this process — but a run that ended by exception
+        # may have left the singer subprocess alive.
+        proc, self.proc = self.proc, None
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()

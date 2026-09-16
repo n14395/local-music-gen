@@ -54,19 +54,44 @@ BSRNN_WEIGHTS_ZIP = ("https://zenodo.org/records/17516442/files/"
                      "bsrnn-large.zip?download=1")
 
 
-def _fetch(url: str, dest: str, progress_cb: ProgressCb, what: str) -> None:
+def _fetch(url: str, dest: str, progress_cb: ProgressCb, what: str,
+           cancel: CancelToken | None = None) -> None:
+    """Download `url` to `dest`, reporting bytes and honouring Cancel.
+
+    These are the biggest first-use downloads in the engine — 448 MB for the
+    MDX23C checkpoint, 1.6 GB for the BSRNN zip — and they used to run behind
+    one indeterminate message with no way out: Cancel was ignored for the
+    whole transfer. Reporting per megabyte is also the cancel checkpoint,
+    because `progress_cb` raises CancelledError on a cancelled job.
+    """
     if os.path.exists(dest):
         return
     progress_cb(None, f"fetching {what} (first use only)")
     part = dest + ".part"
     os.makedirs(os.path.dirname(part), exist_ok=True)
-    with urllib.request.urlopen(url, timeout=600) as resp, \
-            open(part, "wb") as f:
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
+    try:
+        with urllib.request.urlopen(url, timeout=600) as resp, \
+                open(part, "wb") as f:
+            length = resp.headers.get("Content-Length")
+            total = int(length) if length and length.isdigit() else 0
+            done = 0
+            while True:
+                if cancel is not None and cancel.cancelled:
+                    raise CancelledError()
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                progress_cb(None, f"fetching {what} — {done >> 20} MB"
+                                  + (f" of {total >> 20} MB" if total else ""))
+    except BaseException:
+        # A cancelled 1.6 GB transfer must not leave 1.6 GB behind.
+        try:
+            os.unlink(part)
+        except OSError:
+            pass
+        raise
     os.replace(part, dest)
 
 
@@ -143,9 +168,11 @@ class MSSTAdapter(ModelAdapter):
         if not src or not os.path.isfile(src):
             raise RuntimeError("source_audio missing")
         if self._engine() == "msst":
-            cmd, cleanup = self._msst_cmd(src, params, out_dir, progress_cb)
+            cmd, cleanup = self._msst_cmd(src, params, out_dir, progress_cb,
+                                          cancel)
         else:
-            cmd, cleanup = self._bsrnn_cmd(src, out_dir, params, progress_cb)
+            cmd, cleanup = self._bsrnn_cmd(src, out_dir, params, progress_cb,
+                                           cancel)
 
         progress_cb(None, "separating (on the GPU)" if self.device == "mps"
                           else "separating (this can take several minutes)")
@@ -204,7 +231,7 @@ class MSSTAdapter(ModelAdapter):
                           meta={"engine": self._engine()})
 
     def _msst_cmd(self, src: str, params: dict, out_dir: str,
-                  progress_cb: ProgressCb):
+                  progress_cb: ProgressCb, cancel: CancelToken):
         model_type = str(self.settings["model_type"])
         weights = aux_dir("msst-weights")
         config = os.path.join(weights,
@@ -212,9 +239,9 @@ class MSSTAdapter(ModelAdapter):
         ckpt = os.path.join(weights,
                             os.path.basename(self.settings["ckpt_url"]))
         _fetch(self.settings["config_url"], config, progress_cb,
-               "the model config")
+               "the model config", cancel)
         _fetch(self.settings["ckpt_url"], ckpt, progress_cb,
-               "the model checkpoint")
+               "the model checkpoint", cancel)
         indir = tempfile.mkdtemp(prefix="msst-in-")
         shutil.copy(src, os.path.join(indir, "input.wav"))
         cmd = [sys.executable, "inference.py",
@@ -240,7 +267,7 @@ class MSSTAdapter(ModelAdapter):
         return cmd, lambda: shutil.rmtree(indir, ignore_errors=True)
 
     def _bsrnn_cmd(self, src: str, out_dir: str, params: dict,
-                   progress_cb: ProgressCb):
+                   progress_cb: ProgressCb, cancel: CancelToken):
         # The catalog entry now ships the checkpoints as an HF snapshot
         # (rtikw/bsrnn-large, an unmodified per-file mirror of the Zenodo
         # record) — prefer it: real install-state, resumable download. The
@@ -255,22 +282,26 @@ class MSSTAdapter(ModelAdapter):
             if not staged(model_dir, "vocals.ckpt"):
                 zip_path = os.path.join(weights_root, "bsrnn-large.zip")
                 _fetch(BSRNN_WEIGHTS_ZIP, zip_path, progress_cb,
-                       "the BSRNN checkpoints (1.6 GB, Zenodo)")
+                       "the BSRNN checkpoints (1.6 GB, Zenodo)", cancel)
                 # Extract beside, land by rename: a died-partway extraction
-                # must not leave a husk the next run trusts.
+                # must not leave a husk the next run trusts. The rmtree is in
+                # a finally because a raising extractall used to leave the
+                # whole .staging-XXXX tree behind — 1.6 GB per attempt.
+                progress_cb(None, "unpacking the BSRNN checkpoints")
                 tmp = tempfile.mkdtemp(prefix=".staging-", dir=weights_root)
-                with zipfile.ZipFile(zip_path) as z:
-                    z.extractall(tmp)
-                tops = [e for e in os.listdir(tmp)
-                        if os.path.isdir(os.path.join(tmp, e))]
-                if len(tops) != 1:
+                try:
+                    with zipfile.ZipFile(zip_path) as z:
+                        z.extractall(tmp)
+                    tops = [e for e in os.listdir(tmp)
+                            if os.path.isdir(os.path.join(tmp, e))]
+                    if len(tops) != 1:
+                        raise RuntimeError("unexpected BSRNN checkpoint zip "
+                                           f"layout: {tops!r}")
+                    if os.path.isdir(model_dir):
+                        shutil.rmtree(model_dir)
+                    os.rename(os.path.join(tmp, tops[0]), model_dir)
+                finally:
                     shutil.rmtree(tmp, ignore_errors=True)
-                    raise RuntimeError("unexpected BSRNN checkpoint zip "
-                                       f"layout: {tops!r}")
-                if os.path.isdir(model_dir):
-                    shutil.rmtree(model_dir)
-                os.rename(os.path.join(tmp, tops[0]), model_dir)
-                shutil.rmtree(tmp, ignore_errors=True)
                 os.unlink(zip_path)
         # One stem on request: each BSRNN target is its own checkpoint and
         # its own pass, so asking for just the vocals costs a quarter of a
