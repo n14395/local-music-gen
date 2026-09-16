@@ -94,6 +94,17 @@ struct LibraryScreen: View {
     /// opposed to the user picking it.
     @State private var promotedSort = false
     @State private var siblings: [PartRecord] = []
+    /// The Parts scope's own four narrowings — kind, source song, tempo and
+    /// key — remembered while another scope is showing.
+    ///
+    /// The controls that set them are drawn only in the Parts scope, but the
+    /// values live on the shared `PartsStore`. Left there they went on
+    /// narrowing the PARTS half of All and Favourites with no chip on screen,
+    /// no Clear to press and an empty state that read "Nothing here yet" over
+    /// a full library — and `MixActionView`'s autofill, which reads the same
+    /// `parts.results`, silently found nothing. So they are lifted off the
+    /// store on the way out of Parts and put back on the way in.
+    @State private var partScopeFilters = PartsRepository.Filters()
     @FocusState private var searchFocused: Bool
 
     private var box: LibraryCompare { compare ?? ownCompare }
@@ -160,6 +171,11 @@ struct LibraryScreen: View {
             // the parts list — left set, every parts picker in the app would
             // open pre-filtered by something typed on a screen you have left.
             if scope.spansBothTables { nextParts.query = "" }
+            // And so do kind, song, tempo and key: they are this screen's
+            // controls, and Mix autofill reads the same store. Remembered on
+            // the way out so coming back to Parts finds the list as you left it.
+            if scope == .parts { partScopeFilters = nextParts }
+            nextParts = liftingPartScopeFilters(nextParts)
             parts.filters = nextParts
         }
         // `initial` because the reveal is usually set in the same turn that
@@ -875,6 +891,16 @@ struct LibraryScreen: View {
         // One assignment for the parts store too, and for the same reason.
         var nextParts = parts.filters
         nextParts.favoritesOnly = scope == .favourites
+        if scope == .parts {
+            // Back in the scope that draws the controls: put them back.
+            nextParts = restoringPartScopeFilters(nextParts)
+        } else {
+            // Snapshot taken only on the way *out* of Parts, so it is always
+            // the real state of those controls and never an already-cleared
+            // one — arriving on the screen must not overwrite the memory.
+            if previous == .parts { partScopeFilters = parts.filters }
+            nextParts = liftingPartScopeFilters(nextParts)
+        }
         if scope.spansBothTables {
             // One box over two lists — see `searchText`.
             nextParts.query = next.query
@@ -885,6 +911,29 @@ struct LibraryScreen: View {
             nextParts.query = ""
         }
         if nextParts != parts.filters { parts.filters = nextParts }
+    }
+
+    /// The four Parts-scope narrowings taken off a filter set — see
+    /// `partScopeFilters`.
+    private func liftingPartScopeFilters(_ filters: PartsRepository.Filters)
+        -> PartsRepository.Filters {
+        var next = filters
+        next.kindPrefix = nil
+        next.songId = nil
+        next.bpmRange = nil
+        next.camelot = nil
+        return next
+    }
+
+    /// The same four put back from the screen's memory.
+    private func restoringPartScopeFilters(_ filters: PartsRepository.Filters)
+        -> PartsRepository.Filters {
+        var next = filters
+        next.kindPrefix = partScopeFilters.kindPrefix
+        next.songId = partScopeFilters.songId
+        next.bpmRange = partScopeFilters.bpmRange
+        next.camelot = partScopeFilters.camelot
+        return next
     }
 
     /// Drop what was picked under the scope being left.

@@ -13,6 +13,8 @@ import shutil
 import time
 from importlib import resources
 
+from engine_protocol.staging import INCOMPLETE_MARKER
+
 from .config import Settings
 
 _TEST_MODEL = {
@@ -240,6 +242,21 @@ class Registry:
         return os.path.join(self.settings.hf_cache_dir, "hub",
                             "models--" + repo_id.replace("/", "--"))
 
+    def repo_tombstoned(self, repo_id: str) -> bool:
+        """Did an interrupted relocate leave this repo half-copied?
+
+        `library._mark_incomplete` drops `INCOMPLETE_MARKER` into a
+        destination it could not finish copying. Only the adapters' staging
+        guards used to read it, so a cancel that landed while `blobs/` was
+        copying — `os.walk` visits `snapshots/` first as often as not — left a
+        complete snapshot tree of symlinks over a partial blob store, and
+        `is_installed` called that installed. That is exactly the "job dies in
+        the worker instead of showing a Download button" failure its docstring
+        says it exists to prevent.
+        """
+        return os.path.exists(os.path.join(self.repo_cache_dir(repo_id),
+                                           INCOMPLETE_MARKER))
+
     # ModelScope repos (catalog `ms_repos`, absent on most entries) live in a
     # flat per-repo directory — no blob/snapshot indirection, because nothing
     # else on the machine shares this cache. Completeness is the marker the
@@ -312,6 +329,16 @@ class Registry:
         return total
 
     def write_marker(self, model_id: str, bytes_total: int) -> None:
+        # A finished download is what makes a half-relocated repo whole again:
+        # every requested file is on disk now. Without clearing the tombstone
+        # the entry would read not_installed forever and offer a download that
+        # could never take.
+        for repo in self.models[model_id]["hf_repos"]:
+            try:
+                os.unlink(os.path.join(self.repo_cache_dir(repo["repo_id"]),
+                                       INCOMPLETE_MARKER))
+            except OSError:
+                pass
         with open(self._marker_path(model_id), "w") as f:
             json.dump({"bytes": bytes_total}, f)
 
@@ -401,6 +428,10 @@ class Registry:
         counts these against hf_repos, so ModelScope dirs must stay out)."""
         out = {}
         for repo in self.models[model_id]["hf_repos"]:
+            # A tombstoned repo is absent, not installed: its snapshots may be
+            # a full tree of links into blobs that never arrived.
+            if self.repo_tombstoned(repo["repo_id"]):
+                continue
             base = os.path.join(self.repo_cache_dir(repo["repo_id"]), "snapshots")
             try:
                 revs = sorted(os.listdir(base),

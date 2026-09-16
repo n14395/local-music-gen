@@ -213,7 +213,10 @@ final class DownloadFlowTests: XCTestCase {
         // Surfaced before the wait rather than after it: a refused download
         // never arrives, and sixty seconds of silence is a worse way to learn
         // that than the reason the engine already gave.
-        XCTAssertNil(env.catalog.lastError,
+        // `lastActionError`, not `lastError`: every mutation ends with a catalog
+        // refresh, and a successful refresh clears `lastError` — so this read
+        // used to be vacuous, passing for a refusal it was written to catch.
+        XCTAssertNil(env.catalog.lastActionError,
                      "the engine refused a download before any queueing happened")
         try await waitFor("both downloads visible") {
             env.downloadsStore.downloads.count == 2

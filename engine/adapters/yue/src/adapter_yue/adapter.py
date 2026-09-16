@@ -28,6 +28,10 @@ STAGE1_REPO = "m-a-p/YuE-s1-7B-anneal-en-cot"
 STAGE2_REPO = "m-a-p/YuE-s2-1B-general"
 XCODEC_REPO = "m-a-p/xcodec_mini_infer"
 
+# A lyric-sheet section header, the same `\[(\w+)\]` upstream's split_lyrics
+# looks for. One rendered section is ~30 s of song.
+_TAG = re.compile(r"\[(\w+)\]")
+
 
 class YuEAdapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
@@ -119,14 +123,42 @@ class YuEAdapter(ModelAdapter):
         lyrics_txt = os.path.join(run_dir, "lyrics.txt")
         with open(genre_txt, "w") as f:
             f.write(prompt.strip() + "\n")
+        # Upstream renders `prompt_texts[1:run_n_segments]` with
+        # `run_n_segments = min(--run_n_segments + 1, len(sections))` and
+        # `if i == 0: continue`, so entry 0 is the header and the LAST tagged
+        # section is always dropped. Two consequences, both repaired here
+        # rather than in the clone (it is upstream's, pinned, and re-cloned):
+        #  * a one-section sheet — including this adapter's own empty-lyrics
+        #    fallback — rendered NOTHING, and the job died hours later on
+        #    "produced no mixed audio file", after both checkpoints had loaded;
+        #  * untagged lyrics made `split_lyrics()` return [] and the stage-1
+        #    loop never ran its body at all.
+        text = (lyrics or "").strip()
+        if not text:
+            text = "[verse]\nla la la"
+        if not _TAG.search(text):
+            # The catalog's lyrics_hint asks for [verse]/[chorus] tags; nothing
+            # enforced it, and untagged text is not a sheet upstream can read.
+            text = "[verse]\n" + text
+        written = len(_TAG.findall(text))
+        # The sentinel exists to be eaten by that off-by-one, so that every
+        # section the user actually wrote is one upstream renders.
+        text = text + "\n\n[outro]\n"
         with open(lyrics_txt, "w") as f:
-            f.write((lyrics or "[verse]\nla la la\n").strip() + "\n")
+            f.write(text.strip() + "\n")
 
         # ~30 s of song per segment, so the ceiling here has to reach the
         # catalog's max_s or the slider lies: at min(4, …) a 180 s request
         # rendered about 120 s and nothing said why. 6 segments covers the
-        # advertised range.
-        segments = max(1, min(6, int(duration_s // 30)))
+        # advertised range. The sheet is the real ceiling, though — upstream
+        # cannot sing a section that is not written — so clamp to it and say
+        # so instead of letting the slider promise a length it cannot reach.
+        wanted = max(1, min(6, int(duration_s // 30)))
+        segments = min(wanted, written)
+        if segments < wanted:
+            progress_cb(None,
+                        f"{written} lyric section(s) — about {written * 30}s, "
+                        f"not the {int(duration_s)}s asked for")
         # infer.py defaults --seed to 42, so an unset seed made every
         # "random" take of the same inputs byte-identical (audit §2). Draw
         # one and report it.

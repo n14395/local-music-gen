@@ -22,6 +22,9 @@ struct LibrarySelectionInspector: View {
 
     @State private var confirmDelete = false
     @State private var exportNotice: String?
+    /// Whether that notice is a complaint, so a partial export does not read
+    /// as a quiet success in the same grey as "Exported 12 files."
+    @State private var exportFailed = false
     /// Ambient, optional — see `SongDetailView`; absent means "ask".
     @Environment(AppSettings.self) private var appSettings: AppSettings?
 
@@ -34,7 +37,9 @@ struct LibrarySelectionInspector: View {
                 if let exportNotice {
                     Text(exportNotice)
                         .font(Bench.Typo.caption)
-                        .foregroundStyle(Bench.Palette.textQuaternary)
+                        .foregroundStyle(exportFailed
+                                         ? Bench.Palette.dangerText
+                                         : Bench.Palette.textQuaternary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 footnote
@@ -208,7 +213,8 @@ struct LibrarySelectionInspector: View {
     /// A folder rather than a save panel per file: twenty save panels is not a
     /// feature. Names collide — two songs called `track042` from different
     /// batches, or a song and its own stem — so a taken name gets a numeric
-    /// suffix rather than silently overwriting the file written a moment ago.
+    /// suffix rather than silently overwriting a file — whether this export
+    /// wrote it a moment ago or an earlier one left it there.
     private func exportAll() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -218,23 +224,38 @@ struct LibrarySelectionInspector: View {
         panel.message = "Choose a folder for \(selection.count) files"
         panel.begin { response in
             guard response == .OK, let folder = panel.url else { return }
-            var used: Set<String> = []
+            // Seeded with what the folder already holds, so a name that is
+            // taken takes the `-2` suffix — which is what `unique`'s own
+            // comment has always claimed. It used to start empty and
+            // `removeItem` the destination first, and a folder chooser (unlike
+            // a save panel) never asks about replacing anything: exporting a
+            // second selection into a folder an earlier one had used deleted
+            // those files without a word, and a copy that then failed left
+            // neither.
+            var used = Set(((try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: nil)) ?? [])
+                .map(\.lastPathComponent))
             var written = 0
+            var firstFailure: String?
             for (url, name) in exportNames() {
                 let unique = Self.unique(name, taken: &used)
                 let destination = folder.appendingPathComponent(unique)
-                try? FileManager.default.removeItem(at: destination)
                 do {
                     try FileManager.default.copyItem(at: url, to: destination)
                     written += 1
                 } catch {
+                    if firstFailure == nil {
+                        firstFailure = error.localizedDescription
+                    }
                     continue
                 }
             }
             let total = selection.count
+            exportFailed = written != total
             exportNotice = written == total
                 ? "Exported \(written) files."
-                : "Exported \(written) of \(total) — the rest could not be copied."
+                : "Exported \(written) of \(total) — "
+                    + (firstFailure ?? "the rest could not be copied.")
         }
     }
 

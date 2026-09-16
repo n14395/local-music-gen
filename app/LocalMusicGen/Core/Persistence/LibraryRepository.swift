@@ -91,6 +91,11 @@ struct LibraryRepository: Sendable {
         }
     }
 
+    /// The newest rows, for the rails and panels that show "what just landed".
+    ///
+    /// Bounded on purpose, and therefore never the answer to "what is in the
+    /// library": the batch pages asked it that question and could only ever
+    /// see twenty tracks. `search(.init())` is the whole table.
     func recent(limit: Int = 20) throws -> [SongRecord] {
         try db.queue.read {
             try SongRecord.order(Column("createdAt").desc).limit(limit).fetchAll($0)

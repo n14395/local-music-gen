@@ -404,8 +404,17 @@ class AudiocraftAdapter(ModelAdapter):
                 # `duration` counts prompt + continuation here (unlike the
                 # transformers path, where it counts new tokens only), so ask
                 # for the sum and cut the prompt back off below.
+                #
+                # No 30 s cap: it used to clamp the sum, so anything over
+                # ~20 s of new music came back short without a word (a 30 s
+                # request returned 20 s, and so did a 600 s one). `duration`
+                # past `max_duration` is the vendored library's own windowed
+                # path — it keeps the prompt tokens and strides — and
+                # `extend_stride` is what that path asserts it needs, so it is
+                # passed explicitly rather than left to the default.
                 self.model.set_generation_params(
-                    duration=min(30.0, duration_s + continued_s),
+                    duration=duration_s + continued_s,
+                    extend_stride=18.0,
                     use_sampling=True,
                     top_k=int(params.get("top_k", 250)),
                     temperature=float(params.get("temperature", 1.0)),

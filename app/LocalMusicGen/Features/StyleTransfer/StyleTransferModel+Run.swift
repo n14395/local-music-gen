@@ -60,6 +60,22 @@ extension StyleTransferModel {
         if mode.referenceNeed.isNeeded, let reference {
             referenceUpload = await context.jobs.uploadAudio(
                 fileURL: reference.fileURL)
+            // The source arm above returns when its upload fails; this one used
+            // to carry straight on. `wireParams` then simply omitted the
+            // reference key — and for `.reference` with no source,
+            // `wireTask(hasSource:)` flips to "text2music" — so the mode whose
+            // whole promise is "sound like this" rendered an ordinary
+            // text-to-music take that had never heard the reference, and the
+            // only hint was a stale-looking error beside a job that was already
+            // running.
+            if referenceUpload == nil {
+                guard mode.referenceNeed != .required else {
+                    return nil      // uploadAudio has already set jobs.lastError
+                }
+                notice = "The reference track could not be uploaded"
+                    + (context.jobs.lastError.map { " — \($0)" } ?? ".")
+                    + " This run went ahead without it."
+            }
         }
 
         // Order matters: the user's advanced knobs go down first, then the

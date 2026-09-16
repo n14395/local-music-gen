@@ -521,7 +521,13 @@ struct ClipTimelineView: View {
                               isSelected: model.clips.contains {
                                   $0.laneId == lane.id
                                       && selection.contains($0.id) },
-                              onRemove: { model.removeLane(lane.id) })
+                              // Removing a lane takes every clip on it, and
+                              // was the one timeline edit that registered no
+                              // undo at all.
+                              onRemove: {
+                                  registerUndo()
+                                  model.removeLane(lane.id)
+                              })
             }
             Button(action: onAddPart) {
                 Text("＋ Add track")
@@ -683,18 +689,11 @@ struct ClipTimelineView: View {
         return min(1, seconds / lengthS)
     }
 
-    /// Snapshot before every mutation. The model is two arrays of value types,
-    /// so undo is a swap — and dragging clips around without it is miserable.
+    /// Snapshot before every mutation — dragging clips around without undo is
+    /// miserable. The implementation moved onto `WorkbenchModel` so the rows
+    /// lens and the menubar's bench commands register the same thing.
     private func registerUndo() {
-        let before = model.snapshot()
-        undoManager?.registerUndo(withTarget: model) { target in
-            let after = target.snapshot()
-            target.apply(before)
-            undoManager?.registerUndo(withTarget: target) { redoTarget in
-                redoTarget.apply(after)
-            }
-        }
-        undoManager?.setActionName("Edit Timeline")
+        model.registerUndo(undoManager)
     }
 
     private func clock(_ seconds: Double) -> String {

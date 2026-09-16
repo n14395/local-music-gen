@@ -225,8 +225,18 @@ final class TextChainModel {
         case .caption, .transcribeLyrics, .extractABC:
             // The words the next stage reads. An empty result stops the run
             // rather than generating from nothing.
-            if let text = texts.first?.text, !text.isEmpty {
-                current.progress.text = text
+            var landed = texts.first?.text
+            // ...unless this is the notation step, which is fed by a job that
+            // lands midi parts *and* an ABC document. Those reach the chain as
+            // two deliveries, and only one of them carries text: if the
+            // parts-only one is seen first, "the model wrote nothing" is not
+            // what happened. Every row is written before either delivery is
+            // sent, so the database is the authority here.
+            if landed == nil, stage.id == "abc" {
+                landed = abcFromJob(waitingFor, context: context)
+            }
+            if let landed, !landed.isEmpty {
+                current.progress.text = landed
                 current.progress.editedText = nil
             } else if stage.id != "lyrics" {
                 current.progress.failure = "The model wrote nothing to go on."
@@ -274,6 +284,20 @@ final class TextChainModel {
         current.progress.failure = message
         current.progress.jobId = nil
         run = current
+    }
+
+    /// The notation a transcribe job wrote, read back from the database.
+    ///
+    /// The ABC ingest files the document on the *source song* (the `.split`
+    /// job context's owner), which is where `extractABC` submitted from — so
+    /// this asks the same question the delivery would have answered.
+    private func abcFromJob(_ jobId: String, context: RunContext) -> String? {
+        guard let ownerId = material(in: context)?.songId else { return nil }
+        let docs = (try? context.textStore.repository
+            .textDocs(ownerId: ownerId)) ?? []
+        // Newest first within a kind (`PartsRepository.textDocs`), which is
+        // the same one `texts.first` would have handed over.
+        return docs.first { $0.jobId == jobId }?.text
     }
 
     private func material(in context: RunContext) -> PickedMaterial? {

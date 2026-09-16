@@ -26,6 +26,17 @@ struct BatchSplitActionView: View {
     @State private var selectedModelId: String?
     @State private var query = ""
     @State private var submitting = false
+    /// Every song in the library, read from the table.
+    ///
+    /// Not `library.recent`, which is the twenty newest rows — a snapshot for
+    /// the Studio rails. Reading it here meant a page called "Split several at
+    /// once" could only ever list twenty tracks, "Select all" could only ever
+    /// tick twenty, and a library of two hundred imports (which is what this
+    /// page is for) hid the other 180 behind no control at all.
+    @State private var everySong: [SongRecord] = []
+    /// Tracks the engine would not take, kept rather than discarded — see
+    /// `submit`.
+    @State private var failures: [String] = []
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
     /// The action log, decoded once rather than at render time.
     ///
@@ -49,7 +60,7 @@ struct BatchSplitActionView: View {
     /// offering to separate one again is offering a job whose result is the
     /// thing you started with.
     private var songs: [SongRecord] {
-        let all = library.recent
+        let all = everySong
         guard !query.isEmpty else { return all }
         return all.filter {
             $0.title.localizedCaseInsensitiveContains(query)
@@ -92,7 +103,7 @@ struct BatchSplitActionView: View {
                             costSubline: "ONE JOB PER TRACK · THEY RUN IN TURN",
                             isEnabled: !chosen.isEmpty && model != nil
                                 && !submitting,
-                            error: jobs.lastError,
+                            error: failureMessage ?? jobs.lastError,
                             queueTitle: nil,
                             onCommit: submit)
         } rail: {
@@ -107,9 +118,26 @@ struct BatchSplitActionView: View {
                 didSeedPicked = true
                 if picked.isEmpty { picked = preselected }
             }
+            reloadSongs()
         }
+        // `recent` is not the list this page shows any more, but it still moves
+        // whenever anything lands in the library, which is the signal wanted.
+        .onChange(of: library.recent) { reloadSongs() }
         .task { runLog = ActionRunLog.decoded(runsJSON) }
         .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
+    }
+
+    private func reloadSongs() {
+        everySong = (try? library.repository.search(.init())) ?? []
+    }
+
+    /// The tracks the engine refused, named. `jobs.lastError` alone said what
+    /// went wrong without saying it had happened to eleven of twelve tracks.
+    private var failureMessage: String? {
+        guard !failures.isEmpty else { return nil }
+        let named = failures.prefix(3).joined(separator: ", ")
+        let rest = failures.count > 3 ? " and \(failures.count - 3) more" : ""
+        return "Not queued: \(named)\(rest)."
     }
 
     private var trackList: some View {
@@ -187,23 +215,42 @@ struct BatchSplitActionView: View {
         }
     }
 
+    /// One job per ticked track, and the page only leaves once they exist.
+    ///
+    /// Every submit's result used to be discarded: with the engine down, or a
+    /// model deleted between opening the page and pressing the button, all
+    /// twelve returned nil and the page still closed, still recorded "12
+    /// tracks" in the rail and in the gallery's "Recently used", and not one
+    /// job existed. Same rule as `SplitActionView`: record what ran, say what
+    /// did not, and stay put while anything is left to retry.
     private func submit() {
         guard let model, !chosen.isEmpty else { return }
         submitting = true
+        failures = []
         let tracks = chosen
         Task {
+            var started = 0
+            var refused: [String] = []
             for song in tracks {
-                await jobs.submitSplit(modelId: model.id, songId: song.id,
-                                       sourceTitle: song.title,
-                                       sourceURL: song.fileURL, params: [:])
+                let created = await jobs.submitSplit(
+                    modelId: model.id, songId: song.id,
+                    sourceTitle: song.title,
+                    sourceURL: song.fileURL, params: [:])
+                if created == nil {
+                    refused.append(song.title)
+                } else {
+                    started += 1
+                }
             }
             submitting = false
+            failures = refused
+            guard started > 0 else { return }
             runsJSON = ActionRunLog.recording(
-                .init(summary: "\(tracks.count) tracks",
+                .init(summary: "\(started) track\(started == 1 ? "" : "s")",
                       detail: model.displayName.uppercased(), at: Date(),
                       sourceId: tracks.first?.id, modelId: model.id),
                 recipeId: recipe.id, in: runsJSON)
-            onBack()
+            if refused.isEmpty { onBack() }
         }
     }
 }

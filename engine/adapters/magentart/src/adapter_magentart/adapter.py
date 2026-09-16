@@ -50,12 +50,23 @@ def _roll_from_midi(midi_path: str, total_frames: int):
     distinguishes "the same note again" from "still ringing". Percussion
     tracks do not go in the pianoroll at all: they drive the separate one-bit
     drum channel, which is the only place this model takes them.
+
+    Either channel comes back None when the file says nothing about it, and
+    each is *masked* outside the span its own notes cover. Both arrays used to
+    be zero-filled for the whole take, and zero is not "nothing said" — it is
+    "this pitch is not sounding" and "no drum is playing", enforced at guidance
+    3.0. So a piano-only MIDI silenced the drums for the entire render, and a
+    6 s melody under a 12 s take conditioned every pitch off for the second
+    half. PITCH_MASKED/DRUM_MASKED existed for exactly this and went unused.
     """
     import pretty_midi
 
     pm = pretty_midi.PrettyMIDI(midi_path)
-    roll = np.zeros((total_frames, 128), dtype=np.int32)
-    drums = np.zeros(total_frames, dtype=np.int32)
+    roll = np.full((total_frames, 128), PITCH_MASKED, dtype=np.int32)
+    drums = np.full(total_frames, DRUM_MASKED, dtype=np.int32)
+    # (start, end) spans of what was actually written, per channel.
+    pitched: list[tuple[int, int, int]] = []
+    hits: list[tuple[int, int]] = []
     for instrument in pm.instruments:
         for note in instrument.notes:
             start = int(round(note.start * FRAMES_PER_S))
@@ -65,15 +76,27 @@ def _roll_from_midi(midi_path: str, total_frames: int):
             start = max(0, start)
             end = min(max(end, start + 1), total_frames)
             if instrument.is_drum:
-                drums[start:end] = DRUM_ON
+                hits.append((start, end))
                 continue
             pitch = int(note.pitch)
             if not 0 <= pitch < 128:
                 continue
+            pitched.append((start, end, pitch))
+    # Inside a channel's own span, silence is deliberate: a frame with no note
+    # is off, a frame with no hit is no drum. Outside it, nothing was said.
+    if pitched:
+        span_from = min(s for s, _, _ in pitched)
+        span_to = max(e for _, e, _ in pitched)
+        roll[span_from:span_to, :] = PITCH_OFF
+        for start, end, pitch in pitched:
             roll[start:end, pitch] = np.maximum(roll[start:end, pitch],
                                                 PITCH_HELD)
             roll[start, pitch] = PITCH_ONSET
-    return roll, drums
+    if hits:
+        drums[min(s for s, _ in hits):max(e for _, e in hits)] = DRUM_OFF
+        for start, end in hits:
+            drums[start:end] = DRUM_ON
+    return (roll if pitched else None), (drums if hits else None)
 
 
 class MagentaRTAdapter(ModelAdapter):
@@ -224,12 +247,22 @@ class MagentaRTAdapter(ModelAdapter):
             self._require_conditioning(PIANOROLL_WITH_ONSETS.key)
             progress_cb(None, "reading the notes")
             roll, drum_track = _roll_from_midi(notes_path, total_frames)
+            if roll is None and drum_track is None:
+                # Nothing to condition on. Silently rendering an unconditioned
+                # take would look exactly like the MIDI being ignored.
+                raise RuntimeError(
+                    "that MIDI has no notes to condition on — it is empty, or "
+                    "every note starts after the end of the take")
         drums_mode = str(params.get("drums") or "auto")
         drum_override = {"play": DRUM_ON, "silent": DRUM_OFF}.get(drums_mode)
-        if drum_override is not None:
+        # `drum_track` is only ever set when the MIDI really has percussion in
+        # it, so on automatic a piano-only MIDI now leaves the channel alone —
+        # which is what drums_guidance's catalog help has always claimed.
+        if drum_override is not None or drum_track is not None:
             self._require_conditioning(DRUM_PIANOROLL.key)
 
-        chunk_frames = CHUNK_FRAMES if roll is None else NOTE_CHUNK_FRAMES
+        conditioned = roll is not None or drum_track is not None
+        chunk_frames = NOTE_CHUNK_FRAMES if conditioned else CHUNK_FRAMES
         n_chunks = max(1, -(-total_frames // chunk_frames))
         pieces: list[np.ndarray] = []
         state = None
@@ -247,7 +280,9 @@ class MagentaRTAdapter(ModelAdapter):
             if roll is not None:
                 # One vector for the whole chunk, so a note that starts
                 # anywhere inside it reads as an onset: `max` over the window
-                # keeps 2 (onset) above 1 (held) above 0 (off).
+                # keeps 2 (onset) above 1 (held) above 0 (off) above -1
+                # (masked), so a window that straddles the end of the MIDI
+                # still reads as the notes it does carry.
                 window = roll[done:done + chunk]
                 conditioning[PIANOROLL_WITH_ONSETS.key] = [
                     int(v) for v in window.max(axis=0)]

@@ -682,10 +682,20 @@ extension EditorStore {
     }
 
     private func uploadSource() async -> String? {
+        // The engine purges every upload at startup, so ids never outlive the
+        // engine process that took them (api-contract §7). Nothing used to
+        // invalidate this cache: after Render ▸ Restart Engine (or a crash, or
+        // a model-library relocate) the next Apply failed 422 "unknown upload
+        // id" and every retry short-circuited on the same dead id, so the
+        // track stayed un-appliable until it was closed and reopened — with
+        // the backup already stashed by then.
+        let generation = engineGeneration()
+        if uploadedSourceGeneration != generation { uploadedSourceId = nil }
         if let uploadedSourceId { return uploadedSourceId }
         guard let sourceURL else { return nil }
         let id = await jobs.uploadAudio(fileURL: sourceURL)
         uploadedSourceId = id
+        uploadedSourceGeneration = generation
         return id
     }
 

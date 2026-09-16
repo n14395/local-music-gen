@@ -2542,6 +2542,12 @@ NEW_ENTRIES = [
           "token rate.",
           {
               "supports_lyrics": True, "instrumental_only": False,
+              # SongGen has no instrumental path — there is no instrumental
+              # token, mode or checkpoint anywhere in the package — and the
+              # adapter used to quietly sing "la la la" when the box was empty,
+              # so an instrumental request came back with a voice on it. Gated
+              # here (like songbloom/yue2/heartmula), refused in the adapter.
+              "requires_lyrics": True,
               "duration": {"min_s": 5, "max_s": 120, "default_s": 20},
               "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
               "est_seconds_per_audio_second": 5.0,
@@ -2597,6 +2603,8 @@ NEW_ENTRIES = [
           "three times the wait for the same duration.",
           {
               "supports_lyrics": True, "instrumental_only": False,
+              # Same checkpoint family, same absence of an instrumental path.
+              "requires_lyrics": True,
               "duration": {"min_s": 5, "max_s": 60, "default_s": 20},
               "sample_rate": 16000, "outputs_per_job_max": TAKES_MAX,
               # Measured 2026-09-04 on MPS: 180.8 s of job for 9.86 s of

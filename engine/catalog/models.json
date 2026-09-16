@@ -12935,6 +12935,7 @@
       "capabilities": {
         "supports_lyrics": true,
         "instrumental_only": false,
+        "requires_lyrics": true,
         "duration": {
           "min_s": 5,
           "max_s": 120,
@@ -13062,6 +13063,7 @@
       "capabilities": {
         "supports_lyrics": true,
         "instrumental_only": false,
+        "requires_lyrics": true,
         "duration": {
           "min_s": 5,
           "max_s": 60,

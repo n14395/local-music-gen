@@ -21,6 +21,17 @@ actor BackendProcessManager {
     /// second caller in that window is turned away rather than spawning a
     /// second engine beside the first.
     private var starting = false
+    /// Identifies the `start()` that owns `starting`, so an abandoned one
+    /// cannot clear the flag out from under its replacement.
+    private var startToken = 0
+    /// Bumped once per engine we take charge of (every spawn, and the attach).
+    /// One death must produce exactly one restart decision: the termination
+    /// handler and the health poller could both reach `handleTermination()`
+    /// for the same exit — cancelling the poller's in-flight request is
+    /// itself the third health failure — which counted two crashes and ran
+    /// two `spawn()`s. Whoever gets there first claims the generation; the
+    /// loser sees a stale one and leaves.
+    private var generation = 0
     private var stderrLog: FileHandle?
 
     private let modeOverride: BackendLaunchMode?
@@ -49,8 +60,10 @@ actor BackendProcessManager {
         // token, found the first engine through its own pid file and
         // SIGKILLed it mid-render. Whatever asks, a manager runs one engine.
         guard !starting, process?.isRunning != true, client == nil else { return }
+        startToken += 1
+        let myToken = startToken
         starting = true
-        defer { starting = false }
+        defer { if startToken == myToken { starting = false } }
         guard let mode = modeOverride ?? BackendLaunchMode.resolve() else {
             await setPhase(.failed(reason: "No engine found. Set LOCALMUSICGEN_BACKEND_HANDSHAKE or LOCALMUSICGEN_BACKEND_CMD, or use a bundled build."))
             return
@@ -61,6 +74,7 @@ actor BackendProcessManager {
         switch mode {
         case .attach(let handshake, let attachToken):
             token = attachToken
+            generation += 1
             await connect(handshakeFile: handshake)
         case .spawn(let command):
             token = Self.randomToken()
@@ -70,6 +84,7 @@ actor BackendProcessManager {
 
     func stop() async {
         stopping = true
+        abandonStartInProgress()
         healthTask?.cancel()
         eventsTask?.cancel()
         if let client {
@@ -96,6 +111,7 @@ actor BackendProcessManager {
     /// `stop()` does — the shutdown verb, then SIGTERM, then SIGKILL, and a
     /// wait for the exit — so the lock is free before the next spawn asks.
     func restart() async {
+        abandonStartInProgress()
         healthTask?.cancel()
         eventsTask?.cancel()
         if let process {
@@ -111,6 +127,21 @@ actor BackendProcessManager {
         process = nil
         client = nil
         await start()
+    }
+
+    /// Let go of a `start()` that is still waiting for a handshake.
+    ///
+    /// `starting` turns a second `start()` away, and that wait can now be
+    /// minutes long on a first run — so `stop()` and `restart()` have to
+    /// release it, or Restart Engine during provisioning would kill the child
+    /// and then refuse to launch its replacement. The generation bump drops
+    /// the abandoned `connect()` out of its loop without letting it write a
+    /// phase; the token bump stops its `defer` clearing the *next* start's
+    /// flag.
+    private func abandonStartInProgress() {
+        generation += 1
+        startToken += 1
+        starting = false
     }
 
     /// Wait for the child to leave, escalating: `gracePeriod` seconds for it
@@ -175,9 +206,11 @@ actor BackendProcessManager {
                 }
             }
         }
+        generation += 1
+        let gen = generation
         p.terminationHandler = { [weak self] _ in
             guard let self else { return }
-            Task { await self.handleTermination() }
+            Task { await self.handleTermination(generation: gen) }
         }
 
         do {
@@ -224,11 +257,32 @@ actor BackendProcessManager {
 
     // MARK: connect (shared by spawn and attach)
 
+    /// How long the handshake wait tolerates *silence*, and the outer bound on
+    /// the whole wait.
+    ///
+    /// This used to be one flat 60 s from launch. A first run provisions
+    /// CPython and the supervisor's venv over the network before there is an
+    /// engine at all — the project's own harness budgets 900 s for it
+    /// (`scripts/verify_packaged.py`) and the README says "a minute or two" —
+    /// so a cold start on a slow line failed at 60 s while `uv` was still
+    /// downloading, and nothing ever re-polled: the engine finished and wrote
+    /// its handshake to a file no one was reading. The shim narrates that work
+    /// on stderr (`engine-setup:` lines), so what means "wedged" is silence,
+    /// not elapsed time.
+    private static let handshakeIdleS: TimeInterval = 60
+    private static let handshakeCapS: TimeInterval = 900
+
+    private enum HandshakeStall { case idle, cap, childExited }
+
     private func connect(handshakeFile: URL) async {
+        let gen = generation
         let start = Date()
-        let deadline = start.addingTimeInterval(60)
+        let cap = start.addingTimeInterval(Self.handshakeCapS)
+        var idleDeadline = start.addingTimeInterval(Self.handshakeIdleS)
+        var lastSeenStderr = await MainActor.run { [status] in status.stderrLineCount }
         var handshake: Handshake?
-        while Date() < deadline && !stopping {
+        var stall = HandshakeStall.idle
+        while !stopping {
             if let data = try? Data(contentsOf: handshakeFile),
                let hs = try? BackendClient.decoder.decode(Handshake.self, from: data),
                hs.contract == 1
@@ -240,6 +294,13 @@ actor BackendProcessManager {
                     break
                 }
             }
+            // Someone else took charge of this engine while we were suspended
+            // (a crash restart, a `restart()`): that spawn owns the phase now.
+            if generation != gen { return }
+            if let process, !process.isRunning { stall = .childExited; break }
+            let now = Date()
+            if now >= cap { stall = .cap; break }
+            if now >= idleDeadline { stall = .idle; break }
             // A warm engine writes its handshake in well under a second, and
             // every millisecond between it doing so and this loop noticing is
             // a millisecond of launch where the model catalog is unknown and
@@ -247,14 +308,21 @@ actor BackendProcessManager {
             // that is plausible, then back off — a genuinely cold first run
             // has uv fetching CPython and the supervisor's wheels, and there
             // is no point re-reading a missing file forty times a second for
-            // the remaining minute of it.
+            // the minutes of it. The idle deadline cannot expire inside that
+            // first window, so only the slow path pays for the liveness read.
             let fast = Date().timeIntervalSince(start) < 2
+            if !fast {
+                let seen = await MainActor.run { [status] in status.stderrLineCount }
+                if seen != lastSeenStderr {
+                    lastSeenStderr = seen
+                    idleDeadline = Date().addingTimeInterval(Self.handshakeIdleS)
+                }
+            }
             try? await Task.sleep(for: .milliseconds(fast ? 25 : 250))
         }
         guard let hs = handshake else {
-            if !stopping {
-                await setPhase(.failed(reason: "Engine did not become ready within 60 s."))
-            }
+            guard !stopping, generation == gen else { return }
+            await reportHandshakeStall(stall, generation: gen)
             return
         }
         let client = BackendClient(port: hs.port, token: token)
@@ -262,10 +330,40 @@ actor BackendProcessManager {
         await MainActor.run { [status] in
             status.port = hs.port
             status.engineVersion = hs.version
+            // A different engine process, whatever brought it here. What is
+            // cached against the old one — upload ids, above all — is gone.
+            status.noteEngineReady()
         }
         await setPhase(.ready)
         startEventStream(port: hs.port)
         startHealthPolling(client: client)
+    }
+
+    /// Say why the handshake never came, naming the setup step it died on —
+    /// "did not become ready within 60 s" told the user nothing about whether
+    /// the engine was working or dead.
+    private func reportHandshakeStall(_ stall: HandshakeStall,
+                                      generation gen: Int) async {
+        let step = await MainActor.run { [status] in status.setupLine }
+        let during = step.map { " (last step: \($0))" } ?? ""
+        switch stall {
+        case .childExited:
+            // A death belongs to the termination handler: it counts the crash,
+            // backs off and respawns. Give it a beat to claim this one rather
+            // than racing it to `.failed`, and only speak if it never came.
+            for _ in 0..<20 {
+                if stopping || generation != gen { return }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !stopping, generation == gen else { return }
+            await setPhase(.failed(reason: "The engine exited before it was ready\(during)."))
+        case .cap:
+            let minutes = Int(Self.handshakeCapS / 60)
+            await setPhase(.failed(reason: "The engine did not become ready within \(minutes) minutes\(during)."))
+        case .idle:
+            let seconds = Int(Self.handshakeIdleS)
+            await setPhase(.failed(reason: "The engine stopped reporting progress for \(seconds) s before it was ready\(during)."))
+        }
     }
 
     private func startEventStream(port: Int) {
@@ -290,19 +388,27 @@ actor BackendProcessManager {
 
     private func startHealthPolling(client: BackendClient) {
         healthTask?.cancel()
+        let gen = generation
         healthTask = Task { [weak self] in
             var failures = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 if Task.isCancelled { break }
-                if (try? await client.health()) != nil {
+                let healthy = (try? await client.health()) != nil
+                // Cancelling this task cancels the URLSession request inside
+                // `health()`, which throws — and that used to be counted as a
+                // health failure. The cancel comes from the crash path, so the
+                // engine's death arrived here as failure #3 and restarted it a
+                // second time. A cancelled probe is not a verdict.
+                if Task.isCancelled { break }
+                if healthy {
                     failures = 0
                     await self?.recoveredIfDegraded()
                 } else {
                     failures += 1
                     if failures == 1 { await self?.setPhase(.degraded) }
                     if failures >= 3 {
-                        await self?.healthFailed()
+                        await self?.healthFailed(generation: gen)
                         break
                     }
                 }
@@ -314,8 +420,8 @@ actor BackendProcessManager {
         if await currentPhase() == .degraded { await setPhase(.ready) }
     }
 
-    private func healthFailed() async {
-        guard !stopping else { return }
+    private func healthFailed(generation gen: Int) async {
+        guard !stopping, generation == gen else { return }
         if case .attach = mode {
             // Attach mode: nothing to restart; keep polling until the dev restarts it.
             await setPhase(.degraded)
@@ -332,13 +438,19 @@ actor BackendProcessManager {
                 await awaitExit(of: process, gracePeriod: 0)
             }
         }
-        await handleTermination()
+        await handleTermination(generation: gen)
     }
 
     // MARK: crash handling
 
-    private func handleTermination() async {
+    private func handleTermination(generation gen: Int) async {
         guard !stopping else { return }
+        // One death, one decision. The termination handler and the health
+        // poller both used to get here for a single exit (see `generation`),
+        // which counted two crashes and spawned two engines — the second of
+        // which died on the data-dir lock in a packaged build.
+        guard gen == generation else { return }
+        generation += 1
         healthTask?.cancel()
         eventsTask?.cancel()
         client = nil

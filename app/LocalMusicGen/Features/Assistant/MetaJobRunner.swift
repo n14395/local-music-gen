@@ -42,9 +42,19 @@ enum MetaJobRunner {
     /// also pays for loading the model, and a cold load on a busy machine is
     /// not instant — but it is bounded, so a wedged worker releases the page
     /// instead of holding it forever.
+    ///
+    /// It is the budget for *running* this job, and so it only starts once the
+    /// job leaves the queue. The engine runs one job at a time, and a page like
+    /// Compare-describers submits one per ticked model at once: measured from
+    /// submit, everything after the first spent its whole budget waiting its
+    /// turn and reported "it took too long" while still queued — and then threw
+    /// away the answer when it arrived. `queueTimeout` is the separate, much
+    /// looser bound on that wait, so a queue that never moves still releases the
+    /// page.
     static func run(client: BackendClient, modelId: String, task: String,
                     params: [String: JSONValue],
-                    timeout: TimeInterval = 180) async -> Result<JobInfo, Failure> {
+                    timeout: TimeInterval = 180,
+                    queueTimeout: TimeInterval = 1800) async -> Result<JobInfo, Failure> {
         let created: JobsCreated
         do {
             created = try await client.submit(JobSubmission(
@@ -57,12 +67,16 @@ enum MetaJobRunner {
             return .failure(.refused("The engine accepted no job."))
         }
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        let submittedAt = Date()
+        // nil while the job is still queued; the run budget starts when it fills.
+        var startedAt: Date?
+        while true {
             if Task.isCancelled {
                 cancelOnEngine(client, jobId)
                 return .failure(.cancelled)
             }
+            let elapsed = Date().timeIntervalSince(startedAt ?? submittedAt)
+            if elapsed >= (startedAt == nil ? queueTimeout : timeout) { break }
             try? await Task.sleep(for: .milliseconds(400))
             // A dropped poll is not a failure: one refused request while the
             // engine is busy should not end a job that is still running fine.
@@ -73,7 +87,12 @@ enum MetaJobRunner {
                 return .failure(.failed(job.error?.message
                                         ?? "The engine reported a failure."))
             case .canceled: return .failure(.cancelled)
-            default: continue
+            case .queued: continue
+            default:
+                // loading / generating / encoding: it is our turn now, so this
+                // is where the job's own clock starts.
+                if startedAt == nil { startedAt = Date() }
+                continue
             }
         }
         cancelOnEngine(client, jobId)

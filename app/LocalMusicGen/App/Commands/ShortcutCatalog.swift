@@ -109,7 +109,19 @@ enum ShortcutCatalog {
                                              "e", [.command, .option])
     static let reveal = MenuShortcut("Reveal in Finder", "r",
                                      [.command, .shift])
-    static let delete = MenuShortcut("Delete\u{2026}", .delete, .command)
+    /// ⇧⌘⌫, not the Finder's ⌘⌫.
+    ///
+    /// ⌘⌫ is a *standard text-editing binding* — AppKit's
+    /// `StandardKeyBinding.dict` maps it to `deleteToBeginningOfLine:` — and a
+    /// menu key equivalent is resolved by `NSApplication` before the event ever
+    /// reaches the field editor, so the menu wins. This item is enabled exactly
+    /// when a Library row is picked, which is exactly when the Title field and
+    /// the notes editor are on screen: clearing a line while renaming a track
+    /// raised "Delete "<title>"?" over the field, and with confirmations turned
+    /// off in Settings it deleted the track and its audio file outright.
+    /// ⇧⌘⌫ appears nowhere in that table, so the field editor keeps its keys.
+    static let delete = MenuShortcut("Delete\u{2026}", .delete,
+                                     [.command, .shift])
     static let closeEditor = MenuShortcut("Close Editor", "w",
                                           [.command, .shift])
 

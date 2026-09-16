@@ -50,6 +50,10 @@ struct SplitActionView: View {
     /// single redraw of this page was reading the entire table two to four
     /// times over.
     @State private var priorKinds: [String] = []
+    /// The song a "Split now" was started for from the picker, so the source
+    /// card fills itself when the parts land — the sibling of
+    /// `MixActionView.pendingAutofill`.
+    @State private var pendingAutofill: String?
     @AppStorage("analysisToolsCardDismissed")
     private var analysisCardDismissed = false
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
@@ -152,18 +156,29 @@ struct SplitActionView: View {
         }
         // A split that lands while this page is still up changes what the
         // model is known to produce, and the rail should say so.
-        .onChange(of: parts.results) { refreshPriorKinds() }
+        .onChange(of: parts.results) {
+            refreshPriorKinds()
+            tryAutofill()
+        }
         .task { runLog = ActionRunLog.decoded(runsJSON) }
         .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
         .sheet(isPresented: $choosing) {
             PartPickerSheet(
                 slotLabel: recipe.slots.first?.label ?? "Song",
-                accepts: recipe.slots.first?.accepts
-                    ?? [KindPattern(pattern: "song.mix")],
-                autoDerive: nil,
+                accepts: slotAccepts,
+                // The slot's own derivation, not nil. This is the page that
+                // serves the recipes with the most `autoDerive` slots, and
+                // dropping it broke the one that needs it most: "Continue
+                // these notes" accepts only `notes.*`, so with no notes parts
+                // in the library the picker showed no Songs tab at all and
+                // "Nothing in the library fits this slot yet" — while the fix
+                // the slot declares ("transcribe a song first") was never
+                // offered.
+                autoDerive: recipe.slots.first?.autoDerive,
                 catalog: catalog, library: library, parts: parts, jobs: jobs,
                 playback: playback, onOpenModels: onOpenModels,
-                onPick: { source = $0 })
+                onPick: { source = $0 },
+                onSplitStarted: { pendingAutofill = $0 })
         }
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [.audio],
@@ -352,6 +367,27 @@ struct SplitActionView: View {
             if !seen.contains(part.kind) { seen.append(part.kind) }
         }
         priorKinds = seen
+    }
+
+    /// What this page's one slot takes. Songs where the recipe says nothing,
+    /// which is what every plain separation card wants.
+    private var slotAccepts: [KindPattern] {
+        recipe.slots.first?.accepts ?? [KindPattern(pattern: "song.mix")]
+    }
+
+    /// Fill the source card from the split the picker started, once its parts
+    /// land — the sibling of `MixActionView.tryAutofill`. Without it "Split
+    /// now" queued the job and left the page as empty as it was.
+    private func tryAutofill() {
+        guard let songId = pendingAutofill, source == nil else { return }
+        let accepts = slotAccepts
+        guard let match = parts.results.first(where: { part in
+            part.songId == songId && accepts.contains { $0.matches(part.kind) }
+        }) else { return }
+        let title = ((try? library.repository.song(id: songId)) ?? nil)?.title
+            ?? match.modelName
+        source = PickedMaterial(part: match, sourceTitle: title)
+        pendingAutofill = nil
     }
 
     private var expectedOutputs: [ActionOutput] {

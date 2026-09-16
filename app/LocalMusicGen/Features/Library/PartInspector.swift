@@ -119,6 +119,23 @@ struct PartInspector: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // The store has recorded refused exports, renames and deletes all
+            // along and no screen read the field — a part export onto a full
+            // disk closed its panel and said nothing. Said here, where the
+            // tile that caused it is.
+            if let failure = parts.lastError {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(failure)
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.dangerText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Dismiss") { parts.lastError = nil }
+                        .buttonStyle(.bench(.quiet))
+                }
+                .padding(.horizontal, 20).padding(.top, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             actionGrid
                 .padding(.horizontal, 20)
                 .padding(.top, 16).padding(.bottom, 20)

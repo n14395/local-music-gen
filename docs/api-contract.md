@@ -320,7 +320,11 @@ ParamSpec = {
   "label": "Guidance",
   "help": "optional short explanation",
   "default": 3.0,                     // JSON value matching type; null iff nullable
-  "nullable": false,                  // nullable:true → UI offers an "unset" state
+  "nullable": false,                  // nullable:true → UI offers an "unset" state.
+                                       // On an audio/midi/json param, false means
+                                       // mandatory: submit refuses a job that omits
+                                       // it with 422 VALIDATION, for EVERY task,
+                                       // generate included (5.1)
   // numeric only:
   "min": 1.0, "max": 15.0, "step": 0.5,
   // string only:
@@ -765,6 +769,13 @@ serial and a worker keeps its loaded model between jobs — but they are no
 longer welded together: another job may be reordered (5.8) between two takes of
 a batch, and a take that fails no longer takes its siblings down with it.
 
+Every non-nullable `audio`/`midi`/`json` param the model declares must be
+present, on a generate submit as much as on a task one (5.4): eight
+generate-only entries make an audio slot mandatory that way — VampNet's
+`src_audio`, SongBloom's `style_audio`, ACE-Step XL vocals2music's
+`accompany_audio` — and a submission missing one used to buy a multi-GB model
+load and a failed job instead of this refusal.
+
 Refusals: `409 MODEL_NOT_INSTALLED`, `409 INSUFFICIENT_RAM` (unless `force`),
 `422 VALIDATION`.
 
@@ -907,8 +918,7 @@ other tasks are promptless transformations whose model must list them in
 
 Validation for non-generate tasks: `prompt` optional (ignored unless the model
 declares a param for it); `lyrics` present → `422 VALIDATION`; `duration_s`
-ignored and echoed as submitted (or null); `count` must be 1; every
-non-nullable `audio`/`midi`/`json` param must be present; `task` outside
+ignored and echoed as submitted (or null); `count` must be 1; `task` outside
 `capabilities.tasks` → `422 VALIDATION`. `assist` and `plan` are ordinary
 non-generate tasks and every rule above applies to them unchanged — `plan` in
 particular runs on a *generate* model (ACE-Step), but a `plan` job still

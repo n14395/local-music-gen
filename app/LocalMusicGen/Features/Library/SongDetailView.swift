@@ -64,6 +64,9 @@ struct SongDetailView: View {
     @State private var hasBackup = false
     @State private var backupSize: String?
     @State private var fileSize: String?
+    /// Why the last export failed. The save panel closes on its own, so
+    /// without this a refused copy was indistinguishable from a finished one.
+    @State private var exportError: String?
     /// Ambient, optional: previews and tests host this pane without an
     /// environment, and "no settings" must read as "ask", the safe default.
     @Environment(AppSettings.self) private var appSettings: AppSettings?
@@ -119,11 +122,16 @@ struct SongDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let exportError { exportFailureLine(exportError) }
             actionGrid
                 .padding(.horizontal, 20)
                 .padding(.top, 16).padding(.bottom, 20)
         }
         .background(Bench.Palette.panel)
+        // A failure belongs to the export that caused it, not to the pane: a
+        // message still sitting here when you move to another track would be
+        // about a file that track has nothing to do with.
+        .onChange(of: song.id) { exportError = nil }
         .onChange(of: song.id, initial: true) { editor.load(song, in: library) }
         // Keyed on the whole record rather than its id: applying a program or
         // reverting one rewrites the row under the same track, and the pane
@@ -626,6 +634,23 @@ struct SongDetailView: View {
     /// why the reuse tiles read "Reuse all" where a menu says "Reuse all
     /// parameters" — the longer label only fits by shrinking to a size that
     /// looks like a rendering fault.
+    /// Said above the action grid, where the Export tile that caused it is —
+    /// same caption-and-danger treatment `PartInspector` gives a refused
+    /// rename.
+    private func exportFailureLine(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(message)
+                .font(Bench.Typo.caption)
+                .foregroundStyle(Bench.Palette.dangerText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Dismiss") { exportError = nil }
+                .buttonStyle(.bench(.quiet))
+        }
+        .padding(.horizontal, 20).padding(.top, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var actionGrid: some View {
         VStack(spacing: 8) {
             // Generate again from it, in three sizes.
@@ -704,10 +729,46 @@ struct SongDetailView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = Self.exportName(title: song.title,
                                                      fileName: song.fileName)
+        let source = song.fileURL
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            try? FileManager.default.removeItem(at: url)
-            try? FileManager.default.copyItem(at: song.fileURL, to: url)
+            exportError = Self.export(source, to: url)
+        }
+    }
+
+    /// Copy `source` onto `destination`, leaving whatever is already there
+    /// untouched unless the copy succeeds. Returns the message to show, nil on
+    /// success.
+    ///
+    /// This used to be `try? removeItem` followed by `try? copyItem`, which got
+    /// both halves wrong: answering "Replace" in the save panel deleted the old
+    /// file *before* the copy was attempted, so a full disk, a read-only volume
+    /// or a source on an unmounted external left the user with neither file —
+    /// and both `try?`s meant the panel simply closed and the export looked
+    /// like it had worked. Staged beside the destination and swapped in, so
+    /// the old file survives a failed export and the failure gets said out loud.
+    static func export(_ source: URL, to destination: URL) -> String? {
+        let fm = FileManager.default
+        let staged = destination.deletingLastPathComponent()
+            .appendingPathComponent("." + UUID().uuidString + "-"
+                                    + destination.lastPathComponent)
+        do {
+            try fm.copyItem(at: source, to: staged)
+        } catch {
+            return "Export failed: \(error.localizedDescription)"
+        }
+        do {
+            if fm.fileExists(atPath: destination.path) {
+                // `replaceItemAt` consumes the staged file; it needs the
+                // original to exist, hence the branch.
+                _ = try fm.replaceItemAt(destination, withItemAt: staged)
+            } else {
+                try fm.moveItem(at: staged, to: destination)
+            }
+            return nil
+        } catch {
+            try? fm.removeItem(at: staged)
+            return "Export failed: \(error.localizedDescription)"
         }
     }
 }

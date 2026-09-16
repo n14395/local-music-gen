@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -12,6 +13,10 @@ class Settings:
     parent_pid: int | None
     auth_token: str
     log_level: str = "info"
+    # Library roots `ensure_dirs` could not create, as (path, reason). Filled
+    # in by `ensure_dirs`; `main.run` turns each one into an engine.warning so
+    # the app can say which drive is missing. Empty on a healthy start.
+    unavailable_roots: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def mem_guard_bytes(self) -> int:
@@ -109,10 +114,42 @@ class Settings:
                 os.remove(stale)
             except OSError:
                 pass
-        for d in (self.data_dir, self.output_dir, self.hf_cache_dir,
-                  self.ms_cache_dir, self.aux_cache_dir, self.envs_dir,
+        # The engine's own roots. Nothing works without these, so a failure
+        # here is still fatal.
+        for d in (self.data_dir, self.output_dir, self.envs_dir,
                   self.logs_dir, self.uploads_dir):
             os.makedirs(d, exist_ok=True)
+        # The library roots are the ones that can sit on another volume, so
+        # they are the ones that can be missing. This used to take the engine
+        # down before it ever answered: with the library drive unmounted,
+        # makedirs('/Volumes/<drive>/…') raises PermissionError (errno 13, not
+        # 2 — /Volumes is root-owned), the traceback escaped run() before the
+        # handshake file was written, and the app crash-restarted four times
+        # into a Settings screen that needs a live engine to draw — the one
+        # screen that could have repointed the folder.
+        #
+        # Coming up without them is safe: every reader of these roots stats
+        # before it walks, so the models simply read `not_installed`, and no
+        # marker, DB row, venv or aux dir is removed over an absent root.
+        self.unavailable_roots = []
+        for d in (self.hf_cache_dir, self.ms_cache_dir, self.aux_cache_dir):
+            try:
+                os.makedirs(d, exist_ok=True)
+            except OSError as e:
+                # One missing drive, one warning: after a relocate the aux
+                # root lives inside the library folder, and naming both would
+                # tell the user twice about the same unplugged disk.
+                if any(d.startswith(p + os.sep) for p, _ in self.unavailable_roots):
+                    continue
+                reason = e.strerror or str(e)
+                self.unavailable_roots.append((d, reason))
+                # stderr as well as the event: the app tails this stream, and
+                # a client that connects after startup misses an event emitted
+                # before it subscribed.
+                print(f"warning: model library folder {d} is unavailable "
+                      f"({reason}) — its models will read as not installed "
+                      f"until the drive is reconnected, or choose another "
+                      f"folder in Settings", file=sys.stderr)
         # Every hub download (supervisor or worker) goes through the app's cache dir.
         os.environ["HF_HOME"] = self.hf_cache_dir
         # Likewise every adapter's own download; the worker sets this explicitly

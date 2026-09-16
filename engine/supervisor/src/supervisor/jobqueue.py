@@ -327,13 +327,21 @@ class JobQueue:
                 continue
             params[spec["key"]] = self._resolve_json_uploads(
                 spec["key"], value)
-        if task != "generate":
-            for spec in caps["params"]:
-                if (spec.get("type") in ("audio", "midi", "json")
-                        and not spec.get("nullable", True)
-                        and params.get(spec["key"]) is None):
-                    raise SubmitError(422, "VALIDATION",
-                                      f"missing required input '{spec['key']}'")
+        # Every task, generate included. This used to skip generate, and eight
+        # generate-only entries declare a mandatory slot with exactly this
+        # idiom — VampNet's `src_audio` (it makes variations of a recording),
+        # SongBloom's `style_audio`, ACE-Step XL vocals2music's
+        # `accompany_audio`. Submitting one without its audio bought a
+        # multi-GB load and then a RuntimeError from inside the adapter, where
+        # this 422 was free. Safe to widen because `nullable: false` means
+        # mandatory outright: a slot that is only sometimes required is
+        # declared nullable with a `required_when`, checked below.
+        for spec in caps["params"]:
+            if (spec.get("type") in ("audio", "midi", "json")
+                    and not spec.get("nullable", True)
+                    and params.get(spec["key"]) is None):
+                raise SubmitError(422, "VALIDATION",
+                                  f"missing required input '{spec['key']}'")
         # `required_when`: an input that is optional under one setting and
         # mandatory under another. Checked for generate jobs too, unlike the
         # nullable rule above — ACE-Step's source audio is optional for

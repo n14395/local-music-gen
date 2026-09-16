@@ -96,11 +96,19 @@ def extract(text: str) -> dict | None:
     return None
 
 
-def satisfies(value: dict | None, required: tuple[str, ...]) -> bool:
+def satisfies(value: dict | None, required: tuple[str, ...],
+              may_be_empty: tuple[str, ...] = ()) -> bool:
     """Whether a parsed object is worth returning to the app.
 
     Emptiness counts as absence: a model that emits `{"questions": []}` has
-    not answered, and one repair attempt usually fixes it.
+    not answered, and one repair attempt usually fixes it. The exception is a
+    key the kind lists in `may_be_empty`, where empty *is* the answer — the
+    interview signals "I know enough now" with an empty questions list, and
+    calling that malformed used to buy a second cold generation and then report
+    the finished interview as `ok: false`, dumping raw JSON where the app meant
+    to say "press Write the description". Such a key must still be present, and
+    an empty *string* still counts as absence there: the shape asks for a list,
+    and `""` is a model that fell apart, not one that finished.
     """
     if not isinstance(value, dict):
         return False
@@ -110,6 +118,8 @@ def satisfies(value: dict | None, required: tuple[str, ...]) -> bool:
         got = value.get(key)
         if got is None:
             return False
+        if key in may_be_empty and not isinstance(got, str):
+            continue
         if isinstance(got, (str, list, dict)) and len(got) == 0:
             return False
     return True

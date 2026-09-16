@@ -90,7 +90,13 @@ def embed_text(texts: list[str], snapshot: str) -> np.ndarray:
     if not texts:
         return np.zeros((0, 512), dtype=np.float32)
 
-    inputs = _processor(text=list(texts), return_tensors="pt", padding=True)
+    # truncation/max_length: without them a long prompt (ACE-Step and plan
+    # captions routinely run past 2,000 chars) tokenized to 1204 ids against a
+    # 512-token model and indexed past the position-embedding table, failing
+    # the whole analyze pass at fraction 0.86. Truncating a prompt for an
+    # adherence *score* is the right call; losing the pass is not.
+    inputs = _processor(text=list(texts), return_tensors="pt", padding=True,
+                        truncation=True, max_length=512)
     inputs = {k: v.to(_device) for k, v in inputs.items()}
     with torch.no_grad():
         try:

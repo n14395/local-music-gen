@@ -176,4 +176,47 @@ final class LibrarySelectionTests: XCTestCase {
             LibrarySelectionInspector.unique("no-extension", taken: &taken),
             "no-extension-2")
     }
+
+    /// The bulk export seeds `taken` with the folder's existing names now, so
+    /// a second export into the same folder steps around the first one's files
+    /// instead of deleting them. It used to start from empty.
+    func testExportStepsAroundFilesAlreadyInTheFolder() {
+        var taken: Set<String> = ["track042.wav"]
+        XCTAssertEqual(
+            LibrarySelectionInspector.unique("track042.wav", taken: &taken),
+            "track042-2.wav")
+    }
+
+    // MARK: export copying
+
+    /// A failed export must leave the file it was about to replace alone. The
+    /// old path deleted the destination first and swallowed both errors, so a
+    /// copy that could not happen took the previous file with it.
+    func testAFailedExportLeavesTheOldFileInPlace() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("lmg-export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir,
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let destination = dir.appendingPathComponent("take.wav")
+        try "the one I already had".write(to: destination, atomically: true,
+                                          encoding: .utf8)
+
+        let missing = dir.appendingPathComponent("gone.wav")
+        XCTAssertNotNil(SongDetailView.export(missing, to: destination),
+                        "a missing source has to be reported, not ignored")
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8),
+                       "the one I already had")
+
+        let source = dir.appendingPathComponent("source.wav")
+        try "the new one".write(to: source, atomically: true, encoding: .utf8)
+        XCTAssertNil(SongDetailView.export(source, to: destination))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8),
+                       "the new one")
+        // Nothing staged is left behind on either path.
+        let leftovers = try FileManager.default
+            .contentsOfDirectory(atPath: dir.path).sorted()
+        XCTAssertEqual(leftovers, ["source.wav", "take.wav"])
+    }
 }

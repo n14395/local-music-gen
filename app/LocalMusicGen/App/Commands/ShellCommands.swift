@@ -194,9 +194,11 @@ private struct DeleteItem: View {
         Button(title(picked), role: .destructive) {
             actions.requestDeleteTarget()
         }
-        // ⌘⌫, the Finder's. Not the bare Delete the Editor uses for its
-        // selection: that one removes a slice of audio from a program you can
-        // undo, and this one removes a file from the disk.
+        // ⇧⌘⌫. Not the bare Delete the Editor uses for its selection — that
+        // one removes a slice of audio from a program you can undo, and this
+        // one removes a file from the disk — and deliberately not the Finder's
+        // ⌘⌫ either, which AppKit has already given to
+        // `deleteToBeginningOfLine:`. See `ShortcutCatalog.delete`.
         .keyboardShortcut(ShortcutCatalog.delete.shortcut)
         .disabled(picked.kind == .none)
     }

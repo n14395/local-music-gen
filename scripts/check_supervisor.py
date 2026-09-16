@@ -11,8 +11,11 @@ model that had nothing to say.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +23,11 @@ sys.path.insert(0, str(ROOT / "engine/supervisor/src"))
 sys.path.insert(0, str(ROOT / "engine/protocol/src"))
 
 from engine_protocol.adapter import AUX_DIRS        # noqa: E402
+from engine_protocol.staging import INCOMPLETE_MARKER  # noqa: E402
+from supervisor import envs                         # noqa: E402
+from supervisor.config import Settings              # noqa: E402
 from supervisor.logmirror import LogMirror          # noqa: E402
+from supervisor.registry import Registry            # noqa: E402
 from supervisor.worker import Worker                # noqa: E402
 
 FAILURES: list[str] = []
@@ -156,11 +163,141 @@ def check_aux_dirs() -> None:
           ", ".join(legacy))
 
 
+# MARK: - runtime provisioning
+
+
+def check_envs_husk() -> None:
+    """A sync that dies part-way must not leave a venv behind.
+
+    uv creates `.venv/bin/python` before it installs anything, and a
+    marker-less venv is indistinguishable from a runtime built before markers
+    existed — so a cancelled first install used to report `installed` forever.
+    The fake uv here reproduces exactly that: it makes the python and exits
+    non-zero. No network, no real uv.
+    """
+    saved = {k: os.environ.get(k)
+             for k in ("LOCALMUSICGEN_ADAPTERS_DIR", "LOCALMUSICGEN_UV")}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fam = root / "fam"
+        fam.mkdir()
+        (fam / "pyproject.toml").write_text("[project]\nname = 'fam'\n")
+        fake_uv = root / "fake-uv"
+        fake_uv.write_text("#!/bin/sh\nmkdir -p .venv/bin\n"
+                           "touch .venv/bin/python\nexit 1\n")
+        fake_uv.chmod(0o755)
+        os.environ["LOCALMUSICGEN_ADAPTERS_DIR"] = str(root)
+        os.environ["LOCALMUSICGEN_UV"] = str(fake_uv)
+        try:
+            try:
+                envs.ensure("fam")
+                check("a failed sync raises", False, "it returned")
+            except envs.ProvisionError:
+                pass
+            check("a failed first sync leaves no husk venv",
+                  not (fam / ".venv").exists())
+            check("so the family does not report a runtime",
+                  not envs.is_provisioned("fam"))
+
+            # The other half: a runtime that was already there is not the
+            # husk, and a re-sync that fails must not take it away.
+            (fam / ".venv" / "bin").mkdir(parents=True)
+            (fam / ".venv" / "bin" / "python").touch()
+            try:
+                envs.ensure("fam")
+            except envs.ProvisionError:
+                pass
+            check("a failed re-sync keeps the runtime that was already there",
+                  (fam / ".venv" / "bin" / "python").exists())
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+# MARK: - install state
+
+
+def _tombstone_fixture(hub: Path, repo_id: str) -> Path:
+    repo = hub / ("models--" + repo_id.replace("/", "--"))
+    snap = repo / "snapshots" / "rev1"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    return repo
+
+
+def check_relocate_tombstone() -> None:
+    """An interrupted relocate tombstones the destination; `is_installed` has
+    to read it. It did not, so a snapshot tree of links into blobs that never
+    arrived reported `installed` and the job died inside the worker."""
+    saved_hf = os.environ.get("HF_HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HF_HOME"] = os.path.join(tmp, "library")
+        try:
+            settings = Settings(data_dir=os.path.join(tmp, "data"),
+                                output_dir=os.path.join(tmp, "out"),
+                                handshake_file=os.path.join(tmp, "hs.json"),
+                                parent_pid=None, auth_token="t")
+            os.makedirs(settings.data_dir, exist_ok=True)
+            registry = Registry(settings)
+            model_id = next(
+                (mid for mid, m in sorted(registry.models.items())
+                 if len(m.get("hf_repos") or []) == 1
+                 and not m["hf_repos"][0].get("allow_patterns")
+                 and not m.get("ms_repos")), None)
+            if model_id is None:
+                check("a single-repo catalog entry to test with", False)
+                return
+            repo_id = registry.models[model_id]["hf_repos"][0]["repo_id"]
+            repo = _tombstone_fixture(Path(settings.hf_cache_dir) / "hub",
+                                      repo_id)
+            registry.write_marker(model_id, 1)
+            check("a downloaded repo reads installed",
+                  registry.is_installed(model_id))
+            (repo / INCOMPLETE_MARKER).write_text("partial\n")
+            check("a tombstoned repo does not",
+                  not registry.is_installed(model_id))
+            check("and hands no snapshot path to a worker",
+                  repo_id not in registry.hf_snapshot_dirs(model_id))
+            # Finishing the download is what makes it whole again; without
+            # this the entry would offer a download that could never take.
+            registry.write_marker(model_id, 1)
+            check("a completed download clears the tombstone",
+                  registry.is_installed(model_id))
+        finally:
+            if saved_hf is None:
+                os.environ.pop("HF_HOME", None)
+            else:
+                os.environ["HF_HOME"] = saved_hf
+
+
+def check_required_inputs() -> None:
+    """Submit now presence-checks non-nullable audio/midi/json params for
+    every task, generate included. That is only safe while `nullable: false`
+    on such a param means "mandatory outright" — a default the worker would
+    have used instead would turn into a 422 the user cannot answer."""
+    with open(ROOT / "engine/catalog/models.json") as f:
+        models = json.load(f)["models"]
+    offenders = [f"{m['id']}.{p['key']}"
+                 for m in models
+                 for p in (m.get("capabilities") or {}).get("params") or []
+                 if p.get("type") in ("audio", "midi", "json")
+                 and not p.get("nullable", True)
+                 and p.get("default") is not None]
+    check("every mandatory file input defaults to null", not offenders,
+          ", ".join(offenders))
+
+
 if __name__ == "__main__":
     check_log_mirror()
     check_worker_stderr()
     check_no_job_no_mirror()
     check_aux_dirs()
+    check_envs_husk()
+    check_relocate_tombstone()
+    check_required_inputs()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} check(s) failed: " + ", ".join(FAILURES))

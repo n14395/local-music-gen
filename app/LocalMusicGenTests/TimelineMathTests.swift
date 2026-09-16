@@ -226,4 +226,31 @@ final class TimelineMathTests: XCTestCase {
                                           pxPerSecond: 40, binCount: 2000),
                        4.8, accuracy: 1e-9)
     }
+
+    // MARK: the unanalysed grid
+
+    /// A bench with nothing analysed draws and previews on 120 BPM, and the
+    /// render has to land on the same grid. `planMix` used to send
+    /// `offset_s = 0` for every clip whenever no target tempo was known, so a
+    /// mix arranged across eight bars rendered with every clip stacked at bar
+    /// 1 — and with nothing analysed the align bar cannot offer a tempo to
+    /// set, so there was no way out from the UI.
+    func testUnanalysedBenchRendersOnTheGridItWasDrawnOn() {
+        let drawn = TimelineMath(bpm: nil)
+        XCTAssertEqual(drawn.bpm, TimelineMath.fallbackBpm)
+
+        let item = JobsStore.ResolvedIngredient(
+            submission: IngredientSubmission(
+                slotId: "a", partId: "p1", gainDb: 0, muted: false,
+                offsetBeats: 16, sectionStartS: nil, sectionEndS: nil),
+            kind: "song.mix", role: "mix",
+            fileURL: URL(fileURLWithPath: "/tmp/p1.wav"),
+            sampleRate: 44100, sourceSongTitle: "Never analysed",
+            summary: nil)
+        let plan = JobsStore.planMix(resolved: [item],
+                                     options: RecombineOptions())
+        XCTAssertNil(plan.spec.target.bpm, "nothing analysed, nothing to match")
+        XCTAssertEqual(plan.spec.tracks[0].offsetS, drawn.seconds(beats: 16),
+                       accuracy: 1e-9)
+    }
 }

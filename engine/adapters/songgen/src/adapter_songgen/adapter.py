@@ -246,6 +246,15 @@ class SongGenAdapter(ModelAdapter):
         from transformers import StoppingCriteria, StoppingCriteriaList
 
         assert self.model is not None and self.processor is not None
+        # SongGen has no instrumental path: no instrumental token, mode or
+        # checkpoint exists in the package. This used to substitute
+        # "la la la" for an empty lyrics box, so a user who asked for an
+        # instrumental got a voice singing nonsense instead of an answer. The
+        # catalog now declares `requires_lyrics` so the app gates it; this is
+        # the API caller's version of the same message.
+        if not (lyrics or "").strip():
+            raise RuntimeError("SongGen sings — it has no instrumental mode, "
+                               "so give it some lyrics")
         duration_s = float(params.get("duration_s") or 15.0)
         # The decoder has 6547 positions and the codec runs at 50 Hz, so a
         # mixed render tops out near 131 s and the catalog declares 120. The
@@ -274,7 +283,7 @@ class SongGenAdapter(ModelAdapter):
         # the separation pass a normal song clip silently degraded the
         # voice cloning (audit §3).
         inputs = self.processor(text=prompt,
-                                lyrics=lyrics or "la la la",
+                                lyrics=lyrics,
                                 ref_voice_path=ref,
                                 separate=bool(ref))
 

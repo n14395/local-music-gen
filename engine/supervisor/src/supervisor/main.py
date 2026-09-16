@@ -51,6 +51,34 @@ async def retention_loop(state: EngineState, settings: Settings) -> None:
         await asyncio.sleep(86400)
 
 
+async def announce_unavailable_roots(settings: Settings, bus: EventBus) -> None:
+    """Tell the app which library roots were missing at startup.
+
+    `ensure_dirs` no longer dies when the library volume is unmounted (it used
+    to, before the handshake was written, which cost four crash-restarts and
+    locked the user out of the Settings screen that fixes it). It prints the
+    reason to stderr; this repeats it on the bus so the app can show it as a
+    warning rather than only in the engine log.
+
+    The wait is the point: the ring is replayed only to a client that
+    reconnects with a Last-Event-ID, so a warning emitted before the app's SSE
+    stream exists would go nowhere. Bounded, because an engine nobody connects
+    to should stop caring.
+    """
+    if not settings.unavailable_roots:
+        return
+    for _ in range(120):
+        if bus.subscribers:
+            break
+        await asyncio.sleep(1.0)
+    for path, reason in settings.unavailable_roots:
+        bus.emit("engine.warning", {
+            "message": f"model library folder {path} is unavailable "
+                       f"({reason}); its models will read as not installed "
+                       f"until the drive is reconnected, or choose another "
+                       f"folder in Settings"})
+
+
 async def run(settings: Settings) -> None:
     settings.ensure_dirs()
     # Weights the old sibling-of-HF_HOME derivation left in ~/.cache. Cheap
@@ -85,6 +113,8 @@ async def run(settings: Settings) -> None:
             asyncio.create_task(watch_parent(settings.parent_pid, kill_workers)))
     background_tasks.append(asyncio.create_task(telemetry_loop(state, bus)))
     background_tasks.append(asyncio.create_task(retention_loop(state, settings)))
+    background_tasks.append(
+        asyncio.create_task(announce_unavailable_roots(settings, bus)))
 
     async def write_handshake() -> None:
         while not server.started:

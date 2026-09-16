@@ -141,6 +141,19 @@ final class AppEnvironment {
     private(set) var editor: EditorStore!
     private(set) var backendManager: BackendProcessManager!
 
+    /// Why the library database could not be opened, when it could not be.
+    ///
+    /// Non-nil means the app is running on a scratch database: the library
+    /// reads empty and nothing written this session survives the quit. A
+    /// `let` rather than observable state because it is decided in `init`,
+    /// before any view exists, and can never change afterwards — the shell
+    /// draws a banner from it (`StorageFailureBanner` in MainWindow).
+    ///
+    /// Defaulted rather than assigned on every path because the stores built
+    /// further down this `init` read `self`, which Swift only allows once
+    /// every stored property has a value.
+    private(set) var databaseFailure: String?
+
     /// What the engine status label opens. Assembled here because this is the
     /// only place that holds all three.
     var engineStatus: EngineStatus {
@@ -162,15 +175,17 @@ final class AppEnvironment {
         if let database {
             db = database
         } else {
-            do {
-                try StoragePaths.ensureDirectories()
-                db = try DatabaseManager(path: StoragePaths.database)
-            } catch {
-                // A broken database file is unrecoverable in-place; fall back to
-                // memory so the app can at least run and show the error.
-                db = (try? DatabaseManager.inMemory())!
-                assertionFailure("library database failed to open: \(error)")
-            }
+            // A broken database file is unrecoverable in-place, so the app
+            // runs on a scratch one — and says so for the rest of the session
+            // (see `databaseFailure` and the shell's banner). This used to
+            // fall back silently behind an `assertionFailure`, which is a
+            // no-op in a release build: the library came up empty, every
+            // write went to memory and was lost at quit, and nothing on any
+            // screen hinted at why.
+            try? StoragePaths.ensureDirectories()
+            let opened = DatabaseManager.openLibrary(path: StoragePaths.database)
+            db = opened.db
+            databaseFailure = opened.failure
         }
         let repo = LibraryRepository(db: db)
         let partsRepo = PartsRepository(db: db)
@@ -281,6 +296,12 @@ final class AppEnvironment {
             self?.textStore.noteIngested(docs)
             self?.advanceTextChain(songs: [], parts: [], texts: docs)
         }
+        // Reconcile settles rows the event stream never reported on. The two
+        // chains only ever learned of a failure from `.jobFailed`, so an
+        // engine restart mid-step left them waiting on a dead job id forever.
+        jobsStore.onJobSettledFailed = { [weak self] jobId, message in
+            self?.noteJobFailed(jobId: jobId, message: message)
+        }
         jobsStore.onEditorArtifact = { [weak self] job, result, purpose in
             self?.editor.handleArtifact(job: job, result: result,
                                         purpose: purpose)
@@ -288,6 +309,9 @@ final class AppEnvironment {
             self?.partsStore.refreshSoon()
         }
         editor.partsStore = partsStore
+        // Which engine is running, so a cached upload id cannot outlive the
+        // engine that took it — see `EditorStore.uploadSource`.
+        editor.engineGeneration = { [status] in status.engineGeneration }
         editor.pauseGlobalPlayback = { [weak self] in
             guard let playback = self?.playback, playback.isPlaying else {
                 return
@@ -350,6 +374,11 @@ final class AppEnvironment {
     /// ingest re-enters the hooks that started it: without the guards, one
     /// landed description schedules the next one forever.
     private func autoRun(song: SongRecord) {
+        // One landing, one plan. A take that ships its own stems announces
+        // both a song and parts, and both hooks come here — synchronously,
+        // before either pass has written anything, so the second plan was
+        // identical to the first and every auto-run job was submitted twice.
+        guard !autoRunPlanning.contains(song.id) else { return }
         let passes = AutoRunPlanner.passes(
             preferences: autoRunPreferences,
             existing: AutoRunPlanner.Existing(
@@ -360,7 +389,13 @@ final class AppEnvironment {
                 hasLyrics: hasTextDoc(song.id, .lyrics)),
             installed: installedModelIds)
         guard !passes.isEmpty else { return }
-        Task { [jobsStore] in
+        // Held only until the submissions are in. The guards above are reads
+        // of the database, and the database says nothing until a pass lands,
+        // so anything arriving for this song in the meantime would plan the
+        // same work again.
+        autoRunPlanning.insert(song.id)
+        Task { [jobsStore, weak self] in
+            defer { self?.autoRunPlanning.remove(song.id) }
             for pass in passes {
                 switch pass {
                 case .analyze(let modelId):
@@ -383,6 +418,10 @@ final class AppEnvironment {
             }
         }
     }
+
+    /// Songs whose auto-run passes are planned but not yet submitted — see
+    /// `autoRun(song:)`.
+    private var autoRunPlanning: Set<String> = []
 
     private var autoRunPreferences: AutoRunPlanner.Preferences {
         AutoRunPlanner.Preferences(
@@ -441,6 +480,19 @@ final class AppEnvironment {
                                library: library, textStore: textStore,
                                models: catalog.models))
         }
+    }
+
+    /// A tracked job ended badly, however we found out.
+    ///
+    /// A stopped chain has to stop *waiting*, or the workspace sits on a job
+    /// id the engine has already forgotten. Handled here rather than off the
+    /// ingest hooks because a job that failed never ingests anything — and in
+    /// one place rather than two, because `reconcile()` settles rows that the
+    /// event stream never spoke for, and those wedged both chains until the
+    /// app was relaunched.
+    private func noteJobFailed(jobId: String, message: String) {
+        styleTransfer.chainStepFailed(jobId: jobId, message: message)
+        textChain.stepFailed(jobId: jobId, message: message)
     }
 
     private func autoRunSong(id: String) {
@@ -540,17 +592,9 @@ final class AppEnvironment {
                 backendStatus.workerModelId = state == "stopped" ? nil : modelId
                 backendStatus.workerModelState = state == "stopped" ? nil : state
             case .jobFailed(let jobId, let error):
-                // A stopped chain has to stop *waiting*, or the workspace sits
-                // on a job id the engine has already forgotten. Handled here
-                // rather than off the ingest hooks because a job that failed
-                // never ingests anything.
-                styleTransfer.chainStepFailed(jobId: jobId,
-                                              message: error.message)
-                textChain.stepFailed(jobId: jobId, message: error.message)
+                noteJobFailed(jobId: jobId, message: error.message)
             case .jobCanceled(let jobId):
-                styleTransfer.chainStepFailed(jobId: jobId,
-                                              message: "cancelled")
-                textChain.stepFailed(jobId: jobId, message: "cancelled")
+                noteJobFailed(jobId: jobId, message: "cancelled")
             case .libraryFinished(let op):
                 // Applied on any terminal state, not only success: a relocate
                 // that fell over halfway has still moved repositories, and the

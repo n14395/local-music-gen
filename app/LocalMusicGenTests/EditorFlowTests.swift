@@ -312,6 +312,33 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertEqual(anchors.tailS, 105, accuracy: 1e-9)
     }
 
+    /// Zoom to Selection zooms to what is selected.
+    ///
+    /// The selection is in edited-timeline seconds, like everything else in
+    /// this store, but `zoomToSelection` used to run it through
+    /// `sourceToTimeline` — the wrong direction, and the identity only on an
+    /// unedited track. After a trim to 10-40 s, selecting timeline 15-25 s
+    /// zoomed to 5-15 s (the wrong music), and selecting the first ten
+    /// seconds mapped to nil twice and did nothing at all.
+    func testZoomToSelectionReadsTimelineSecondsAfterAnEdit() throws {
+        let (store, _, _) = try makeStore()
+        store.wellWidth = 800
+        store.selection = EditRange(start: 10, end: 40)
+        store.trimToSelection()
+        XCTAssertEqual(store.timelineDurationS, 30, accuracy: 1e-9)
+
+        store.selection = EditRange(start: 15, end: 25)
+        store.zoomToSelection()
+        let visible = Double(store.wellWidth / store.pxPerSecond)
+        XCTAssertLessThanOrEqual(store.visibleStartS, 15.001)
+        XCTAssertGreaterThanOrEqual(store.visibleStartS + visible, 24.999)
+
+        // The head of the timeline, which used to map to nil and no-op.
+        store.selection = EditRange(start: 0, end: 10)
+        store.zoomToSelection()
+        XCTAssertEqual(store.visibleStartS, 0, accuracy: 1e-9)
+    }
+
     /// A program that silences everything is refused in plain language
     /// rather than reaching the engine, which fails such a job outright.
     func testAllSilentProgramIsRefusedBeforeAnythingIrreversible() throws {

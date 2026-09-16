@@ -241,6 +241,69 @@ final class WorkbenchLogicTests: XCTestCase {
         XCTAssertEqual(model.clips.map(\.startBeats), [4, 12])
     }
 
+    // MARK: undo
+
+    /// Removing a lane takes every clip on it. It is the one edit that
+    /// registered no undo at all — from either lens, or from the menu bar.
+    func testRemovingALaneCanBeUndone() {
+        let model = WorkbenchModel()
+        addLane(model, "a")
+        addLane(model, "b")
+        let doomed = lastLane(model)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+
+        undo.beginUndoGrouping()
+        model.registerUndo(undo)
+        model.removeLane(doomed.id)
+        undo.endUndoGrouping()
+        XCTAssertEqual(model.lanes.count, 1)
+        XCTAssertEqual(model.clips.count, 1)
+
+        undo.undo()
+        XCTAssertEqual(model.lanes.count, 2)
+        XCTAssertEqual(model.clips.count, 2)
+        XCTAssertEqual(model.lanes.last?.id, doomed.id)
+
+        undo.redo()
+        XCTAssertEqual(model.lanes.count, 1)
+    }
+
+    /// "Clear the bench" is the same swap over the whole arrangement.
+    func testClearingTheBenchCanBeUndone() {
+        let model = WorkbenchModel()
+        addLane(model, "a")
+        addLane(model, "b")
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+
+        undo.beginUndoGrouping()
+        model.registerUndo(undo, name: "Clear the Bench")
+        for lane in model.lanes { model.removeLane(lane.id) }
+        undo.endUndoGrouping()
+        XCTAssertTrue(model.lanes.isEmpty)
+        XCTAssertTrue(model.clips.isEmpty)
+
+        undo.undo()
+        XCTAssertEqual(model.lanes.count, 2)
+        XCTAssertEqual(model.clips.count, 2)
+    }
+
+    /// Nothing may open an undo group it does not close — see
+    /// `EditorFlowTests.testEditingOpensNoUndoGroupOfItsOwn`.
+    func testRegisteringOpensNoGroupOfItsOwn() {
+        let model = WorkbenchModel()
+        addLane(model, "a")
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        model.registerUndo(undo)
+        model.removeLane(lastLane(model).id)
+        undo.endUndoGrouping()
+        XCTAssertEqual(undo.groupingLevel, 0)
+        XCTAssertTrue(undo.canUndo)
+    }
+
     // MARK: narration
 
     private func tempo(_ ratio: Double, source: Double = 119) -> TempoMatch {

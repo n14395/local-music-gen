@@ -206,6 +206,7 @@ struct ModelsScreen: View {
         VStack(spacing: 0) {
             topBar
             if !catalog.models.isEmpty { filterBar }
+            if let refusal = catalog.lastActionError { actionErrorStrip(refusal) }
             HStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
@@ -233,6 +234,10 @@ struct ModelsScreen: View {
             planCache = (key: key, value: buildPlan())
         }
         .task { await catalog.refresh() }
+        // The strip belongs to the press that caused it: a refusal still on
+        // the store when you come back to this screen would be about a model
+        // you have long since stopped thinking about.
+        .onDisappear { catalog.clearActionError() }
         .sheet(isPresented: $showAddModel) {
             AddModelSheet(catalog: catalog)
         }
@@ -307,6 +312,36 @@ struct ModelsScreen: View {
                                   style: .continuous)
             .strokeBorder(Bench.Palette.accent.opacity(0.26), lineWidth: 1))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Why the engine refused the last delete, pin, download-start or runtime
+    /// install, said where the user pressed the button.
+    ///
+    /// The store has recorded these refusals all along and nothing read them:
+    /// a "Delete model files…" the engine answers `409 MODEL_IN_USE` closed its
+    /// dialog, left the row exactly as it was, and told the user nothing. Same
+    /// wording and tone as the download-failure line a row further down, so a
+    /// refusal and a failure read as the same kind of thing.
+    private func actionErrorStrip(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("✕")
+                .font(Bench.Typo.mono(11, .semibold))
+                .foregroundStyle(Bench.Palette.dangerText)
+            Text(message)
+                .font(Bench.Typo.small)
+                .foregroundStyle(Bench.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Dismiss") { catalog.clearActionError() }
+                .buttonStyle(.bench(.quiet))
+        }
+        .padding(.horizontal, 20).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Bench.Palette.danger.opacity(0.09))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Bench.Palette.danger.opacity(0.30))
+                .frame(height: 1)
+        }
     }
 
     private var tagFilterBar: some View {

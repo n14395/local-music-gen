@@ -2249,13 +2249,15 @@ async def jobs_submit(body: dict):
             return err(422, "VALIDATION",
                        f"unknown upload '{bad[0]}' in '{p['key']}'")
         params[p["key"]] = json.dumps(resolved)
-    if task != "generate":
-        for p in caps["params"]:
-            if (p["type"] in ("audio", "midi", "json")
-                    and not p.get("nullable", True)
-                    and params.get(p["key"]) is None):
-                return err(422, "VALIDATION",
-                           f"missing required input '{p['key']}'")
+    # Every task, generate included — mirrors the engine (contract 5.1): the
+    # generate-only entries that declare a mandatory audio slot used to load a
+    # multi-GB model and fail inside the adapter instead of refusing here.
+    for p in caps["params"]:
+        if (p["type"] in ("audio", "midi", "json")
+                and not p.get("nullable", True)
+                and params.get(p["key"]) is None):
+            return err(422, "VALIDATION",
+                       f"missing required input '{p['key']}'")
     # One job per take, sharing the group (contract 5.1): the queue is a list
     # of takes, and the app groups them back by group_id.
     takes = int(body.get("count", 1))

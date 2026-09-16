@@ -34,6 +34,9 @@ struct OnboardingView: View {
     /// would delete each row from the progress list at the exact moment it
     /// succeeded.
     @State private var installingModels: [ModelInfo] = []
+    /// Models whose download the engine refused at submit, by id — see
+    /// `failure(for:)`.
+    @State private var refusals: [String: String] = [:]
 
     private enum Phase { case choosing, installing }
 
@@ -45,14 +48,35 @@ struct OnboardingView: View {
 
     private var selectedBytes: Int64 { plan.bytes(for: selection) }
 
-    /// Every install this sheet started has finished. Runtime provisioning is
-    /// deliberately not waited on — it happens on the first job and is reported
-    /// there; holding the sheet open through a torch install would be a long,
-    /// silent stare at a spinner.
+    /// Every install this sheet started has finished — landed, or given up.
+    ///
+    /// Runtime provisioning is deliberately not waited on — it happens on the
+    /// first job and is reported there; holding the sheet open through a torch
+    /// install would be a long, silent stare at a spinner.
+    ///
+    /// A failure counts as finished on purpose. `DownloadState` has no failure
+    /// case and a failed transfer is *removed* from `downloads`, so a sheet
+    /// that waited for `.installed` waited forever on a model that had already
+    /// given up — the row said "WAITING", the footer said "Downloading…", and
+    /// the "All set" state was unreachable.
     private var isComplete: Bool {
         !installingModels.isEmpty && installingModels.allSatisfy { model in
             catalog.model(id: model.id)?.installState == .installed
+                || failure(for: model.id) != nil
         }
+    }
+
+    /// Why this model is not here: the transfer's own failure, or a start the
+    /// engine refused outright — `INSUFFICIENT_DISK`, `MODEL_IN_USE`. A refused
+    /// start never becomes a download, so it never becomes a
+    /// `downloads.failures` row either, and this sheet is the only thing
+    /// watching for it.
+    private func failure(for modelId: String) -> String? {
+        refusals[modelId] ?? downloads.failure(forModel: modelId)?.message
+    }
+
+    private var failedCount: Int {
+        installingModels.filter { failure(for: $0.id) != nil }.count
     }
 
     var body: some View {
@@ -305,11 +329,29 @@ struct OnboardingView: View {
     private var installingList: some View {
         VStack(spacing: 8) {
             ForEach(installingModels) { model in
+                let installed = catalog.models
+                    .first { $0.id == model.id }?.installState == .installed
                 OnboardingProgressRow(
                     model: model,
                     download: downloads.info(forModel: model.id),
-                    isInstalled: catalog.models
-                        .first { $0.id == model.id }?.installState == .installed)
+                    isInstalled: installed,
+                    // Not shown once the model is here: a failed first attempt
+                    // followed by a successful retry is a success.
+                    failure: installed ? nil : failure(for: model.id),
+                    onRetry: { retry(model) })
+            }
+        }
+    }
+
+    /// Ask for it again. The failure is cleared first so the row goes back to
+    /// waiting rather than showing the last reason over a live transfer.
+    private func retry(_ model: ModelInfo) {
+        refusals.removeValue(forKey: model.id)
+        downloads.clearFailure(forModel: model.id)
+        Task {
+            await catalog.startDownload(model)
+            if let refused = catalog.lastActionError {
+                refusals[model.id] = refused
             }
         }
     }
@@ -399,10 +441,11 @@ struct OnboardingView: View {
                     }
                 }
             } else {
-                Text(isComplete ? "All set — everything is installed."
-                                : "Downloading…")
+                Text(installingSummary)
                     .font(Bench.Typo.body)
-                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .foregroundStyle(failedCount > 0 && isComplete
+                                     ? Bench.Palette.dangerText
+                                     : Bench.Palette.textSecondary)
             }
 
             Spacer(minLength: 8)
@@ -439,6 +482,17 @@ struct OnboardingView: View {
         !catalog.readiness.knowsWhatIsInstalled || plan.isEmpty
     }
 
+    /// What the footer says while the sheet is watching its installs. It used
+    /// to be "Downloading…" until every model was installed, which for a
+    /// failed one was forever.
+    private var installingSummary: String {
+        guard isComplete else { return "Downloading…" }
+        guard failedCount > 0 else { return "All set — everything is installed." }
+        let one = failedCount == 1
+        return "\(failedCount) \(one ? "model" : "models") didn't download. "
+            + "Retry above, or from Models later."
+    }
+
     private var footerSummary: String {
         switch catalog.readiness {
         case .pending: "Getting ready…"
@@ -471,6 +525,11 @@ struct OnboardingView: View {
                 // licence, which the sheet has just shown them.
                 catalog.acceptLicense(for: item.model)
                 await catalog.startDownload(item.model)
+                // A refusal here never becomes a transfer, so nothing else
+                // would ever report it — see `failure(for:)`.
+                if let refused = catalog.lastActionError {
+                    refusals[item.model.id] = refused
+                }
             }
         }
     }
@@ -486,6 +545,11 @@ private struct OnboardingProgressRow: View {
     let model: ModelInfo
     let download: DownloadInfo?
     let isInstalled: Bool
+    /// Why this one is not here. `DownloadState` has no failure case and a
+    /// failed transfer is removed from the store, so without this the row fell
+    /// back to "no download yet" and said WAITING for the rest of the session.
+    var failure: String?
+    var onRetry: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
@@ -498,10 +562,20 @@ private struct OnboardingProgressRow: View {
                     Spacer(minLength: 0)
                     Text(status)
                         .font(Bench.Typo.metaLine)
-                        .foregroundStyle(isInstalled ? Bench.Palette.ok
-                                                     : Bench.Palette.textFaint)
+                        .foregroundStyle(statusTone)
+                    if failure != nil {
+                        Button("Retry", action: onRetry)
+                            .buttonStyle(.bench(.quiet))
+                    }
                 }
-                if !isInstalled, let download, download.bytesTotal > 0 {
+                if let failure {
+                    Text(failure)
+                        .font(Bench.Typo.caption)
+                        .foregroundStyle(Bench.Palette.textQuaternary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !isInstalled, failure == nil, let download,
+                   download.bytesTotal > 0 {
                     BenchProgressBar(fraction: Double(download.bytesDone)
                                         / Double(download.bytesTotal),
                                      height: 4)
@@ -516,12 +590,22 @@ private struct OnboardingProgressRow: View {
             .strokeBorder(Bench.Palette.cardStroke, lineWidth: 1))
     }
 
+    private var statusTone: Color {
+        if isInstalled { return Bench.Palette.ok }
+        return failure == nil ? Bench.Palette.textFaint
+                              : Bench.Palette.dangerText
+    }
+
     @ViewBuilder
     private var icon: some View {
         if isInstalled {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 15))
                 .foregroundStyle(Bench.Palette.ok)
+        } else if failure != nil {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(Bench.Palette.dangerText)
         } else if download != nil {
             BenchSpinner(size: 15)
         } else {
@@ -533,6 +617,7 @@ private struct OnboardingProgressRow: View {
 
     private var status: String {
         if isInstalled { return "DONE" }
+        if failure != nil { return "FAILED" }
         guard let download else { return "WAITING" }
         switch download.state {
         case .queued: return "QUEUED"

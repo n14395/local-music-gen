@@ -115,7 +115,10 @@ def is_provisioned(family: str) -> bool:
     A venv with no marker at all is one built before markers existed. It is
     taken at its word: those are real, working runtimes, and demanding a
     reinstall of every one of them on upgrade would be a worse lie than not
-    knowing whether they have drifted.
+    knowing whether they have drifted. What that word used to cover for was a
+    half-built venv from a cancelled or failed first sync, which looks
+    identical from here; `ensure` now removes one rather than leaving it to be
+    mistaken for a pre-marker runtime.
     """
     if not os.path.exists(python_for(family)):
         return False
@@ -163,22 +166,43 @@ def ensure(family: str, progress: Callable[[str], None] | None = None,
         # sync creates the lockfile.
         has_lock = os.path.exists(os.path.join(fdir, "uv.lock"))
         cmd = [_uv(), "sync", "--quiet"] + (["--frozen"] if has_lock else [])
-        proc = subprocess.Popen(cmd, cwd=fdir, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, text=True)
-        if on_proc:
-            on_proc(proc)
+        # uv creates .venv/bin/python first and installs the torch-sized tree
+        # after, so a sync that is cancelled (the download path kills this
+        # process by design) or fails part-way leaves a husk: a venv with a
+        # python, no packages, and no marker — and is_provisioned() takes a
+        # marker-less venv at its word, because that is what a runtime built
+        # before markers existed looks like. The husk therefore read
+        # "installed" forever: the Install-runtime affordance disappeared, the
+        # download path skipped provisioning, and the next job died inside the
+        # worker with ModuleNotFoundError. So a venv that did not exist before
+        # this call is torn down if the call does not finish. `fresh` and not
+        # is_provisioned(): a stale runtime that fails to re-sync is still a
+        # working runtime, and deleting that would be the worse outcome.
+        fresh = not os.path.exists(python_for(family))
         try:
-            _, stderr = proc.communicate(timeout=1800)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            raise ProvisionError(f"uv sync for {family} timed out after 30 min")
-        if proc.returncode != 0:
-            raise ProvisionError(
-                f"uv sync failed for {family}: {(stderr or '')[-500:]}")
-        python = python_for(family)
-        if not os.path.exists(python):
-            raise ProvisionError(f"venv python missing after sync: {python}")
-        _write_marker(family)
+            proc = subprocess.Popen(cmd, cwd=fdir, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True)
+            if on_proc:
+                on_proc(proc)
+            try:
+                _, stderr = proc.communicate(timeout=1800)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise ProvisionError(f"uv sync for {family} timed out after 30 min")
+            if proc.returncode != 0:
+                raise ProvisionError(
+                    f"uv sync failed for {family}: {(stderr or '')[-500:]}")
+            python = python_for(family)
+            if not os.path.exists(python):
+                raise ProvisionError(f"venv python missing after sync: {python}")
+            _write_marker(family)
+        except BaseException:
+            # BaseException, not Exception: a cancel arrives as the uv process
+            # being killed, but the thread running this can also be taken down
+            # on its way out, and a husk left by either is the same lie.
+            if fresh:
+                remove(family)
+            raise
         print(f"envs: {family} provisioned at {python}", file=sys.stderr)
         return python

@@ -162,6 +162,19 @@ struct TextPipelineView: View {
                        lastRun: ActionRunLog.decoded(runsJSON).runs[recipe.id])
         }
         .onAppear { restore() }
+        // The editable middle stage, seeded when the run parks rather than
+        // only in `restore()`. On the normal path the page is already on
+        // screen when the caption lands, so `onAppear` fired minutes ago and
+        // nothing re-seeded the draft: the editor showed an empty box, the
+        // card that would at least have *displayed* the model's words is in
+        // the `else` branch of the same `if`, and `commitEnabled` needs a
+        // non-empty draft — so the run could not be continued at all.
+        .onChange(of: pendingEditText, initial: true) { previous, text in
+            guard let text else { return }
+            // A run that has just parked brings its own text; coming back to
+            // one already parked keeps whatever was typed into it.
+            if previous == nil || draft.isEmpty { draft = text }
+        }
         .onChange(of: source, initial: true) {
             sourceMeta = source.map {
                 ActionCopy.sourceMeta($0, library: library, parts: parts)
@@ -337,6 +350,14 @@ struct TextPipelineView: View {
         }
     }
 
+    /// What the editor should be holding while the run is parked for an edit,
+    /// and nil at every other moment — the value the seeding `onChange` above
+    /// watches.
+    private var pendingEditText: String? {
+        guard let run = activeRun, run.progress.awaitingEdit else { return nil }
+        return run.progress.editedText ?? run.progress.text ?? ""
+    }
+
     /// The editable middle stage — the whole point of two of these cards.
     @ViewBuilder
     private var editCard: some View {
@@ -496,11 +517,8 @@ struct TextPipelineView: View {
         if lyricsModelId == nil {
             lyricsModelId = settings.lyricsTranscriberModelId
         }
-        // A run that is parked waiting for an edit is the one thing this page
-        // must never lose: seed the editor with what the model wrote (or with
-        // what the user had already typed if they came back to it).
-        if let run = activeRun, run.progress.awaitingEdit, draft.isEmpty {
-            draft = run.progress.editedText ?? run.progress.text ?? ""
-        }
+        // The parked-for-an-edit draft is seeded by the `pendingEditText`
+        // observer in `body`, which covers both arriving at a parked run and
+        // a run parking while the page is up — this only ever caught the first.
     }
 }

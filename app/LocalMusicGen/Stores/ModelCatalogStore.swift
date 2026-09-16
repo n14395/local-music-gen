@@ -40,6 +40,20 @@ final class ModelCatalogStore {
     func model(id: String) -> ModelInfo? { byId[id] }
 
     var lastError: String?
+
+    /// Why the last delete, pin, download-start or runtime install was refused.
+    ///
+    /// Separate from `lastError`, which is about the *catalog fetch* and is
+    /// cleared by the next successful refresh — and every mutation ends with a
+    /// refresh, so a refusal used to survive exactly one async hop before being
+    /// wiped. A 409 MODEL_IN_USE on "Delete model files…" closed the dialog and
+    /// said nothing at all. Cleared when the next action starts, or when the
+    /// screen showing it is dismissed.
+    var lastActionError: String?
+
+    /// Dismiss the strip on the Models screen.
+    func clearActionError() { lastActionError = nil }
+
     var client: BackendClient?
 
     /// The engine's own state, read for one purpose: to tell "the catalog has
@@ -198,11 +212,14 @@ final class ModelCatalogStore {
 
     func startDownload(_ model: ModelInfo) async {
         guard let client else { return }
+        lastActionError = nil
         do {
             _ = try await client.startDownload(modelId: model.id)
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            // A refused *start* never becomes a download, so it never becomes a
+            // `downloads.failures` row either — this is the only record of it.
+            lastActionError = error.localizedDescription
         }
         await refresh()
     }
@@ -212,22 +229,24 @@ final class ModelCatalogStore {
     /// picks it up from the same events a weights download uses.
     func installRuntime(_ model: ModelInfo) async {
         guard let client else { return }
+        lastActionError = nil
         do {
             _ = try await client.startRuntimeInstall(modelId: model.id)
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastActionError = error.localizedDescription
         }
         await refresh()
     }
 
     func delete(_ model: ModelInfo) async {
         guard let client else { return }
+        lastActionError = nil
         do {
             try await client.deleteModel(model.id)
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastActionError = error.localizedDescription
         }
         await refresh()
     }
@@ -239,12 +258,13 @@ final class ModelCatalogStore {
 
     func setPin(_ model: ModelInfo, enabled: Bool) async {
         guard let client else { return }
+        lastActionError = nil
         do {
             try await client.setPin(modelId: model.id, enabled: enabled)
             lastError = nil
             onPinChanged(enabled ? model.id : nil)
         } catch {
-            lastError = error.localizedDescription
+            lastActionError = error.localizedDescription
         }
         await refresh()
     }

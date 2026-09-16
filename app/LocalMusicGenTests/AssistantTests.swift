@@ -81,9 +81,15 @@ final class AssistantTests: XCTestCase {
 
     /// An interview with no questions left is an interview that is finished,
     /// whether or not the model remembered to say so.
+    ///
+    /// `ok` is passed explicitly here because it is the point: the adapter used
+    /// to score an empty `questions` list as a malformed answer (`ok: false`)
+    /// even though its own prompt asks for exactly that when it knows enough,
+    /// and this test only passed because the `meta` helper defaults `ok: true`.
+    /// `Kind.may_be_empty` on the engine side is what makes the true case real.
     func testEmptyQuestionListMeansReady() {
         let explicit = AssistResult(meta: meta(
-            kind: "interview",
+            kind: "interview", ok: true,
             value: ["questions": .array([.object([
                         "question": .string("What mood?"),
                         "examples": .array([.string("calm")])])]),
@@ -92,8 +98,9 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(explicit?.questions.first?.examples, ["calm"])
 
         let implicit = AssistResult(meta: meta(
-            kind: "interview", value: ["questions": .array([])]))
+            kind: "interview", ok: true, value: ["questions": .array([])]))
         XCTAssertEqual(implicit?.interviewIsDone, true)
+        XCTAssertEqual(implicit?.ok, true)
     }
 
     /// The router may only send you somewhere that exists. A hallucinated id

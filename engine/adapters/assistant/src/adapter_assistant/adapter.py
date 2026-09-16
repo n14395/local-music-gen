@@ -113,7 +113,7 @@ class AssistantAdapter(ModelAdapter):
         value = extract(text)
         repaired = False
 
-        if not satisfies(value, kind.required):
+        if not satisfies(value, kind.required, kind.may_be_empty):
             # One cold retry, showing the model its own output and the shape it
             # was supposed to fit. Cheaper and far more reliable than asking the
             # app to cope with prose where it expected fields.
@@ -130,10 +130,10 @@ class AssistantAdapter(ModelAdapter):
                                cancel=cancel, label="tidying the answer")
             value2 = extract(text2)
             repaired = True
-            if satisfies(value2, kind.required):
+            if satisfies(value2, kind.required, kind.may_be_empty):
                 value, text = value2, text2
 
-        ok = satisfies(value, kind.required)
+        ok = satisfies(value, kind.required, kind.may_be_empty)
         payload = {
             "kind": kind.id,
             "ok": ok,

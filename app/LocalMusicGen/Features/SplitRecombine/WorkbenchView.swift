@@ -141,6 +141,13 @@ struct WorkbenchScreen: View {
     }
 
     @AppStorage("workbench.lens") private var lens: WorkbenchLens = .rows
+    /// The window's undo stack, so the menubar's bench commands register the
+    /// same snapshots the timeline's own edits do — see
+    /// `WorkbenchModel.registerUndo`.
+    @Environment(\.undoManager) private var undoManager
+    /// "Clear the bench" throws away every lane and every clip on it, so it
+    /// asks first. `role: .destructive` only colours the menu item.
+    @State private var confirmClear = false
     @State private var showPicker = false
     /// The timeline's pixels-per-second. Held here rather than inside the lens
     /// so the View menu's zoom items can move it — see `ClipTimelineView.zoom`.
@@ -298,6 +305,16 @@ struct WorkbenchScreen: View {
         }
         .onChange(of: model.clips) { syncPreview() }
         .onChange(of: model.lanes) { syncPreview() }
+        .confirmationDialog("Take everything off the bench?",
+                            isPresented: $confirmClear,
+                            titleVisibility: .visible) {
+            Button("Clear \(model.lanes.count) "
+                   + (model.lanes.count == 1 ? "track" : "tracks"),
+                   role: .destructive, action: clearBench)
+        } message: {
+            Text("Every lane and every clip on it goes. The parts themselves "
+                 + "stay in the Library, and ⌘Z puts the arrangement back.")
+        }
     }
 
     // MARK: top bar
@@ -349,8 +366,10 @@ struct WorkbenchScreen: View {
                 Button("Pull everything to bar 1") { pullToStart() }
                     .disabled(model.clips.isEmpty)
                 Divider()
-                Button("Clear the bench", role: .destructive, action: clearBench)
-                    .disabled(model.lanes.isEmpty)
+                Button("Clear the bench", role: .destructive) {
+                    confirmClear = true
+                }
+                .disabled(model.lanes.isEmpty)
             } label: {
                 Text("⋯")
                     .font(Bench.Typo.secondary)
@@ -542,22 +561,33 @@ struct WorkbenchScreen: View {
             canReimagine: canReimagine && !reimaginePrompt.isEmpty
                 && !reimagineModels.isEmpty,
             addPart: { showPicker = true },
+            // Every one of these mutates the arrangement, and none of them used
+            // to register anything: ⌘Z after "Remove" from the menu bar undid
+            // whatever the timeline had done before it.
             duplicate: {
                 guard let picked else { return }
+                model.registerUndo(undoManager)
                 if let new = model.duplicate(picked.id) { selection = [new.id] }
             },
-            remove: { picked.map(removeClip) },
+            remove: {
+                guard let picked else { return }
+                model.registerUndo(undoManager)
+                removeClip(picked)
+            },
             explode: {
                 guard let picked else { return }
+                model.registerUndo(undoManager)
                 model.explodeIntoSections(picked.id)
             },
             crossfade: {
                 guard let picked, let other = crossfadeCandidate(picked)
                 else { return }
+                model.registerUndo(undoManager)
                 model.crossfade(picked.id, with: other)
             },
             pullToStart: pullToStart,
-            clearBench: clearBench,
+            // The menubar asks first too — see `confirmClear`.
+            clearBench: { confirmClear = true },
             reimagine: { Task { await createReimagine() } })
     }
 
@@ -600,6 +630,7 @@ struct WorkbenchScreen: View {
     private func clearBench() {
         preview.stop()
         selection = []
+        model.registerUndo(undoManager, name: "Clear the Bench")
         for lane in model.lanes { model.removeLane(lane.id) }
     }
 
@@ -608,6 +639,7 @@ struct WorkbenchScreen: View {
     /// space someone dragged away from the front.
     private func pullToStart() {
         guard let earliest = model.clips.map(\.startBeats).min() else { return }
+        model.registerUndo(undoManager)
         model.shiftAll(byBeats: -earliest)
     }
 
@@ -1010,6 +1042,10 @@ private struct WorkbenchRowsLens: View {
     let onAddPart: () -> Void
     let onAddAILayer: () -> Void
     let onOpenTimeline: () -> Void
+    /// This lens edits the same arrangement the timeline does, so it registers
+    /// the same undo — see `WorkbenchModel.registerUndo`. Removing a lane card
+    /// here used to destroy every clip on it with nothing to press ⌘Z for.
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1028,7 +1064,10 @@ private struct WorkbenchRowsLens: View {
                             isSelected: isSelected(lane.id),
                             onSelect: { select(lane.id) },
                             onOpenTimeline: onOpenTimeline,
-                            onRemove: { model.removeLane(lane.id) })
+                            onRemove: {
+                                model.registerUndo(undoManager)
+                                model.removeLane(lane.id)
+                            })
                     }
                     HStack(spacing: 10) {
                         WorkbenchDashedAction(title: "＋ Add a part from the Library",
@@ -1065,6 +1104,7 @@ private struct WorkbenchRowsLens: View {
                     lengthSeconds: model.lengthBeats(of: clip.wrappedValue)
                         * 60.0 / (model.effectiveTargetBpm ?? 120),
                     onDuplicate: {
+                        model.registerUndo(undoManager)
                         let new = model.duplicate(clip.wrappedValue.id)
                         if let new { selection = [new.id] }
                     },
@@ -1120,6 +1160,7 @@ private struct WorkbenchRowsLens: View {
     /// Removing the last clip on a lane takes the lane with it: an empty lane
     /// draws a card with no waveform and no controls, which reads as a bug.
     private func remove(_ clip: WorkbenchModel.Clip) {
+        model.registerUndo(undoManager)
         selection.remove(clip.id)
         if model.clips(inLane: clip.laneId).count <= 1 {
             model.removeLane(clip.laneId)

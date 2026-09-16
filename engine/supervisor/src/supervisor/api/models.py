@@ -53,6 +53,8 @@ async def models_pin(request: Request, model_id: str, body: dict):
 
 @router.delete("/v1/models/{model_id}", status_code=202)
 async def models_delete(request: Request, model_id: str):
+    import anyio
+
     st = _engine(request)
     if model_id not in st.registry.models:
         return err(404, "NOT_FOUND", f"unknown model {model_id}")
@@ -60,7 +62,13 @@ async def models_delete(request: Request, model_id: str):
         return err(409, "DOWNLOAD_ACTIVE", "cancel the download first")
     if st.model_in_use(model_id):
         return err(409, "MODEL_IN_USE", "a queued or running job uses this model")
-    st.delete_model(model_id)
+    # Off the event loop, like /v1/models above: this is an rmtree of the
+    # weights (a catalog entry can be 57 GB on the external SSD) and often of
+    # the family venv too (1.4 GB of torch for ACE-Step). On the loop it froze
+    # the event stream and /healthz for the whole delete, and the app's health
+    # poller could time out, conclude the engine had crashed and SIGKILL it
+    # mid-delete. Still awaited, so the 202 means the same thing it always did.
+    await anyio.to_thread.run_sync(st.delete_model, model_id)
     st.bus.emit("models.changed", {})
     return {}
 

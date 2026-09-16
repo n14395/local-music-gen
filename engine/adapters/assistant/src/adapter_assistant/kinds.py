@@ -47,6 +47,10 @@ class Kind:
     # Keys the app genuinely needs. A response missing all of them is treated
     # as a failure worth one repair attempt.
     required: tuple[str, ...] = ()
+    # Required keys for which an empty value is a real answer, not a failure.
+    # Without this the interview's documented exit — "return an empty questions
+    # list" — was scored as malformed and reported to the app as `ok: false`.
+    may_be_empty: tuple[str, ...] = ()
     # Kinds that write music text need the dialect block; kinds that reason
     # about the library or the app do not, and are cheaper without it.
     needs_dialect: bool = True
@@ -296,7 +300,8 @@ KINDS: dict[str, Kind] = {
         shape={"questions": [{"question": "What should it feel like?",
                               "examples": ["calm", "triumphant", "eerie"]}],
                "ready": False},
-        required=("questions",), needs_dialect=False, max_tokens=600),
+        required=("questions",), may_be_empty=("questions",),
+        needs_dialect=False, max_tokens=600),
     "interview_finish": Kind(
         "interview_finish", _interview_finish,
         shape={"prompt": "…", "title": "…"},

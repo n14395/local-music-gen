@@ -29,6 +29,18 @@ final class BackendStatusStore {
     var engineVersion: String?
     var eventStreamConnected = false
     var restartCount = 0
+    /// Which engine process this is: bumped every time a new one becomes
+    /// ready, whether it replaced a crash, a deliberate Restart Engine, or
+    /// nothing at all (first launch).
+    ///
+    /// Deliberately not `restartCount`, which counts *crashes* and is shown
+    /// to the user as such. This one is identity: uploads never outlive the
+    /// engine process that took them (api-contract §7 — the engine purges
+    /// them at startup), so anything caching an upload id has to be able to
+    /// tell one engine from the next. See `EditorStore.uploadSource`.
+    private(set) var engineGeneration = 0
+
+    func noteEngineReady() { engineGeneration += 1 }
     var stderrTail: [String] = []
     /// What the warm worker holds, from worker.state events ("loading"/"loaded").
     var workerModelId: String?
@@ -47,6 +59,7 @@ final class BackendStatusStore {
     /// may be `debug`.
     func appendStderr(_ lines: [String]) {
         guard !lines.isEmpty else { return }
+        stderrLineCount += lines.count
         stderrTail.append(contentsOf: lines)
         if stderrTail.count > Self.stderrCap {
             stderrTail = Array(stderrTail.suffix(Self.stderrCap))
@@ -61,6 +74,12 @@ final class BackendStatusStore {
     func appendStderr(_ line: String) { appendStderr([line]) }
 
     private static let stderrCap = 200
+
+    /// Every line ever read off the child's stderr, not just the ones still in
+    /// the capped tail. `BackendProcessManager.connect` watches it to tell
+    /// "still provisioning" from "wedged" while it waits for the handshake:
+    /// a first run can legitimately take minutes, but it is never silent.
+    private(set) var stderrLineCount = 0
 
     /// What the launcher shim says it is doing, if it has said anything.
     ///

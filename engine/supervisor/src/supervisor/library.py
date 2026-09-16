@@ -685,6 +685,14 @@ class LibraryManager:
         Hugging Face snapshot). Copying either as files would be wrong.
         """
         for root, dirs, files in os.walk(src, followlinks=False):
+            # `snapshots` last, so an interrupted copy always leaves the
+            # harmless shape. os.walk descends in os.listdir order, which for
+            # a hub repo put snapshots before blobs about half the time — and
+            # a complete snapshot tree of symlinks over a blob store that
+            # never arrived is a model that loads as "installed" and dies in
+            # the worker. Blobs with no links into them yet is the same
+            # interruption, seen as not installed.
+            dirs.sort(key=lambda d: d == "snapshots")
             rel = os.path.relpath(root, src)
             out_root = target if rel == "." else os.path.join(target, rel)
             os.makedirs(out_root, exist_ok=True)

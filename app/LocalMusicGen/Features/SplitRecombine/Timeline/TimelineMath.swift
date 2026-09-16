@@ -14,10 +14,21 @@ struct TimelineMath: Equatable {
     static let minZoom: CGFloat = 2
     static let maxZoom: CGFloat = 200
 
+    /// The grid a bench with nothing analysed is drawn, previewed **and
+    /// rendered** on.
+    ///
+    /// One constant because it used to be three numbers: the drawing and the
+    /// preview both fell back to 120 while `JobsStore.planMix` fell back to
+    /// `offset_s = 0`, so a mix of unanalysed clips rendered with every clip
+    /// stacked at bar 1 however the timeline had been arranged — and with
+    /// nothing analysed the align bar cannot offer a tempo to set either.
+    static let fallbackBpm: Double = 120
+
     init(bpm: Double?, beatsPerBar: Double = 4, pxPerSecond: CGFloat = 20) {
         // A timeline with no analyzed material still has to draw something;
-        // 120 is the same fallback the preview uses.
-        self.bpm = (bpm ?? 120) > 0 ? (bpm ?? 120) : 120
+        // 120 is the same fallback the preview and the render use.
+        let wanted = bpm ?? Self.fallbackBpm
+        self.bpm = wanted > 0 ? wanted : Self.fallbackBpm
         self.beatsPerBar = beatsPerBar > 0 ? beatsPerBar : 4
         self.pxPerSecond = pxPerSecond
     }

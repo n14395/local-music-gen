@@ -16,6 +16,62 @@ final class DatabaseManager: Sendable {
         try DatabaseManager(queue: DatabaseQueue())
     }
 
+    /// Open the library, falling back to a scratch in-memory database when the
+    /// file will not open. `failure` is non-nil exactly when the manager
+    /// handed back is NOT the library — the caller has to say so, visibly and
+    /// for the whole session.
+    ///
+    /// Non-throwing because its one caller — the app's dependency container —
+    /// has nowhere to report a failure to, and used to spell the fallback
+    /// `(try? .inMemory())!`: a force-unwrap that crashed on launch if the
+    /// fallback failed too, next to an `assertionFailure` that says nothing at
+    /// all in a release build. A user with a corrupt `library.sqlite` got an
+    /// empty library, no message, and every write of the session thrown away
+    /// at quit.
+    ///
+    /// The broken file is deliberately left where it is: a database that will
+    /// not open today may only be locked, or on a volume mounted read-only,
+    /// and moving someone's whole library aside to make room for an empty one
+    /// is not a repair.
+    static func openLibrary(path: URL) -> (db: DatabaseManager, failure: String?) {
+        do {
+            return (try DatabaseManager(path: path), nil)
+        } catch {
+            let reason = (error as NSError).localizedDescription
+            log("could not open \(path.path): \(error)")
+            if let memory = try? inMemory() { return (memory, reason) }
+            // SQLite refusing an in-memory database as well is not something
+            // the app can work around or the user can fix, and an environment
+            // with no storage at all would fail in a different place on every
+            // screen. Stop here instead, the way `SingleInstance` does, having
+            // said why. 74 is EX_IOERR.
+            log("no database could be opened at all: \(error)")
+            FileHandle.standardError.write(Data(
+                "local-music-gen: no database could be opened (\(reason))\n".utf8))
+            exit(74)
+        }
+    }
+
+    /// One line into `Logs/app-<date>.log`. Best-effort: the failure being
+    /// logged is quite often the disk itself.
+    private static func log(_ message: String) {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        let dir = StoragePaths.appLogs
+        try? FileManager.default.createDirectory(at: dir,
+                                                 withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("app-\(df.string(from: Date())).log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = Data("\(stamp) database: \(message)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+            try? handle.close()
+        } else {
+            try? line.write(to: url)
+        }
+    }
+
     private init(queue: DatabaseQueue) throws {
         self.queue = queue
         try Self.migrator.migrate(queue)

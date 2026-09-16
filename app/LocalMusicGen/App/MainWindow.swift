@@ -102,6 +102,9 @@ struct MainWindow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
+            if let failure = env.databaseFailure {
+                StorageFailureBanner(reason: failure)
+            }
             ShellTransport(env: env, slot: transportSlot,
                            isQueueOpen: shell.queuePanel.isOpen,
                            onToggleQueue: {
@@ -1270,5 +1273,48 @@ private struct BenchFlow<Content: View>: View {
 
     var body: some View {
         FlowLayout(spacing: spacing) { content() }
+    }
+}
+
+/// The library database could not be opened, so the app is running on a
+/// scratch one.
+///
+/// Undismissable, above the transport, on every screen: it is true for the
+/// whole session, and without it every screen quietly lies about saving
+/// anything. The failure used to be an `assertionFailure` — a no-op in a
+/// release build — so the app just came up with an empty library and threw
+/// the session away at quit.
+private struct StorageFailureBanner: View {
+    let reason: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("✕")
+                .font(Bench.Typo.mono(11, .semibold))
+                .foregroundStyle(Bench.Palette.dangerText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("The library could not be opened — nothing is being saved")
+                    .font(Bench.Typo.secondaryEmphasis)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+                Text(reason + " Anything made this session is gone when the "
+                     + "app quits. The library file has been left untouched.")
+                    .font(Bench.Typo.small)
+                    .foregroundStyle(Bench.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting(
+                    [StoragePaths.database])
+            }
+            .buttonStyle(.bench(.quiet))
+        }
+        .padding(.horizontal, 20).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Bench.Palette.danger.opacity(0.12))
+        .overlay(alignment: .top) {
+            Rectangle().fill(Bench.Palette.danger.opacity(0.30))
+                .frame(height: 1)
+        }
     }
 }

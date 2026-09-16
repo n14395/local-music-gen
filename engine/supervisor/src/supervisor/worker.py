@@ -114,6 +114,13 @@ class Worker:
              "--family", family, "--parent-pid", str(os.getpid())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env=env, text=True, bufsize=1,
+            # errors="replace": text mode decodes strict UTF-8 by default, so
+            # one bad byte on stderr (a Latin-1 char in a C library's error
+            # string, a filename in a legacy encoding) raised
+            # UnicodeDecodeError in the reader thread, nobody noticed, the
+            # undrained pipe filled at 64 KB and the worker blocked in write()
+            # forever — a render stuck with no timeout and no diagnosis.
+            errors="replace",
             start_new_session=True)
         threading.Thread(target=self._read_stdout, daemon=True).start()
         threading.Thread(target=self._read_stderr, daemon=True).start()
@@ -130,49 +137,57 @@ class Worker:
 
     def _read_stdout(self) -> None:
         assert self.proc.stdout is not None
-        for line in self.proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                self._log_write(f"[bad stdout] {line}\n".encode())
-                continue
-            # memory telemetry is consumed here, not queued: nobody drains the
-            # message queue between jobs. Past the threshold we WARN the user
-            # but never stop the job (their call) — with hysteresis so a spiky
-            # allocator doesn't flood the event stream.
-            if msg.get("t") == "mem":
-                if msg.get("backend"):
-                    self.backend = msg["backend"]
-                if msg.get("working_set_bytes"):
-                    self.working_set_bytes = int(msg["working_set_bytes"])
-                # a CPU-only worker names its backend but has no byte count to
-                # report, and an absent count must not reset the last real one
-                if msg.get("bytes") is None:
+        try:
+            for line in self.proc.stdout:
+                line = line.strip()
+                if not line:
                     continue
-                self.mem_bytes = int(msg["bytes"])
-                if self.mem_limit and self.mem_bytes > self.mem_limit:
-                    if not self._mem_warned:
-                        self._mem_warned = True
-                        self._log_write(f"[mem-warning] {line}\n".encode())
-                        text = (f"generation is using ~{self.mem_bytes >> 30} GB "
-                                f"of memory (warning level "
-                                f"{self.mem_limit >> 30} GB) — the Mac may slow "
-                                f"down; consider a shorter duration or a "
-                                f"smaller model")
-                        self.bus.emit_threadsafe("engine.warning",
-                                                 {"message": text})
-                        if self.current_job_id:
-                            self.bus.emit_threadsafe(
-                                "job.log", {"job_id": self.current_job_id,
-                                            "line": text})
-                elif self.mem_limit and self.mem_bytes < int(self.mem_limit * 0.85):
-                    self._mem_warned = False
-                continue
-            self.messages.put(msg)
-        self.messages.put(None)  # EOF sentinel
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    self._log_write(f"[bad stdout] {line}\n".encode())
+                    continue
+                # memory telemetry is consumed here, not queued: nobody drains the
+                # message queue between jobs. Past the threshold we WARN the user
+                # but never stop the job (their call) — with hysteresis so a spiky
+                # allocator doesn't flood the event stream.
+                if msg.get("t") == "mem":
+                    if msg.get("backend"):
+                        self.backend = msg["backend"]
+                    if msg.get("working_set_bytes"):
+                        self.working_set_bytes = int(msg["working_set_bytes"])
+                    # a CPU-only worker names its backend but has no byte count to
+                    # report, and an absent count must not reset the last real one
+                    if msg.get("bytes") is None:
+                        continue
+                    self.mem_bytes = int(msg["bytes"])
+                    if self.mem_limit and self.mem_bytes > self.mem_limit:
+                        if not self._mem_warned:
+                            self._mem_warned = True
+                            self._log_write(f"[mem-warning] {line}\n".encode())
+                            text = (f"generation is using ~{self.mem_bytes >> 30} GB "
+                                    f"of memory (warning level "
+                                    f"{self.mem_limit >> 30} GB) — the Mac may slow "
+                                    f"down; consider a shorter duration or a "
+                                    f"smaller model")
+                            self.bus.emit_threadsafe("engine.warning",
+                                                     {"message": text})
+                            if self.current_job_id:
+                                self.bus.emit_threadsafe(
+                                    "job.log", {"job_id": self.current_job_id,
+                                                "line": text})
+                    elif self.mem_limit and self.mem_bytes < int(self.mem_limit * 0.85):
+                        self._mem_warned = False
+                    continue
+                self.messages.put(msg)
+        except Exception as e:  # noqa: BLE001 — see errors= on Popen
+            # A reader thread that dies takes the job's only end-of-stream
+            # signal with it: the sentinel used to sit after the loop, so an
+            # exception here left wait_until() blocked forever and the job
+            # stuck "generating" instead of failed.
+            self._log_write(f"[stdout reader died] {e!r}\n".encode())
+        finally:
+            self.messages.put(None)  # EOF sentinel
 
     @property
     def current_job_id(self) -> str | None:
@@ -192,16 +207,29 @@ class Worker:
 
     def _read_stderr(self) -> None:
         assert self.proc.stderr is not None
-        for line in self.proc.stderr:
-            # The file first and unconditionally: it is the record, and the
-            # mirror below is a summary of it for a pane ten lines tall.
-            self._log_write(line.encode())
-            if not self.current_job_id:
-                continue
-            self._emit_log(self.log_mirror.offer(line, time.monotonic()))
-        # The stream has ended — the worker is on its way out, and whatever it
-        # said last is the most worth having.
-        self._emit_log(self.log_mirror.flush())
+        try:
+            for line in self.proc.stderr:
+                # The file first and unconditionally: it is the record, and the
+                # mirror below is a summary of it for a pane ten lines tall.
+                self._log_write(line.encode())
+                if not self.current_job_id:
+                    continue
+                self._emit_log(self.log_mirror.offer(line, time.monotonic()))
+        except Exception as e:  # noqa: BLE001 — the pipe must stay drained
+            self._log_write(f"[stderr reader died] {e!r}\n".encode())
+            # Draining is this thread's real job: an abandoned stderr fills its
+            # 64 KB buffer and whoever is writing to fd 2 (the worker, or a
+            # native child that inherited it) blocks in write() forever, which
+            # hung the render with no timeout and no way to tell why.
+            try:
+                while self.proc.stderr.read(65536):
+                    pass
+            except Exception:  # noqa: BLE001 — closed pipe on the way out
+                pass
+        finally:
+            # The stream has ended — the worker is on its way out, and whatever
+            # it said last is the most worth having.
+            self._emit_log(self.log_mirror.flush())
 
     def _emit_log(self, lines: list[str]) -> None:
         for line in lines:

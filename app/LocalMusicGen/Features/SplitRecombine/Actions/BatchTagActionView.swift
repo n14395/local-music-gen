@@ -35,6 +35,18 @@ struct BatchTagActionView: View {
     /// hundred songs cost hundreds of round trips per redraw, and the filter
     /// field above the list redraws on every keystroke.
     @State private var untaggedIds: Set<String> = []
+    /// Every song in the library, read from the table.
+    ///
+    /// Not `library.recent`, which is the twenty newest rows. A card called
+    /// "Tag the whole library" could only see those twenty: on a library whose
+    /// newest twenty are already tagged it said "Everything in the library
+    /// already has tags" over a hundred and eighty untagged ones, with no
+    /// control that would reveal them. `untaggedIds` was already read from the
+    /// whole table — it was the list it filtered that was short.
+    @State private var everySong: [SongRecord] = []
+    /// Tracks the engine would not take, kept rather than discarded — see
+    /// `submit`.
+    @State private var failures: [String] = []
     @AppStorage("actions.lastRuns") private var runsJSON = "{}"
     /// The action log, decoded once rather than at render time.
     ///
@@ -58,7 +70,7 @@ struct BatchTagActionView: View {
     }
 
     private var songs: [SongRecord] {
-        var all = library.recent
+        var all = everySong
         if untaggedOnly {
             all = all.filter { untaggedIds.contains($0.id) }
         }
@@ -104,7 +116,7 @@ struct BatchTagActionView: View {
                             costSubline: "ONE JOB PER TRACK · THEY RUN IN TURN",
                             isEnabled: !chosen.isEmpty && model != nil
                                 && !submitting,
-                            error: jobs.lastError,
+                            error: failureMessage ?? jobs.lastError,
                             queueTitle: nil,
                             onCommit: submit)
         } rail: {
@@ -124,16 +136,35 @@ struct BatchTagActionView: View {
                 // the untagged filter would silently drop half of it.
                 if !picked.isEmpty { untaggedOnly = false }
             }
+            reloadSongs()
             refreshUntagged()
         }
         .onChange(of: untaggedOnly) { refreshUntagged() }
-        .onChange(of: library.recent) { refreshUntagged() }
+        // `recent` is not the list this page shows any more, but it still moves
+        // whenever anything lands in the library, which is the signal wanted.
+        .onChange(of: library.recent) {
+            reloadSongs()
+            refreshUntagged()
+        }
         .task { runLog = ActionRunLog.decoded(runsJSON) }
         .onChange(of: runsJSON) { runLog = ActionRunLog.decoded(runsJSON) }
     }
 
     private func refreshUntagged() {
         untaggedIds = (try? library.repository.untaggedSongIds()) ?? []
+    }
+
+    private func reloadSongs() {
+        everySong = (try? library.repository.search(.init())) ?? []
+    }
+
+    /// The tracks the engine refused, named. `jobs.lastError` alone said what
+    /// went wrong without saying it had happened to eleven of twelve tracks.
+    private var failureMessage: String? {
+        guard !failures.isEmpty else { return nil }
+        let named = failures.prefix(3).joined(separator: ", ")
+        let rest = failures.count > 3 ? " and \(failures.count - 3) more" : ""
+        return "Not queued: \(named)\(rest)."
     }
 
     private var trackList: some View {
@@ -213,23 +244,42 @@ struct BatchTagActionView: View {
         }
     }
 
+    /// One job per ticked track, and the page only leaves once they exist.
+    ///
+    /// Every submit's result used to be discarded: with the engine down, or the
+    /// tagger deleted between opening the page and pressing the button, all
+    /// twelve returned nil and the page still closed, still recorded "12
+    /// tracks" in the rail and in the gallery's "Recently used", and not one
+    /// job existed. Same rule as `SplitActionView`: record what ran, say what
+    /// did not, and stay put while anything is left to retry.
     private func submit() {
         guard let model, !chosen.isEmpty else { return }
         submitting = true
+        failures = []
         let tracks = chosen
         Task {
+            var started = 0
+            var refused: [String] = []
             for song in tracks {
-                await jobs.submitTag(modelId: model.id, ownerId: song.id,
-                                     ownerType: "song", title: song.title,
-                                     sourceURL: song.fileURL)
+                let created = await jobs.submitTag(
+                    modelId: model.id, ownerId: song.id,
+                    ownerType: "song", title: song.title,
+                    sourceURL: song.fileURL)
+                if created == nil {
+                    refused.append(song.title)
+                } else {
+                    started += 1
+                }
             }
             submitting = false
+            failures = refused
+            guard started > 0 else { return }
             runsJSON = ActionRunLog.recording(
-                .init(summary: "\(tracks.count) tracks",
+                .init(summary: "\(started) track\(started == 1 ? "" : "s")",
                       detail: model.displayName.uppercased(), at: Date(),
                       sourceId: tracks.first?.id, modelId: model.id),
                 recipeId: recipe.id, in: runsJSON)
-            onBack()
+            if refused.isEmpty { onBack() }
         }
     }
 }

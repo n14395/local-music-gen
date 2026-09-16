@@ -178,6 +178,14 @@ final class EditorStore {
     private var reversedSourceURL: URL?
     private var reversedSourceBuilding = false
     var uploadedSourceId: String?
+    /// Which engine process took `uploadedSourceId`, against
+    /// `engineGeneration`. Uploads are purged when the engine starts, so an id
+    /// from an earlier one is a 422 waiting to happen — see `uploadSource`.
+    var uploadedSourceGeneration = 0
+    /// The running engine's identity, injected by AppEnvironment beside the
+    /// other hooks. Defaults to a constant so tests and previews that never
+    /// wire it behave exactly as before.
+    var engineGeneration: () -> Int = { 0 }
     private var snippetIntents: [String: SnippetIntent] = [:]
     /// The gesture whose changes are folding into one undo step.
     private var interactionKey: String?
@@ -1239,18 +1247,19 @@ final class EditorStore {
     /// Fill the well with the selection.
     ///
     /// Nothing to do without one, and nothing to do for a zero-length one — a
-    /// selection collapsed to a point has no width to divide by. Nothing to do
-    /// either when an end does not map into the timeline at all:
-    /// `sourceToTimeline` answers nil for a source position that lands in a
-    /// deleted or silenced stretch, and there is no honest window to show for
-    /// a selection whose edge is not on screen anywhere.
+    /// selection collapsed to a point has no width to divide by.
+    ///
+    /// The selection is already in edited-timeline seconds, like everything
+    /// else here (`selectAll` uses `timelineDurationS`, `selectRegion(at:)`
+    /// uses `EditProgram.boundaries`), so it goes straight to the well. It
+    /// used to be run through `sourceToTimeline` — the wrong direction, and
+    /// the identity only on an unedited track: after a trim to 10–40 s,
+    /// selecting timeline 15–25 s zoomed to 5–15 s (the wrong music), and
+    /// selecting the first ten seconds mapped to nil twice and did nothing.
     func zoomToSelection() {
-        guard let selection, selection.length > 0, wellWidth > 0,
-              let start = EditProgram.sourceToTimeline(selection.start,
-                                                       in: segments),
-              let end = EditProgram.sourceToTimeline(selection.end,
-                                                     in: segments)
-        else { return }
+        guard let selection, selection.length > 0, wellWidth > 0 else { return }
+        let start = selection.start
+        let end = selection.end
         let span = max(0.001, end - start)
         pxPerSecond = EditorGeometry.clampZoom(wellWidth / CGFloat(span),
                                                durationS: timelineDurationS,

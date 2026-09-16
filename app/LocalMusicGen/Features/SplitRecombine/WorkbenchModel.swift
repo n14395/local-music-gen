@@ -284,7 +284,12 @@ final class WorkbenchModel {
     /// End of the last clip, or nil when nothing is placed. Sent so a fade-out
     /// that runs past the audio still renders instead of being trimmed away.
     var arrangementDurationS: Double? {
-        guard let bpm = effectiveTargetBpm else { return nil }
+        // The grid the clips were drawn and will be rendered on: with nothing
+        // analysed, `planMix` places them at the same fallback tempo, so the
+        // arrangement's end must be measured on it too — returning nil here
+        // dropped `target.duration_s` for an unanalysed bench and trimmed a
+        // fade-out past the last clip.
+        let bpm = effectiveTargetBpm ?? TimelineMath.fallbackBpm
         let endBeats = clips.filter { !$0.isMissing }
             .map { $0.startBeats + lengthBeats(of: $0) }.max()
         guard let endBeats, endBeats > 0 else { return nil }
@@ -443,5 +448,28 @@ final class WorkbenchModel {
     func apply(_ snapshot: Snapshot) {
         lanes = snapshot.lanes
         clips = snapshot.clips
+    }
+
+    /// Take the snapshot ⌘Z will put back. The model is two arrays of value
+    /// types, so undo is a swap.
+    ///
+    /// On the model rather than in one view, because three surfaces mutate the
+    /// bench and only the timeline registered anything: the lane header's `✕`
+    /// in either lens deletes every clip on the lane, and the menubar's bench
+    /// commands (duplicate, remove, explode, crossfade, pull to bar 1, clear
+    /// the bench) all went straight through. ⌘Z after one of those either did
+    /// nothing or undid the *previous* edit, which is worse.
+    func registerUndo(_ undoManager: UndoManager?,
+                      name: String = "Edit Timeline") {
+        guard let undoManager else { return }
+        let before = snapshot()
+        undoManager.registerUndo(withTarget: self) { target in
+            let after = target.snapshot()
+            target.apply(before)
+            undoManager.registerUndo(withTarget: target) { redoTarget in
+                redoTarget.apply(after)
+            }
+        }
+        undoManager.setActionName(name)
     }
 }

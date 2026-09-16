@@ -287,7 +287,37 @@ final class MenuCommandTests: XCTestCase {
                        "\u{2303}\u{2318}\u{2190}")
         XCTAssertEqual(ShortcutCatalog.playPause.display, "\u{2303}Space")
         XCTAssertEqual(ShortcutCatalog.run.display, "\u{2318}\u{23CE}")
-        XCTAssertEqual(ShortcutCatalog.delete.display, "\u{2318}\u{232B}")
+        // ⇧⌘⌫, not ⌘⌫: the latter is AppKit's `deleteToBeginningOfLine:`, and
+        // a menu key equivalent beats the field editor to it — see
+        // `ShortcutCatalog.delete`.
+        XCTAssertEqual(ShortcutCatalog.delete.display,
+                       "\u{21E7}\u{2318}\u{232B}")
+    }
+
+    /// Keys AppKit has already given to the field editor.
+    ///
+    /// A menu key equivalent is resolved by `NSApplication` before the event
+    /// reaches the responder chain, so claiming one of these takes it away from
+    /// every text field in the app — and File ▸ Delete… claimed ⌘⌫, which
+    /// `StandardKeyBinding.dict` maps to `deleteToBeginningOfLine:`. Clearing
+    /// the line while renaming a track deleted the track.
+    func testNoMenuItemClaimsAStandardTextEditingKey() {
+        let reserved: [String: String] = [
+            "\u{2318}\u{232B}": "deleteToBeginningOfLine:",
+            "\u{2325}\u{232B}": "deleteWordBackward:",
+            "\u{2303}\u{232B}": "deleteBackwardByDecomposingPreviousCharacter:",
+            "\u{2318}\u{2190}": "moveToLeftEndOfLine:",
+            "\u{2318}\u{2192}": "moveToRightEndOfLine:",
+            "\u{2318}\u{2191}": "moveToBeginningOfDocument:",
+            "\u{2318}\u{2193}": "moveToEndOfDocument:",
+        ]
+        for shortcut in ShortcutCatalog.installed {
+            if let binding = reserved[shortcut.display] {
+                XCTFail("\u{201C}\(shortcut.title)\u{201D} claims "
+                        + "\(shortcut.display), which AppKit binds to "
+                        + "\(binding) in every text field")
+            }
+        }
     }
 
     /// Every binding the menubar installs is in the sheet, because the sheet

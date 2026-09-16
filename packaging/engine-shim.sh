@@ -49,9 +49,14 @@ mkdir -p "$SRC"
 # One-time reclaim: rsync's --delete deliberately spares excluded paths, so a
 # build-src copied in by an earlier version would otherwise sit in the data dir
 # forever. Costs a stat once it is gone.
+#
+# `.venv-decoder` is LeVo's second runtime, provisioned beside its `.venv` on
+# first use. build.sh keeps it out of the bundle; this list used not to name it,
+# so --delete removed it (and its marker) on every launch and the next LeVo job
+# rebuilt several GB of wheels. Excluded here too, which is what spares it.
 rm -rf "$SRC/adapters/acestepcpp/build-src"
 rsync -a --delete \
-    --exclude '.venv' --exclude 'build-src' \
+    --exclude '.venv' --exclude '.venv-decoder' --exclude 'build-src' \
     --exclude '__pycache__' \
     "$RESOURCES/engine/" "$SRC/"
 export LOCALMUSICGEN_ADAPTERS_DIR="$SRC/adapters"

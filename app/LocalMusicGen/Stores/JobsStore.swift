@@ -474,6 +474,15 @@ final class JobsStore {
     /// Text documents that just landed (descriptions, lyrics, tags, ABC).
     /// Single-assignment like its two siblings — AppEnvironment owns it.
     var onTextIngested: ([TextDocRecord]) -> Void = { _ in }
+    /// A tracked job ended badly without an event to say so — settled by
+    /// `reconcile()` from the engine's own record, or found forgotten
+    /// entirely. Single-assignment like its siblings.
+    ///
+    /// Without it the Style Transfer workspace and all six text pipelines sat
+    /// waiting on a job id forever after an engine restart: their only
+    /// failure notification came off the `.jobFailed` / `.jobCanceled`
+    /// events, and a row settled at reconnect emits neither.
+    var onJobSettledFailed: (String, String) -> Void = { _, _ in }
     /// A finished Editor render, with why it was made. The audio artifact's
     /// file still sits in the engine's Outputs directory; the handler moves
     /// it, or the engine's retention sweep collects it eventually.
@@ -908,7 +917,13 @@ final class JobsStore {
                 source: sub.partId, role: role, gainDb: sub.gainDb,
                 pan: (sub.pan ?? 0) != 0 ? sub.pan : nil,
                 mute: sub.muted,
-                offsetS: targetBpm.map { sub.offsetBeats * 60.0 / $0 } ?? 0,
+                // Beats → seconds against the grid the timeline drew and the
+                // preview played on, which is 120 when nothing on the bench
+                // has been analysed. This used to send 0 in that case, so a
+                // mix arranged across eight bars rendered with every clip
+                // stacked at bar 1 and no way to tell from the UI.
+                offsetS: sub.offsetBeats * 60.0
+                    / (targetBpm ?? TimelineMath.fallbackBpm),
                 section: section,
                 fadeInS: (sub.fadeInS ?? options.fadeInS ?? 0) > 0
                     ? (sub.fadeInS ?? options.fadeInS) : nil,
@@ -1466,6 +1481,10 @@ final class JobsStore {
         // projection once per job. Every `await` is outside the batches.
         var toIngest: [String] = []
         var unseen: [String] = []
+        // Collected inside the batches and announced after them: the handler
+        // is a chain model that reads this store back, and `batched` may only
+        // wrap work that does not re-enter.
+        var settledFailures: [(id: String, message: String)] = []
         batched {
             var seen = Set<String>()
             for job in jobs {
@@ -1477,7 +1496,8 @@ final class JobsStore {
                 }
                 guard !row.status.isTerminal,
                       job.status != row.status else { continue }
-                settle(from: job, toIngest: &toIngest)
+                settle(from: job, toIngest: &toIngest,
+                       failures: &settledFailures)
             }
             // The listing is the engine's *live* jobs — it leaves finished
             // ones out on purpose (api/jobs.py) — so a tracked row missing
@@ -1506,20 +1526,27 @@ final class JobsStore {
                 guard let job else {
                     // Rows the engine no longer knows at all — it restarted,
                     // or history evicted them. Left alone they spin forever.
+                    let message = "the engine restarted before this job "
+                        + "finished"
                     active[id]?.status = .failed
-                    active[id]?.error = APIErrorBody(
-                        code: "ENGINE_FORGOT",
-                        message: "the engine restarted before this job "
-                            + "finished")
+                    active[id]?.error = APIErrorBody(code: "ENGINE_FORGOT",
+                                                     message: message)
                     canceling.remove(id)
                     dropBatchIngestIfFinished(id)
+                    settledFailures.append((id, message))
                     continue
                 }
                 guard let row = active[id], !row.status.isTerminal,
                       job.status != row.status else { continue }
-                settle(from: job, toIngest: &toIngest)
+                settle(from: job, toIngest: &toIngest,
+                       failures: &settledFailures)
             }
             ensureAutoClearRunning()
+        }
+        // Same news the `.jobFailed` / `.jobCanceled` events carry, for the
+        // rows that settled without one.
+        for failure in settledFailures {
+            onJobSettledFailed(failure.id, failure.message)
         }
         for id in toIngest { await ingest(jobId: id) }
     }
@@ -1528,7 +1555,8 @@ final class JobsStore {
     /// terminal event the 500-event ring no longer holds, or a stage change
     /// missed the same way. Without this a row missed at reconnect spun
     /// "generating" until retention deleted its audio (audit H2).
-    private func settle(from job: JobInfo, toIngest: inout [String]) {
+    private func settle(from job: JobInfo, toIngest: inout [String],
+                        failures: inout [(id: String, message: String)]) {
         active[job.jobId]?.progress = job.progress
         switch job.status {
         case .succeeded:
@@ -1540,11 +1568,14 @@ final class JobsStore {
             active[job.jobId]?.error = job.error
             canceling.remove(job.jobId)
             dropBatchIngestIfFinished(job.jobId)
+            failures.append((job.jobId,
+                             job.error?.message ?? "the job failed"))
         case .canceled:
             active[job.jobId]?.status = .canceled
             notifyOnLanding.remove(job.jobId)
             canceling.remove(job.jobId)
             dropBatchIngestIfFinished(job.jobId)
+            failures.append((job.jobId, "cancelled"))
         default:
             active[job.jobId]?.status = job.status
         }
@@ -1656,9 +1687,9 @@ final class JobsStore {
             }
         }
         guard let job = fetched, let result = job.result else {
-            active[jobId]?.status = .failed
-            active[jobId]?.error = APIErrorBody(
-                code: "INTERNAL", message: "finished job had no result")
+            // Through `failIngest` so a waiting chain is told: the engine
+            // reported this job as finished, so no failure event is coming.
+            failIngest(jobId, "finished job had no result")
             return
         }
         if let task = job.task, task != "generate" {
@@ -1745,13 +1776,24 @@ final class JobsStore {
         if case .generativePart(let songId, _, let kind, _)? =
             pendingContext[jobId] {
             var parts: [PartRecord] = []
-            if let output = (result.outputs ?? []).first {
+            let outputs = result.outputs ?? []
+            // `lastError` is a store-wide slot, so only a *fresh* one belongs
+            // on this row.
+            let priorError = lastError
+            if let output = outputs.first {
                 if let part = insertGenerativePart(
                     songId: songId, kind: kind,
                     filePath: output.path, sampleRate: output.sampleRate,
                     durationS: output.durationS, job: job) {
                     parts.append(part)
                 }
+            }
+            if parts.isEmpty, !outputs.isEmpty {
+                // The render finished and its audio could not be filed: a
+                // green row with no part behind it is a lie about lost work.
+                let fresh = lastError != priorError ? lastError : nil
+                failIngest(jobId, fresh ?? "the part could not be saved")
+                return
             }
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
@@ -1769,11 +1811,22 @@ final class JobsStore {
         // client that saw every event and one that saw none converge on the
         // same library.
         var fresh: [SongRecord] = []
+        var stems: [PartRecord] = []
+        var landingFailure: String?
         for (offset, output) in outputs.enumerated() {
-            if let song = landTake(job: job, index: job.batchIndex(of: offset),
-                                   output: output) {
-                fresh.append(song)
+            switch landTake(job: job, index: job.batchIndex(of: offset),
+                            output: output, stems: &stems) {
+            case .landed(let song): fresh.append(song)
+            case .alreadyLanded: break
+            case .failed(let message): landingFailure = message
             }
+        }
+        // A render whose audio could not be filed is not a success. The row
+        // used to go green with nothing behind it — no take, no "Show in
+        // library", no hint that the work was lost.
+        if let landingFailure, fresh.isEmpty {
+            failIngest(jobId, landingFailure)
+            return
         }
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
@@ -1786,6 +1839,12 @@ final class JobsStore {
         // announced when they landed, and announcing a song twice makes
         // anything counting arrivals count it twice.
         onSongsIngested(fresh)
+        // After the song, never before it. A take that ships its own stems
+        // (songgen dual-track) used to announce them from inside the landing,
+        // so the parts hook ran first and auto-run saw a song with nothing
+        // written yet — then the song hook ran and planned the very same
+        // passes again, submitting every one of them twice.
+        if !stems.isEmpty { onPartsIngested(stems) }
     }
 
     // MARK: Incremental takes
@@ -1815,33 +1874,66 @@ final class JobsStore {
         // Generative parts route through their own ingest at completion, and
         // are single-take by construction — nothing to land early.
         if case .generativePart? = pendingContext[jobId] { return }
-        guard let song = landTake(job: info, index: info.batchIndex(of: take),
-                                  output: output) else { return }
+        var stems: [PartRecord] = []
+        // A landing that fails here is not announced: the file is still in the
+        // engine's Outputs (or has been cleaned up again), so the completion
+        // pass gets the same chance and marks the row failed if it too cannot
+        // file the take.
+        guard case .landed(let song) = landTake(
+            job: info, index: info.batchIndex(of: take), output: output,
+            stems: &stems) else { return }
         active[jobId]?.producedSongIds.append(song.id)
         onSongsIngested([song])
+        if !stems.isEmpty { onPartsIngested(stems) }
     }
 
-    /// Move one take into the library under its batch's shared name, or nil if
-    /// it already landed (both the incremental event and the completion pass
-    /// offer it) or its file could not be moved.
-    private func landTake(job: JobInfo, index: Int,
-                          output: JobOutput) -> SongRecord? {
+    /// What became of one take's audio.
+    private enum TakeLanding {
+        case landed(SongRecord)
+        /// Both the incremental event and the completion pass offer it.
+        case alreadyLanded
+        case failed(String)
+    }
+
+    /// Move one take into the library under its batch's shared name. Any stems
+    /// that came with it are appended to `stems` rather than announced here —
+    /// see the hook order in `ingestGenerateBody`.
+    private func landTake(job: JobInfo, index: Int, output: JobOutput,
+                          stems: inout [PartRecord]) -> TakeLanding {
         var state = takeIngests[job.groupId]
             ?? TakeIngest(names: allocateTakeNames(
                 jobId: job.jobId,
                 count: max(job.takesInBatch, index + 1)))
         guard !state.ingested.contains(index),
-              index < state.names.count else { return nil }
+              index < state.names.count else { return .alreadyLanded }
         if index == 0, let seed = output.seedUsed { lastSeedUsed = seed }
         let title = (try? repo.uniqueTitle(state.names[index],
                                            reserved: state.usedTitles))
             ?? state.names[index]
-        guard let song = ingestOneTake(job: job, output: output,
-                                       title: title) else { return nil }
+        let landing = ingestOneTake(job: job, output: output, title: title,
+                                    stems: &stems)
+        guard case .landed(let song) = landing else { return landing }
         state.ingested.insert(index)
         state.usedTitles.insert(title)
         takeIngests[job.groupId] = state
-        return song
+        return .landed(song)
+    }
+
+    /// Mark a row the engine finished but that this side could not file.
+    ///
+    /// Nothing else will ever contradict a green row — the engine's own record
+    /// says `succeeded` — so a take whose audio could not be moved, or whose
+    /// record could not be written, has to be reported here or it is silently
+    /// lost work. Told to the chains as well, for the same reason a
+    /// `.jobFailed` event is: a step that never produced anything must not
+    /// leave its workspace waiting forever.
+    private func failIngest(_ jobId: String, _ message: String) {
+        active[jobId]?.status = .failed
+        active[jobId]?.progress = nil
+        active[jobId]?.error = APIErrorBody(code: "INGEST_FAILED",
+                                            message: message)
+        dropBatchIngestIfFinished(jobId)
+        onJobSettledFailed(jobId, message)
     }
 
     /// Let go of a batch's shared naming state once no take of it is still
@@ -1874,8 +1966,8 @@ final class JobsStore {
     /// letter is keyed to the take's position, so a take whose file could
     /// not be moved leaves a gap rather than shifting every take after it
     /// onto the wrong letter.
-    private func ingestOneTake(job: JobInfo, output: JobOutput,
-                               title: String) -> SongRecord? {
+    private func ingestOneTake(job: JobInfo, output: JobOutput, title: String,
+                               stems: inout [PartRecord]) -> TakeLanding {
         let songId = UUID().uuidString.lowercased()
         let fileName = songId + ".wav"
         let dest = StoragePaths.libraryAudio.appendingPathComponent(fileName)
@@ -1886,8 +1978,10 @@ final class JobsStore {
             try FileManager.default.moveItem(
                 at: URL(fileURLWithPath: output.path), to: dest)
         } catch {
-            lastError = "Could not move finished audio: \(error.localizedDescription)"
-            return nil
+            let message = "Could not move finished audio: "
+                + error.localizedDescription
+            lastError = message
+            return .failed(message)
         }
         // The take's own `meta` is stored alongside the params it was made
         // with. For a model that plans before it renders, that is the plan
@@ -1924,17 +2018,22 @@ final class JobsStore {
         do {
             try repo.insert(song)
         } catch {
-            lastError = "Could not save song: \(error.localizedDescription)"
-            return nil
+            // The audio is already renamed into Library/Audio under an id no
+            // row points at. Left there it is a permanent invisible orphan
+            // that StorageStore keeps counting, so it goes back out: the
+            // insert is the transaction, and this is its rollback.
+            try? FileManager.default.removeItem(at: dest)
+            let message = "Could not save song: \(error.localizedDescription)"
+            lastError = message
+            return .failed(message)
         }
         // A model that renders the song as parts hands them over with the
         // take. They land exactly where a separation job's stems land, so the
         // rest of the app — the parts list, the workbench, the player — needs
         // to know nothing about where they came from. Best-effort on purpose:
         // the song is already saved, and losing a part must not lose the take.
-        let parts = ingestTakeStems(output.stems ?? [], song: song, job: job)
-        if !parts.isEmpty { onPartsIngested(parts) }
-        return song
+        stems += ingestTakeStems(output.stems ?? [], song: song, job: job)
+        return .landed(song)
     }
 
     /// File a take's own stems as parts of the song it became.
@@ -1963,7 +2062,15 @@ final class JobsStore {
                 jobId: job.jobId, splitParamsJSON: "{}",
                 durationS: stem.durationS, sampleRate: stem.sampleRate,
                 createdAt: Date())
-            if (try? partsRepo.insert(part)) != nil { parts.append(part) }
+            if (try? partsRepo.insert(part)) != nil {
+                parts.append(part)
+            } else {
+                // No row will ever point at the file we just moved in, and an
+                // audio file the library cannot see is one StorageStore counts
+                // and nothing can play or delete.
+                try? fm.removeItem(at: dest)
+                lastError = "Could not save the stem “\(label)”."
+            }
         }
         return parts
     }
@@ -2051,12 +2158,21 @@ final class JobsStore {
             // Render task jobs (notes → SoundFont audio): the single audio
             // artifact becomes a part of the source song.
             var parts: [PartRecord] = []
-            if let artifact = artifacts.first(where: { $0.kind == "audio" }),
+            let priorError = lastError
+            let audio = artifacts.first(where: { $0.kind == "audio" })
+            if let audio,
                let part = insertGenerativePart(
                    songId: ownerSongId, kind: kind,
-                   filePath: artifact.path, sampleRate: artifact.sampleRate,
-                   durationS: artifact.durationS, job: job) {
+                   filePath: audio.path, sampleRate: audio.sampleRate,
+                   durationS: audio.durationS, job: job) {
                 parts.append(part)
+            }
+            if parts.isEmpty, audio != nil {
+                // Same rule as every other landing: audio that arrived and
+                // could not be filed is a failed row, not a green one.
+                let fresh = lastError != priorError ? lastError : nil
+                failIngest(jobId, fresh ?? "the part could not be saved")
+                return
             }
             active[jobId]?.status = .succeeded
             active[jobId]?.progress = nil
@@ -2135,6 +2251,14 @@ final class JobsStore {
                     try partsRepo.insert(part)
                     parts.append(part)
                 } catch {
+                    // The stem (and its preview) are already in Library/Parts
+                    // with no row to point at them — orphans nothing can play
+                    // or delete. Same rollback as every other landing.
+                    try? fm.removeItem(at: dest)
+                    if let previewFileName {
+                        try? fm.removeItem(at: StoragePaths.libraryParts
+                            .appendingPathComponent(previewFileName))
+                    }
                     lastError = "Could not save part: \(error.localizedDescription)"
                 }
             case "analysis":
@@ -2170,8 +2294,16 @@ final class JobsStore {
         }
         active[jobId]?.status = .succeeded
         active[jobId]?.progress = nil
-        onPartsIngested(parts)
+        // Text before parts, and the order matters for exactly one job shape:
+        // a transcribe with `emit_abc`, which lands midi parts AND the
+        // notation for the same job. Announcing the parts first handed the
+        // text pipeline's ABC stage a delivery with no text in it — it failed
+        // the run with "The model wrote nothing to go on." and dropped the job
+        // id, so the notation arriving microseconds later was ignored. Both
+        // ABC pipelines failed every time, with the ABC sitting in the
+        // Library. Nothing else produces both, so nothing else can see this.
         if !textDocs.isEmpty { onTextIngested(textDocs) }
+        onPartsIngested(parts)
     }
 
     /// A finished mix: the mixdown becomes a library song (origin
@@ -2185,9 +2317,10 @@ final class JobsStore {
         let artifacts = result.artifacts ?? []
         guard let mixdown = artifacts.first(where: { $0.kind == "audio" })
         else {
-            active[jobId]?.status = .failed
-            active[jobId]?.error = APIErrorBody(
-                code: "INTERNAL", message: "mix finished without audio")
+            // Through `failIngest` so a chain waiting on this step hears about
+            // it: the engine reported success, so no `.jobFailed` event ever
+            // comes, and the Style Transfer workspace used to wait forever.
+            failIngest(jobId, "mix finished without audio")
             return
         }
         let fm = FileManager.default
@@ -2199,10 +2332,8 @@ final class JobsStore {
                                    withIntermediateDirectories: true)
             try fm.moveItem(at: URL(fileURLWithPath: mixdown.path), to: dest)
         } catch {
-            active[jobId]?.status = .failed
-            active[jobId]?.error = APIErrorBody(
-                code: "INTERNAL",
-                message: "could not move the mix: \(error.localizedDescription)")
+            failIngest(jobId,
+                       "could not move the mix: \(error.localizedDescription)")
             return
         }
         let song = SongRecord(
@@ -2215,6 +2346,7 @@ final class JobsStore {
             seedUsed: nil, createdAt: Date(), rating: 0, notes: "",
             favorite: false, origin: "recombined", recipeId: recipeId)
         var songs: [SongRecord] = []
+        var insertFailure: String?
         do {
             try repo.insert(song)
             songs.append(song)
@@ -2229,7 +2361,20 @@ final class JobsStore {
             }
             try partsRepo.setIngredients(rows, songId: songId)
         } catch {
-            lastError = "Could not save the mix: \(error.localizedDescription)"
+            let message = "Could not save the mix: \(error.localizedDescription)"
+            lastError = message
+            insertFailure = message
+        }
+        if let insertFailure, songs.isEmpty {
+            // The mixdown is already renamed into Library/Audio with no row
+            // pointing at it: an orphan nothing can play, find or delete, and
+            // the row used to go green over it. Out it goes, and the stems
+            // below are not even attempted — they would belong to a song that
+            // does not exist. (Ingredient rows failing *after* the song went
+            // in is survivable: the mix is there, only its provenance is thin.)
+            try? fm.removeItem(at: dest)
+            failIngest(jobId, insertFailure)
+            return
         }
 
         // keep_tracks: post-processed per-role stems arrive as "stem" artifacts
@@ -2255,7 +2400,14 @@ final class JobsStore {
                 jobId: jobId, splitParamsJSON: "{}",
                 durationS: artifact.durationS,
                 sampleRate: artifact.sampleRate, createdAt: Date())
-            if (try? partsRepo.insert(part)) != nil { parts.append(part) }
+            if (try? partsRepo.insert(part)) != nil {
+                parts.append(part)
+            } else {
+                // No row, so nothing would ever point at the file just moved
+                // in — see the same rollback in `ingestTakeStems`.
+                try? fm.removeItem(at: partDest)
+                lastError = "Could not save the stem “\(label)”."
+            }
         }
 
         active[jobId]?.status = .succeeded
@@ -2507,10 +2659,9 @@ final class JobsStore {
         let fm = FileManager.default
         try? fm.createDirectory(at: StoragePaths.libraryParts,
                                 withIntermediateDirectories: true)
+        let dest = StoragePaths.libraryParts.appendingPathComponent(fileName)
         do {
-            try fm.moveItem(at: URL(fileURLWithPath: filePath),
-                            to: StoragePaths.libraryParts
-                                .appendingPathComponent(fileName))
+            try fm.moveItem(at: URL(fileURLWithPath: filePath), to: dest)
         } catch {
             lastError = "Could not move part: \(error.localizedDescription)"
             return nil
@@ -2534,6 +2685,9 @@ final class JobsStore {
             try partsRepo.insert(part)
             return part
         } catch {
+            // Rolled back like the song insert: the audio is already in
+            // Library/Parts and nothing would point at it.
+            try? fm.removeItem(at: dest)
             lastError = "Could not save part: \(error.localizedDescription)"
             return nil
         }
