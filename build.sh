@@ -318,8 +318,12 @@ bundle_engine() {
     # in bundle"). That clone now lives in the aux cache with every other
     # fetched checkout, so there is nothing here to exclude — if a `vendor/`
     # ever reappears under engine/adapters, it is Python we ship, not a cache.
+    # `.venv-decoder` is the LeVo adapter's second runtime (the PyTorch
+    # decoder bridge, provisioned beside `.venv` on first load). Same claim
+    # as `.venv`: a runtime rebuilt in place, never shipped — and its
+    # uv-managed python symlink escapes the bundle, which codesign refuses.
     rsync -a \
-        --exclude '.venv' --exclude '__pycache__' \
+        --exclude '.venv' --exclude '.venv-decoder' --exclude '__pycache__' \
         --exclude 'build-src' \
         --exclude '*.pyc' --exclude '.python-version' \
         engine/supervisor engine/protocol engine/adapters engine/catalog \

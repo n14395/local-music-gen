@@ -414,6 +414,86 @@ enum StyleTransferMode: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    // MARK: - How long the result is
+
+    /// What a job's `duration_s` actually does, for one mode on one model.
+    ///
+    /// Unlike every other control in this file, length cannot be decided from
+    /// the params a model declares: `duration_s` is a **top-level field of the
+    /// submission**, not a param, so no model declares it, nothing in
+    /// `capabilities` says whether the adapter reads it, and the generic knob
+    /// form can never show it. What it means depends on which audio input the
+    /// job carries and on what that family's adapter does with the pairing.
+    enum LengthPolicy: Equatable, Sendable {
+        /// The adapter resolves the length from the source audio and never
+        /// reads `duration_s`. A control here would be a lie.
+        case pinnedToSource
+        /// `duration_s` is the whole output. A source, where the job carries
+        /// one, conditions the render without occupying any of it.
+        case total
+        /// `duration_s` is the whole output *including* the source, which is
+        /// kept — so what the user is choosing is the tail.
+        case extendsSource
+    }
+
+    /// Families whose adapters take a src-audio job's length from the source.
+    ///
+    /// Read out of the three adapters rather than assumed, because each arrives
+    /// at it differently: `adapter_acestep` sends `duration = -1` ("src-audio
+    /// tasks lock output length to the source"); acestep.cpp's `ops_resolve_T`
+    /// takes `T = T_cover` and overwrites its own `duration` to match, so even
+    /// the number it was given is discarded; DiffSynth's
+    /// `AceStepUnit_ContextLatentBuilder` sets `max_latent_length` from
+    /// `src_latents.shape[1]`, leaving `duration` to the silence branch it did
+    /// not take.
+    ///
+    /// A new `src_audio` family that is not listed here gets a live length
+    /// control. `verify_engine.check_catalog_curation` fails when the catalog
+    /// grows one, because the alternative is a slider that silently does
+    /// nothing — which this file's own rule about `applies_when` already
+    /// rejects for the strength dial.
+    static let sourceLengthFamilies: Set<String> = [
+        "acestep", "acestepcpp", "diffsynthace",
+    ]
+
+    /// Families whose `extend_audio` keeps the source inside the result.
+    ///
+    /// Stable Audio 3 continues by inpainting everything past the source's end,
+    /// so the source is in the output and `duration_s` is the total of both.
+    /// InspireMusic does not: it conditions on a ~5 s tail clip and returns new
+    /// audio only, so its `duration_s` is the continuation's own length. The
+    /// same mode, the same wire key, two different meanings for the number.
+    static let extendKeepsSourceFamilies: Set<String> = ["stableaudio3"]
+
+    /// What `duration_s` will mean for this run.
+    ///
+    /// `hasSource` is about the **job**, not the workspace: a mode whose source
+    /// key the chosen model does not declare never sends the track at all —
+    /// `wireParams` filters it out and the screen already says the track is
+    /// ignored — and on a job with no audio in it the length is simply the
+    /// length of the output.
+    func lengthPolicy(for model: ModelInfo?, hasSource: Bool) -> LengthPolicy {
+        guard let model, hasSource,
+              model.capabilities.params.contains(where: {
+                  $0.key == sourceAudioKey })
+        else { return .total }
+        switch sourceAudioKey {
+        case "src_audio":
+            return Self.sourceLengthFamilies.contains(model.family)
+                ? .pinnedToSource : .total
+        case "extend_audio":
+            return Self.extendKeepsSourceFamilies.contains(model.family)
+                ? .extendsSource : .total
+        default:
+            // `init_audio` and `melody_audio` are conditioning, not content:
+            // Stable Audio renoises towards the prompt for as long as it is
+            // asked to, and MusicGen's chroma is a steer over a clip whose
+            // length it does not borrow. The source steers the render without
+            // bounding it.
+            return .total
+        }
+    }
+
     // MARK: - Which models can serve it
 
     /// What makes a model able to run this mode, expressed **only** against

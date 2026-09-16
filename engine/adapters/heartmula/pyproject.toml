@@ -1,0 +1,35 @@
+[project]
+name = "adapter-heartmula"
+version = "0.1.0"
+description = "HeartMuLa lyrics+tags-to-song (3B Llama-style LM + HeartCodec, 48 kHz stereo, Apache-2.0) for the LocalMusicGen engine"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    # heartlib pins its own stack (torch <2.11, transformers 4.57,
+    # torchtune 0.4, torchao 0.9, bitsandbytes 0.49 — all with macOS arm64
+    # or pure wheels). Upstream says "CUDA required"; the code disagrees:
+    # every device flag is a plain torch.device and the community MPS/MLX
+    # ports run it fine.
+    "heartlib @ https://github.com/HeartMuLa/heartlib/archive/3783bdb8441f2c298b1e64c8651173aac200361c.tar.gz",
+    "soundfile>=0.12",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+heartmula = "adapter_heartmula.adapter:HeartMuLaAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[tool.hatch.metadata]
+# heartlib rides in as a pinned GitHub tarball (a direct reference).
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_heartmula"]

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import glob
 import os
+import random
 import secrets
 import sys
 import tempfile
@@ -255,11 +256,20 @@ class InspireMusicAdapter(ModelAdapter):
         # Upstream ships the seeding helper and its CLI never calls it, which
         # is why every take was a fresh draw. Same process, same RNGs (torch,
         # numpy and Python's own), set before `inference()` runs.
-        from inspiremusic.utils.common import set_all_random_seed
+        import numpy
+
+        from inspiremusic.utils import common as im_common
+
+        # common.py uses `random` and `np` (the seed helper, plus the
+        # keep_rhythm/keep_harmony samplers) without importing either —
+        # NameError on first call. Supply the modules into its namespace
+        # rather than editing the vendored tree, which a re-stage would wipe.
+        im_common.random = random
+        im_common.np = numpy
 
         seed = params.get("seed")
         seed = int(seed) if seed is not None else secrets.randbelow(2 ** 32)
-        set_all_random_seed(seed)
+        im_common.set_all_random_seed(seed)
         extend = params.get("extend_audio")
         task = ("continuation" if extend and os.path.isfile(extend)
                 else "text-to-music")

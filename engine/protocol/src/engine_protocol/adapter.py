@@ -21,10 +21,10 @@ from typing import Protocol
 # move or clear — which is the bug this list exists to have fixed.
 AUX_DIRS = ("audio-separator-models", "bsrnn-weights", "btc-chords",
             "bytedance-piano", "diffrhythm2", "essentia-models",
-            "inspiremusic", "localmusic-soundfonts", "magenta-home",
-            "mossmusic", "msst", "msst-weights", "mt3-checkpoints",
-            "rave-models", "seedvc", "songbloom", "torch-cache", "yingmusic",
-            "yue")
+            "heartmula", "inspiremusic", "levo", "localmusic-soundfonts",
+            "magenta-home", "mossmusic", "msst", "msst-weights",
+            "mt3-checkpoints", "rave-models", "seedvc", "songbloom",
+            "torch-cache", "yingmusic", "yue")
 
 
 # Directories in the aux root that hold the *user's* files rather than weights

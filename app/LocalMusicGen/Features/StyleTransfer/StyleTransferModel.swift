@@ -36,6 +36,11 @@ final class StyleTransferModel {
             // distance from the source — so carrying the number across would
             // silently change the run.
             styleAmount = nil
+            // Same argument, and sharper: the length control changes unit
+            // between modes. 30 carried from "Continue it" into "Keep the
+            // shape" would turn "add half a minute" into "render half a
+            // minute in total".
+            lengthS = nil
             if !mode.trackNeed.isNeeded { track = nil }
             // A preset names one transformation. Once the user has moved off
             // it, this is no longer "Restyle this song" — and leaving the
@@ -67,6 +72,18 @@ final class StyleTransferModel {
     /// untouched means the model's own default goes on the wire rather than a
     /// number the app invented.
     var styleAmount: Double?
+
+    /// How long the result should be, in seconds, or `nil` for the workspace's
+    /// own derivation.
+    ///
+    /// What the number *means* is the mode's `LengthPolicy`: a whole output
+    /// length where the source only conditions the render, the tail to add
+    /// where the source is kept inside the output. Cleared on a mode change for
+    /// the same reason `styleAmount` is — 30 s of total and 30 s of tail are
+    /// not the same run — and deliberately **kept** across a model change,
+    /// where it is clamped to the new model's window instead, so comparing two
+    /// models at the same length does not mean retyping it.
+    var lengthS: Double?
 
     /// Which stems the `stems` mode preserves literally.
     var keptStems: Set<String> = []
@@ -172,6 +189,7 @@ final class StyleTransferModel {
         reference != nil || !prompt.isEmpty || !lyrics.isEmpty
             || !sourceCaption.isEmpty || !overrides.isEmpty
             || !keptStems.isEmpty || styleAmount != nil || !outputName.isEmpty
+            || lengthS != nil
     }
 
     var isChainRunning: Bool {
@@ -264,6 +282,96 @@ final class StyleTransferModel {
         return dial.defaultStyleAmount(spec: mode.dialSpec(for: model(in: models)))
     }
 
+    // MARK: - Length
+
+    /// The tail a continuation adds when the user has not said otherwise.
+    ///
+    /// This was the hardcoded `+ 30` inside `requestedDurationS`, and it is
+    /// still where the control starts. What changed is that it is a starting
+    /// point rather than the only length a continuation could ever have.
+    static let defaultTailS: Double = 30
+
+    /// The shortest tail worth asking for.
+    ///
+    /// Stable Audio 3 refuses a continuation outright once the source sits
+    /// within `MIN_EXTEND_TAIL_S` — 5 s — of its window: "source is 118s —
+    /// continuation needs it under 115s". Matching the number here turns that
+    /// `RuntimeError`, which used to arrive after the upload and the model
+    /// load, into a sentence on the commit bar before anything is queued.
+    static let minTailS: Double = 5
+
+    /// What `duration_s` will mean for the run as currently configured.
+    func lengthPolicy(in models: [ModelInfo]) -> StyleTransferMode.LengthPolicy {
+        mode.lengthPolicy(for: model(in: models), hasSource: source != nil)
+    }
+
+    /// The range the length control may travel, in the unit its policy implies,
+    /// or `nil` when there is no control to offer.
+    ///
+    /// `nil` for a pinned length, where the source decides and a slider would
+    /// be decoration; and for a continuation the model has no room for, which
+    /// is a reason rather than a clamp — a tail control from 5 s down to 2 s is
+    /// not a control.
+    func lengthBounds(for model: ModelInfo,
+                      policy: StyleTransferMode.LengthPolicy)
+        -> ClosedRange<Double>? {
+        let duration = model.capabilities.duration
+        switch policy {
+        case .pinnedToSource:
+            return nil
+        case .total:
+            guard duration.maxS > duration.minS else { return nil }
+            return duration.minS...duration.maxS
+        case .extendsSource:
+            // A tail, so the ceiling is what is left of the model's window once
+            // the source inside the output has taken its share.
+            let headroom = duration.maxS - (source?.durationS ?? 0)
+            guard headroom >= Self.minTailS else { return nil }
+            return Self.minTailS...headroom
+        }
+    }
+
+    /// Where the control sits: the user's number held inside the bounds, or the
+    /// value the workspace would have sent without one.
+    func effectiveLengthS(for model: ModelInfo,
+                          policy: StyleTransferMode.LengthPolicy) -> Double {
+        // Never by way of `requestedDurationS`, which reads this back: the
+        // fallback has to stand on its own or the two recurse.
+        let fallback = policy == .extendsSource
+            ? Self.defaultTailS : model.capabilities.duration.defaultS
+        guard let bounds = lengthBounds(for: model, policy: policy) else {
+            return fallback
+        }
+        return min(max(lengthS ?? fallback, bounds.lowerBound),
+                   bounds.upperBound)
+    }
+
+    /// The total length of the audio this run will produce — what `duration_s`
+    /// carries, and what the render estimate is drawn from.
+    ///
+    /// Lives beside the document rather than beside the submission because the
+    /// screen reads it for every model in the picker, long before anything is
+    /// sent.
+    func requestedDurationS(model: ModelInfo) -> Double {
+        let duration = model.capabilities.duration
+        let policy = mode.lengthPolicy(for: model, hasSource: source != nil)
+        switch policy {
+        case .pinnedToSource:
+            // The adapter resolves this from the source and never reads what we
+            // send. Sending the source's own length anyway is what makes the
+            // estimate on the commit bar an estimate of the render that will
+            // actually happen: the model's nominal default used to stand in,
+            // which quoted a four-minute restyle as sixty seconds of work.
+            return min(duration.maxS, source?.durationS ?? duration.defaultS)
+        case .total:
+            return effectiveLengthS(for: model, policy: policy)
+        case .extendsSource:
+            // The user chose a tail; the wire wants the total.
+            return min(duration.maxS, (source?.durationS ?? 0)
+                       + effectiveLengthS(for: model, policy: policy))
+        }
+    }
+
     // MARK: - Readiness
 
     /// Why the workspace cannot run yet, in the user's terms, or nil when it
@@ -279,6 +387,19 @@ final class StyleTransferModel {
         }
         if model(in: models) == nil {
             return mode.unavailableReason(models) ?? "No model can run this yet."
+        }
+        // Said here rather than discovered by the adapter: a continuation whose
+        // source already fills the model's window has nowhere to put the new
+        // audio, and upstream's own refusal arrives only after the upload and
+        // the model load.
+        if let chosen = model(in: models),
+           mode.lengthPolicy(for: chosen, hasSource: source != nil)
+               == .extendsSource,
+           lengthBounds(for: chosen, policy: .extendsSource) == nil {
+            return "\(chosen.displayName) renders at most "
+                + "\(Int(chosen.capabilities.duration.maxS)) s — not enough "
+                + "room to continue a \(Int(source?.durationS ?? 0)) s track. "
+                + "Pick a model with a longer window, or a shorter source."
         }
         if mode.needsPrompt, prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty {
@@ -457,6 +578,7 @@ final class StyleTransferModel {
         if let amount = preset.styleAmount { styleAmount = amount }
         lyrics = ""
         overrides = [:]
+        lengthS = nil
         keptStems = []
         // The stem list belongs to the source, so a preset that brought a new
         // one has invalidated it. Left stale, the chain would plan against
@@ -505,6 +627,7 @@ final class StyleTransferModel {
         outputName = ""
         track = nil
         styleAmount = nil
+        lengthS = nil
         keptStems = []
         overrides = [:]
         chain = nil

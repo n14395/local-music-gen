@@ -531,6 +531,8 @@ struct StyleTransferScreen: View {
 
         strengthCard
 
+        lengthCard
+
         if model.wantsLyrics(in: models), let chosen {
             ActionOptionsCard(eyebrow: "LYRICS") {
                 LyricsEditor(lyrics: $model.lyrics,
@@ -582,6 +584,135 @@ struct StyleTransferScreen: View {
                                      dial.wireValue(styleAmount: amount,
                                                     spec: spec)))
             }
+        }
+    }
+
+    // MARK: Length
+
+    /// How long the result will be: a control where the engine honours the
+    /// number, a plain statement where it does not.
+    ///
+    /// There was no length anywhere on this screen before. `duration_s` is a
+    /// top-level field of the submission rather than a model param, so it could
+    /// not appear under ADVANCED with the other knobs either — `knobSpecs` can
+    /// only offer what a model declares, and no model declares this — and the
+    /// workspace sent the chosen model's nominal default. On the families that
+    /// read the length off the source that was invisible and harmless.
+    /// Everywhere else it truncated in silence: a three-minute track through
+    /// "Keep the melody" came back ten seconds long, and the only evidence was
+    /// the length printed on the take afterwards.
+    @ViewBuilder
+    private var lengthCard: some View {
+        if let chosen, !model.mode.isChain {
+            let policy = model.mode.lengthPolicy(for: chosen,
+                                                 hasSource: model.source != nil)
+            ActionOptionsCard(eyebrow: policy == .extendsSource
+                                  ? "HOW MUCH TO ADD" : "LENGTH") {
+                if let bounds = model.lengthBounds(for: chosen, policy: policy) {
+                    lengthControl(chosen, policy: policy, bounds: bounds)
+                } else if policy == .extendsSource {
+                    // The same refusal the commit bar is carrying, said where
+                    // the control would have been.
+                    ActionFootnote(
+                        text: "\(chosen.displayName) renders at most "
+                            + "\(spokenLength(chosen.capabilities.duration.maxS))"
+                            + ", which leaves no room to add to a source this "
+                            + "long.",
+                        tone: Bench.Palette.warn)
+                } else {
+                    ActionFootnote(text: pinnedLengthNote(chosen))
+                }
+            }
+        }
+    }
+
+    private func lengthControl(_ chosen: ModelInfo,
+                               policy: StyleTransferMode.LengthPolicy,
+                               bounds: ClosedRange<Double>) -> some View {
+        let value = model.effectiveLengthS(for: chosen, policy: policy)
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(policy == .extendsSource ? "Tail" : "Length")
+                    .font(Bench.Typo.secondary)
+                    .foregroundStyle(Bench.Palette.textQuaternary)
+                Spacer(minLength: 8)
+                // Formatted exactly as Generate's own Length readout, which is
+                // the control this one is the missing half of.
+                Text(value < 60 ? String(format: "%.1f s", value)
+                                : "\(Int(value)) s")
+                    .font(Bench.Typo.valueLarge)
+                    .foregroundStyle(Bench.Palette.textPrimary)
+            }
+            DurationBar(value: Binding(get: { value },
+                                       set: { model.lengthS = $0 }),
+                        range: bounds)
+            HStack {
+                Text("MIN \(Int(bounds.lowerBound)) S")
+                Spacer(minLength: 8)
+                // "Room for" rather than "max": on a tail the ceiling is not
+                // the model's window, it is what the source has left of it.
+                Text(policy == .extendsSource
+                     ? "ROOM FOR \(Int(bounds.upperBound)) S"
+                     : "MAX \(Int(bounds.upperBound)) S")
+            }
+            .font(Bench.Typo.mono(10))
+            .foregroundStyle(Bench.Palette.textFaintest)
+            if let note = liveLengthNote(chosen, policy: policy, value: value) {
+                ActionFootnote(text: note)
+            }
+        }
+    }
+
+    /// Seconds in prose: `30 s`, `3 min 12 s`.
+    ///
+    /// `ActionFormat.length` is for the mono lines that sit a length beside a
+    /// BPM, and deliberately never rolls over to minutes — which reads wrong
+    /// mid-sentence about a four-minute song.
+    private func spokenLength(_ seconds: Double) -> String {
+        let total = Int(max(0, seconds.rounded()))
+        if total < 90 { return "\(total) s" }
+        let minutes = total / 60
+        let rest = total % 60
+        return rest == 0 ? "\(minutes) min" : "\(minutes) min \(rest) s"
+    }
+
+    /// Why the length is not on offer: the adapter takes it from the audio.
+    private func pinnedLengthNote(_ chosen: ModelInfo) -> String {
+        let length = spokenLength(model.requestedDurationS(model: chosen))
+        return "\(chosen.displayName) reads the length off the track you gave "
+            + "it, so this run will be \(length) — the same as the source. "
+            + "There is nothing to set."
+    }
+
+    /// What the number the user is holding will actually produce.
+    private func liveLengthNote(_ chosen: ModelInfo,
+                                policy: StyleTransferMode.LengthPolicy,
+                                value: Double) -> String? {
+        switch policy {
+        case .pinnedToSource:
+            return nil
+        case .extendsSource:
+            let sourceS = model.source?.durationS ?? 0
+            let total = model.requestedDurationS(model: chosen)
+            return "\(spokenLength(sourceS)) of source plus "
+                + "\(spokenLength(value)) of new audio — \(spokenLength(total)) "
+                + "in all. The source is kept inside the result rather than "
+                + "re-rendered."
+        case .total:
+            // The case worth explaining: the track is in the job, steering the
+            // render, and has no say in how long it runs.
+            guard let source = model.source, sourceReaches(chosen) else {
+                return nil
+            }
+            let sourceS = source.durationS ?? 0
+            guard sourceS > 0 else { return nil }
+            return value + 0.5 < sourceS
+                ? "Your track steers the render without setting its length, so "
+                    + "this stops \(spokenLength(sourceS - value)) short of the "
+                    + "\(spokenLength(sourceS)) source."
+                : "Your track steers the render without setting its length — "
+                    + "this asks for \(spokenLength(value)) of output against a "
+                    + "\(spokenLength(sourceS)) source."
         }
     }
 

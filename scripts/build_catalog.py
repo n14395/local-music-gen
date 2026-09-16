@@ -516,6 +516,9 @@ PARAM_GROUPS = {
     "lm_temperature": SAMPLING,
     "lm_cfg_scale": SAMPLING,
     "lm_top_p": SAMPLING,
+    # YuE2's chain-of-thought score planning: a switch on how generation
+    # runs, the same claim `thinking` makes for ACE-Step.
+    "cot": SAMPLING,
     # Which fields the LM is allowed to invent. A gate on its reasoning, so it
     # belongs with `thinking` rather than with the values themselves.
     "use_cot_metas": SAMPLING,
@@ -1102,6 +1105,14 @@ ACE_CORE = "ACE-Step/Ace-Step1.5"
 MINIMAX_LICENSE = {"name": "MiniMax-Music3 Community License",
                    "commercial_use": False, "requires_hf_token": False,
                    "url": "https://huggingface.co/MiniMaxAI/MiniMax-Music3"}
+
+# Tencent's own custom terms, read from the LICENSE preserved in the v1 code
+# mirror: "academic, research and education purposes" only — stricter than
+# any CC-NC. The official repos are withdrawn; the terms still travel with
+# the weights.
+LEVO_LICENSE = {"name": "Tencent SongGeneration License (non-commercial)",
+                "commercial_use": False, "requires_hf_token": False,
+                "url": "https://huggingface.co/lglg666/SongGeneration-v2-large"}
 
 
 def minimax_mlx_entry(id_, repo, name, fmt, min_ram_gib, est, desc, notes):
@@ -2832,6 +2843,229 @@ NEW_ENTRIES = [
                 "for A/B curiosity. Shares the autoencoder files with it, "
                 "so installing both costs only the second 7.8 GB .pt.",
           settings={"variant": "songbloom_full_150s", "device": "mps"}),
+    # ---- YuE2 (AR-NAR MoT lyrics-to-song) --------------------------------
+    entry("yue2-3b", "yue2",
+          # Patterns keep the demo mp3s and the bundled wheels out of the
+          # library; the pipeline's integrity check only covers the
+          # safetensors (against weights_manifest.json) and config.json.
+          [{"repo_id": "m-a-p/YuE2-3B", "gated": False,
+            "allow_patterns": ["model.safetensors", "weights_manifest.json",
+                               "config.json", "generation_config.json",
+                               "yue2_generation_config.json",
+                               "qwen.tiktoken", "LICENSE"]},
+           {"repo_id": "m-a-p/YuE2-Vae", "gated": False,
+            "allow_patterns": ["model.safetensors", "weights_manifest.json",
+                               "config.json", "LICENSE"]}],
+          "YuE2 (lyrics → song)",
+          "The YuE 1 successor: one 3.6B model that PLANS the song as a "
+          "score first (chain-of-thought ABC, melody and chords), then "
+          "sings it — 48 kHz stereo, up to six minutes. The score makes "
+          "takes editable and coverable in a way no other song model here "
+          "offers.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "requires_lyrics": True,
+              "duration": {"min_s": 30, "max_s": 360, "default_s": 120},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 10.0,
+              "lyrics_hint": ("Sections as [Verse] / [Chorus] / [Bridge] "
+                              "tags, plain lines under each. The prompt "
+                              "carries language, genre, voice, "
+                              "instrumentation and BPM."),
+              "params": [
+                  {"key": "cot", "type": "enum", "label": "Score planning",
+                   "default": "full", "nullable": False,
+                   "choices": [{"value": "full",
+                                "label": "Full (melody + chords)"},
+                               {"value": "melody", "label": "Melody only"},
+                               {"value": "off", "label": "Off (direct)"}],
+                   "help": "YuE2 writes an ABC score before it sings — "
+                           "chain-of-thought for music. Full plans melody "
+                           "and chords and gives the most structure; "
+                           "melody only is upstream's setting for covers; "
+                           "off skips the plan and generates straight "
+                           "from the text"},
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": None, "nullable": True,
+                   "min": 0.0, "max": 20.0, "step": 0.5,
+                   "help": "How hard the song is pulled toward prompt and "
+                           "lyrics. Empty uses upstream's per-mode default "
+                           "(1.0 with a score, 1.01 without); higher "
+                           "follows the text more literally at the cost "
+                           "of naturalness"},
+                  seed_param(),
+              ],
+          },
+          16, "slow", CC_NC,
+          settings={"device": "mps"},
+          notes="The upstream README says Linux + NVIDIA, but the code "
+                "ships a real MPS path (device ladder, GQA fallback, "
+                "seeded sampling routed through CPU so seeds reproduce on "
+                "the GPU) — the adapter runs it in-process, no vendored "
+                "checkout. Weights CC-BY-NC-4.0, code Apache-2.0. The "
+                "speed estimate is a guess until a render lands; the "
+                "duration slider caps the token budget, the model ends "
+                "the song when the lyrics do."),
+    # ---- HeartMuLa (Apache-2.0 lyrics-to-song) ---------------------------
+    entry("heartmula-3b", "heartmula",
+          # Three snapshots the adapter assembles into the one checkpoint
+          # folder heartlib expects (HeartMuLa-oss-3B/, HeartCodec-oss/,
+          # tokenizer.json, gen_config.json).
+          ["HeartMuLa/HeartMuLaGen",
+           "HeartMuLa/HeartMuLa-oss-3B-happy-new-year",
+           "HeartMuLa/HeartCodec-oss-20260123"],
+          "HeartMuLa (lyrics → song)",
+          "A 3B Llama-style song model over HeartCodec's 12.5 Hz frames — "
+          "48 kHz stereo, up to six minutes, showcased in five languages. "
+          "The only song model in the catalog whose code AND weights are "
+          "plain Apache-2.0.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "requires_lyrics": True,
+              "duration": {"min_s": 10, "max_s": 360, "default_s": 120},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 6.0,
+              "lyrics_hint": ("Sections as [Intro] / [Verse] / [Prechorus] "
+                              "/ [Chorus] / [Bridge] / [Outro] tags, plain "
+                              "lines under each. The prompt is the style "
+                              "tags — comma-separated words like "
+                              "\"piano, happy, female vocal\"."),
+              "params": [
+                  {"key": "cfg_scale", "type": "float", "label": "CFG scale",
+                   "default": 1.5, "nullable": False,
+                   "min": 1.0, "max": 5.0, "step": 0.1,
+                   "help": "How hard the song is pulled toward the tags "
+                           "and lyrics. 1.5 is upstream's default; 1.0 "
+                           "turns guidance off and halves the compute"},
+                  {"key": "top_k", "type": "int", "label": "Top-k",
+                   "default": 50, "nullable": False, "min": 1, "max": 500},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 1.0, "nullable": False,
+                   "min": 0.1, "max": 2.0, "step": 0.05,
+                   "help": "How adventurous the sampling is. Below 1 plays "
+                           "it safe, above 1 takes chances"},
+                  seed_param(),
+              ],
+          },
+          24, "medium", APACHE,
+          settings={"device": "mps"},
+          notes="Upstream says \"CUDA required\", and is wrong: the code "
+                "is plain PyTorch with device arguments, the community "
+                "MPS/ComfyUI and MLX ports run it on Apple Silicon, and "
+                "the one Mac stumble on record (a missing triton) is a "
+                "caught, non-fatal import inside torchtune. The fp32 "
+                "shards load as bf16 LM + fp32 codec, ~14 GB resident. "
+                "The speed estimate "
+                "is a guess until a render lands. The 7B from the paper "
+                "was never released; 3B happy-new-year is upstream's "
+                "recommended checkpoint."),
+    # ---- LeVo 2 / SongGeneration-v2 (MLX + decoder bridge) ---------------
+    entry("levo-v2-large", "levo",
+          # Two halves: the mlx-community LM conversion, and the decoder
+          # assets from the paper author's mirror (official Tencent repos
+          # withdrawn 2026). Patterns take the septoken tokenizer, the VAE
+          # and the code the decode path imports — not the 1rvq/content-vec/
+          # demucs weights the prompt-audio encoder would want (that route
+          # is not wired up).
+          [{"repo_id": "mlx-community/SongGeneration-v2-large",
+            "gated": False},
+           {"repo_id": "lglg666/SongGeneration-Runtime", "gated": False,
+            "allow_patterns": ["ckpt/model_septoken/*", "ckpt/vae/*",
+                               "third_party/Qwen2-7B/*",
+                               "third_party/stable_audio_tools/*",
+                               "third_party/demucs/models/*",
+                               "third_party/demucs/__init__.py",
+                               "third_party/demucs/run.py"]}],
+          "LeVo 2 large (lyrics → song)",
+          "Tencent's SongGeneration-v2: full songs with coherent vocals "
+          "and band from tagged lyrics plus a text description — or a "
+          "wordless instrumental when the lyrics box is left empty. "
+          "48 kHz stereo, up to 4½ minutes, as the community MLX port: "
+          "tokens on the Apple GPU, then the official Flow1dVAE decoder "
+          "bridge. Research/education license only.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 10, "max_s": 270, "default_s": 60},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 16.0,
+              "lyrics_hint": ("Sections separated by ' ; ', lines by '.': "
+                              "\"[verse] line one. line two ; [chorus] "
+                              "hook line\". Instrumental sections carry "
+                              "no words: [intro-short/medium/long], "
+                              "[inst-…], [outro-…]. Leave the box empty "
+                              "for a full instrumental. The prompt is the "
+                              "description — genre, voice, mood, "
+                              "instruments, BPM."),
+              "params": [
+                  {"key": "top_k", "type": "int", "label": "Top-k",
+                   "default": 50, "nullable": False, "min": 1, "max": 500,
+                   "help": "Sample each step from only the k most likely "
+                           "tokens. Small keeps it tight and predictable; "
+                           "large lets rarer, stranger choices through"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 0.9, "nullable": False,
+                   "min": 0.1, "max": 2.0, "step": 0.05,
+                   "help": "How adventurous the sampling is. 0.9 is the "
+                           "port's proven setting; higher takes chances"},
+                  seed_param(),
+              ],
+          },
+          24, "slow", LEVO_LICENSE,
+          notes="A salvage: Tencent's GitHub 404s and their HF repo went "
+                "private, so the LM is the mlx-community bf16 conversion "
+                "and the decoder assets ride the paper author's mirror. "
+                "First load provisions a separate decoder venv (torch 2.6 "
+                "stack, conflicts with mlx-lm's — upstream's own README "
+                "uses two venvs) and decode is the slow half: ~6 s per "
+                "song second on the port author's measurements, LM "
+                "unmeasured for large. Reference-audio conditioning and "
+                "the v2-fast checkpoint were never published."),
+    entry("levo-v2-medium", "levo",
+          [{"repo_id": "mlx-community/SongGeneration-v2-medium",
+            "gated": False},
+           {"repo_id": "lglg666/SongGeneration-Runtime", "gated": False,
+            "allow_patterns": ["ckpt/model_septoken/*", "ckpt/vae/*",
+                               "third_party/Qwen2-7B/*",
+                               "third_party/stable_audio_tools/*",
+                               "third_party/demucs/models/*",
+                               "third_party/demucs/__init__.py",
+                               "third_party/demucs/run.py"]}],
+          "LeVo 2 medium (lyrics → song)",
+          "The smaller SongGeneration-v2 checkpoint — the one whose MLX "
+          "timings are actually measured (a 12 s sample: about a minute "
+          "of tokens plus 73 s of decode). Same pipeline and license as "
+          "large.",
+          {
+              "supports_lyrics": True, "instrumental_only": False,
+              "duration": {"min_s": 10, "max_s": 270, "default_s": 60},
+              "sample_rate": 48000, "outputs_per_job_max": 1,
+              "est_seconds_per_audio_second": 11.0,
+              "lyrics_hint": ("Sections separated by ' ; ', lines by '.': "
+                              "\"[verse] line one. line two ; [chorus] "
+                              "hook line\". Instrumental sections carry "
+                              "no words: [intro-short/medium/long], "
+                              "[inst-…], [outro-…]. Leave the box empty "
+                              "for a full instrumental. The prompt is the "
+                              "description — genre, voice, mood, "
+                              "instruments, BPM."),
+              "params": [
+                  {"key": "top_k", "type": "int", "label": "Top-k",
+                   "default": 50, "nullable": False, "min": 1, "max": 500,
+                   "help": "Sample each step from only the k most likely "
+                           "tokens. Small keeps it tight and predictable; "
+                           "large lets rarer, stranger choices through"},
+                  {"key": "temperature", "type": "float",
+                   "label": "Temperature", "default": 0.9, "nullable": False,
+                   "min": 0.1, "max": 2.0, "step": 0.05,
+                   "help": "How adventurous the sampling is. 0.9 is the "
+                           "port's proven setting; higher takes chances"},
+                  seed_param(),
+              ],
+          },
+          16, "slow", LEVO_LICENSE,
+          variant_of="levo-v2-large", format_="medium",
+          notes="Shares the decoder assets and decoder venv with large — "
+                "installing both costs only the second LM download."),
     # ---- VampNet (masked-token variation) --------------------------------
     entry("vampnet-vamp", "vampnet",
           [{"repo_id": "hugggof/vampnet", "gated": False,

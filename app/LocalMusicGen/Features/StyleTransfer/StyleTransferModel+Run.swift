@@ -116,18 +116,12 @@ extension StyleTransferModel {
         return nil
     }
 
-    /// The duration this run will ask for.
-    ///
-    /// Exposed so the estimate on the commit bar is of the job that will
-    /// actually be sent, rather than of the model's nominal default.
-    func requestedDurationS(model: ModelInfo) -> Double {
-        guard mode == .continueTrack else {
-            return model.capabilities.duration.defaultS
-        }
-        // Total length = source + a musically useful tail, capped by the model.
-        let maxS = model.capabilities.duration.maxS
-        return min(maxS, (source?.durationS ?? maxS - 30) + 30)
-    }
+    // `requestedDurationS` lives on the document (`StyleTransferModel`, MARK:
+    // Length) beside the `lengthS` the user sets and the policy that says what
+    // it means. It used to be here, returning the model's nominal default for
+    // every mode but `continue` — which was right for the ACE-Step families,
+    // whose adapters resolve length from the source, and silently truncated
+    // everywhere else.
 
     /// Whether the lyrics editor belongs on screen: the mode has words to
     /// change *and* the chosen model can sing them.
@@ -282,6 +276,12 @@ extension StyleTransferModel {
             prompt: run.prompt.isEmpty ? "the same song, new arrangement"
                                        : run.prompt,
             lyrics: nil,
+            // Left at the nominal default rather than taken from the length
+            // control, and not an oversight: this step is a `cover` on a
+            // cover-capable model, every one of which is in
+            // `sourceLengthFamilies` — the adapter resolves the length from the
+            // folded song it is handed and discards this number. The chain's
+            // output is as long as the song it is rebuilding, by construction.
             durationS: model.capabilities.duration.defaultS,
             params: params,
             context: .generate(name: "\(run.name) — restyled backing"))

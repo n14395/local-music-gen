@@ -417,6 +417,69 @@ def check_catalog_curation() -> None:
         check(f"some model can serve style mode '{mode}'", servers,
               "no model in the catalog declares it")
 
+    # Every family the workspace may send audio to has to be classified by
+    # `StyleTransferMode.LengthPolicy`, because `duration_s` is a top-level job
+    # field rather than a param: nothing in the catalog bounds it, no job fails
+    # for getting it wrong, and the only symptom is audio of the wrong length.
+    # An unclassified family gets a live length control, so the failure mode of
+    # forgetting one is a slider that silently does nothing.
+    mode_src = open(os.path.join(ROOT, "app", "LocalMusicGen", "Features",
+                                 "StyleTransfer",
+                                 "StyleTransferMode.swift")).read()
+
+    def swift_family_set(name):
+        block = re.search(rf"{name}: Set<String> = \[(.*?)\]", mode_src, re.S)
+        return set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
+
+    pinned = swift_family_set("sourceLengthFamilies")
+    keeps_source = swift_family_set("extendKeepsSourceFamilies")
+    check("the Swift length-policy family sets were found", pinned,
+          "sourceLengthFamilies did not parse — the check below is vacuous")
+
+    # Families whose `duration_s` really is the whole output length even with a
+    # source attached, so their absence from `sourceLengthFamilies` is correct
+    # rather than an omission. Stable Audio renoises an `init_audio` clip for as
+    # long as it is asked to; MusicGen's chroma steers a render whose length it
+    # does not borrow; InspireMusic's continuation conditions on a ~5 s tail clip
+    # and returns new audio only, which is why it is not in
+    # `extendKeepsSourceFamilies` either.
+    KNOWN_FREE_LENGTH = {"stableaudio", "stableaudio3", "audiocraft",
+                         "musicgen", "inspiremusic"}
+
+    # Which families a style mode can actually route a source *to*: a model that
+    # does not declare the mode's source key never receives the track, so its
+    # length was never in question.
+    SOURCE_KEYS = {"shape": "init_audio", "continue": "extend_audio",
+                   "melody": "melody_audio"}
+    routed: dict[str, set[str]] = {}
+    for mode, matches in style_modes.items():
+        key = SOURCE_KEYS.get(mode, "src_audio")
+        for m in models:
+            if generative(m) and matches(m) and declares(m, key):
+                routed.setdefault(key, set()).add(m["family"])
+
+    unclassified = sorted(routed.get("src_audio", set())
+                          - pinned - KNOWN_FREE_LENGTH)
+    check("every src-audio family has a declared length policy",
+          not unclassified,
+          f"add to StyleTransferMode.sourceLengthFamilies (or to this "
+          f"script's KNOWN_FREE_LENGTH, having read its adapter): "
+          f"{unclassified}")
+
+    unclassified = sorted(routed.get("extend_audio", set())
+                          - keeps_source - KNOWN_FREE_LENGTH)
+    check("every extend-audio family says whether it keeps the source",
+          not unclassified,
+          f"add to StyleTransferMode.extendKeepsSourceFamilies (or to "
+          f"KNOWN_FREE_LENGTH): {unclassified}")
+
+    # The reverse drift: a family listed in Swift that the catalog no longer has
+    # any model for is dead weight that reads as a live rule.
+    families = {m["family"] for m in models}
+    stale = sorted((pinned | keeps_source) - families)
+    check("no length-policy family has left the catalog", not stale,
+          f"listed in StyleTransferMode but no model has the family: {stale}")
+
     # Onboarding's own generators, against the same predicates.
     onboarding = [by_id[i] for i in plan_ids if i in by_id]
     reachable = {mode for mode, matches in style_modes.items()

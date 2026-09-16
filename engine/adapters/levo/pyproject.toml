@@ -1,0 +1,36 @@
+[project]
+name = "adapter-levo"
+version = "0.1.0"
+description = "LeVo 2 / Tencent SongGeneration-v2 lyrics-to-song via the community MLX port (token LM on MLX, official PyTorch decoder bridge) for the LocalMusicGen engine"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # The MLX runtime half only: mlx / mlx-lm / transformers ride in through
+    # the package. The PyTorch decoder bridge deliberately does NOT live in
+    # this venv — its stack (torch 2.6, transformers 4.37, diffusers 0.27)
+    # conflicts with mlx-lm's, which is why upstream's own README uses two
+    # venvs. The adapter provisions the decoder venv in the aux cache on
+    # first load.
+    "songgeneration-mlx @ https://github.com/ailuntx/SongGeneration-MLX/archive/bb2ff7d86ae66d17e4a82e7bcd95c00a1f5a2b77.tar.gz",
+    "soundfile>=0.12",
+    "engine-protocol",
+]
+
+[project.entry-points."local_music.adapters"]
+levo = "adapter_levo.adapter:LeVoAdapter"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.sources]
+engine-protocol = { path = "../../protocol", editable = true }
+
+[tool.hatch.metadata]
+# songgeneration-mlx rides in as a pinned GitHub tarball (a direct reference).
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adapter_levo"]
