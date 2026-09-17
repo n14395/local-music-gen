@@ -2,7 +2,9 @@ import SwiftUI
 
 /// The text documents on one song or part — descriptions, transcribed
 /// lyrics, Q&A answers, tags, notation — grouped by kind, each slot
-/// attributed, editable, copyable and deletable.
+/// attributed, editable, copyable and deletable. A kind that has been run
+/// more than once shows one result at a time, on a strip of tabs named for
+/// their sources.
 ///
 /// Reads the ambient `TextStore` the way panes read `AppSettings`: previews
 /// and tests host these panes without an environment, and "no store" must
@@ -41,6 +43,11 @@ struct TextDocsSection: View {
     /// "Open to see all". Cleared when the text is edited, so a document
     /// typed into real notation is engraved again rather than staying prose.
     @State private var renders: [String: NotationRender] = [:]
+    /// Which document each kind's strip is on, by kind, while there is more
+    /// than one. Ids rather than positions: a delete or a refresh reorders
+    /// nothing under the reader's choice, and an id that stops matching —
+    /// the pane moved to another song — simply falls back to the newest.
+    @State private var selectedTab: [TextDocKind: String] = [:]
 
     /// How tall a slot's score may grow before it defers to the sheet. A
     /// four-voice transcription is a page of SVG, and the pane is a column.
@@ -74,8 +81,24 @@ struct TextDocsSection: View {
                     let group = rows(of: kind)
                     if !group.isEmpty {
                         Text(Self.eyebrow(kind, count: group.count)).eyebrow()
-                        ForEach(group) { doc in
-                            slot(doc)
+                        if Self.tabbed(kind), group.count > 1,
+                           let shown = Self.shown(group,
+                                                  selected: selectedTab[kind]) {
+                            // Run twice — a second tagger, lyrics from
+                            // another model, notation re-extracted — a kind
+                            // used to stack every result under one eyebrow,
+                            // and the pane read as the section repeating
+                            // itself. One at a time, chosen by its source.
+                            BenchSegmented(
+                                selection: Binding(
+                                    get: { shown.id },
+                                    set: { selectedTab[kind] = $0 }),
+                                options: Self.tabs(for: group), fills: true)
+                            slot(shown)
+                        } else {
+                            ForEach(group) { doc in
+                                slot(doc)
+                            }
                         }
                     }
                 }
@@ -294,6 +317,9 @@ struct TextDocsSection: View {
                 pendingDoc = doc
                 draft = ""
                 editingId = doc.id
+                // It joins the strip beside the stored descriptions, and a
+                // new card you cannot see is one you cannot type into.
+                selectedTab[.description] = doc.id
             }
             .buttonStyle(BenchSecondaryButtonStyle(tone: .quiet))
         }
@@ -345,6 +371,50 @@ struct TextDocsSection: View {
         } else {
             textStore?.delete(doc)
         }
+    }
+
+    // MARK: - Tabs
+
+    /// Whether a kind shows one document at a time. Q&A is the exception:
+    /// its documents are answers to different questions — a list, not
+    /// re-runs of one thing — and a strip of the same model name three times
+    /// over would say nothing about which answer is which.
+    static func tabbed(_ kind: TextDocKind) -> Bool {
+        kind != .qa
+    }
+
+    /// The strip for one kind's documents, in the store's order (newest
+    /// first). A tab is its source — the model, or YOU — and only when the
+    /// same source wrote more than one does the tab also say when, so two
+    /// WHISPER tabs can be told apart without opening both.
+    static func tabs(for docs: [TextDocRecord],
+                     now: Date = Date()) -> [BenchSegmented<String>.Option] {
+        var runs: [String: Int] = [:]
+        for doc in docs { runs[doc.modelName, default: 0] += 1 }
+        return docs.map { doc in
+            .init(value: doc.id, label: doc.modelName,
+                  detail: runs[doc.modelName, default: 0] > 1
+                      ? tabStamp(doc.createdAt, now: now) : nil)
+        }
+    }
+
+    /// The document a strip shows: the chosen one while it still exists,
+    /// otherwise the newest. Deleting the one on screen, or the pane moving
+    /// to a song whose documents have other ids, lands on the newest rather
+    /// than on nothing.
+    static func shown(_ docs: [TextDocRecord],
+                      selected: String?) -> TextDocRecord? {
+        docs.first { $0.id == selected } ?? docs.first
+    }
+
+    /// `20:03` for a run today, `16 Sep` for an older one: the shortest thing
+    /// that separates two runs of one model in the room a 344 pt pane leaves
+    /// a tab, and the card's own attribution line carries the rest.
+    static func tabStamp(_ date: Date, now: Date) -> String {
+        if Calendar.current.isDate(date, inSameDayAs: now) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        return date.formatted(.dateTime.day().month(.abbreviated))
     }
 
     // MARK: - Copy
