@@ -52,6 +52,9 @@ struct AppInfoCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About LocalMusicGen") { ShellActions(env: env).showAbout() }
+            #if SPARKLE
+            SparkleCheckForUpdatesButton()
+            #endif
         }
     }
 }

@@ -132,6 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         env.startBackend()
+        #if SPARKLE
+        SparkleUpdater.start()
+        #endif
     }
 
     @MainActor

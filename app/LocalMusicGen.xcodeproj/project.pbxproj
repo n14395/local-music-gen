@@ -259,6 +259,7 @@
 		DD54F005835D18F658BC31DE /* AddModelSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94F702FB5A2336780779CB6 /* AddModelSheet.swift */; };
 		DD75121D51EF154024B531F4 /* ModelActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697A736BEA50EE08590625BB /* ModelActions.swift */; };
 		DE93B86D32CE2B327586B0EC /* SidebarDownloadCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6CCCCED31E52FEE677E2F12 /* SidebarDownloadCard.swift */; };
+		DE9FCC33F5177086A8391A52 /* SparkleUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22FD049A67A10D12A15F97A /* SparkleUpdater.swift */; };
 		DF593AF9BF92806A052AA693 /* ClipInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E773F1C411DD2495A3EBEA4F /* ClipInspector.swift */; };
 		E22A01A87F8AA83599FF009F /* ParameterGroupsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D00929193BD676FD897922 /* ParameterGroupsTests.swift */; };
 		E26ED3A1D172BCF2B8299334 /* PartsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A055BE185647D3A01223B392 /* PartsStore.swift */; };
@@ -488,6 +489,7 @@
 		A072AC9F32A1E5AB5D8BD6E9 /* GeneratePresetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratePresetTests.swift; sourceTree = "<group>"; };
 		A0D0116E191841F1CEC2D6DF /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		A0FFC4D37BA2AC3E18283C24 /* TextDocTabsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextDocTabsTests.swift; sourceTree = "<group>"; };
+		A22FD049A67A10D12A15F97A /* SparkleUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparkleUpdater.swift; sourceTree = "<group>"; };
 		A29B6CF93ECC610FA228F9F1 /* EditMixPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditMixPlan.swift; sourceTree = "<group>"; };
 		A3CCF22D0D86E2B3289007E9 /* SongDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongDetailView.swift; sourceTree = "<group>"; };
 		A42518CD1218958D6AEAD7D7 /* StyleTransferChain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleTransferChain.swift; sourceTree = "<group>"; };
@@ -925,6 +927,7 @@
 				46DCAB7E6CC819E8A1D9F508 /* ShellTransport.swift */,
 				768EB85B65E08D195B3527F1 /* ShellWindow.swift */,
 				897A1E143413B13A0DF20FBB /* SingleInstance.swift */,
+				A22FD049A67A10D12A15F97A /* SparkleUpdater.swift */,
 				13F64957330BEA66FD298352 /* WindowWidthFloor.swift */,
 				FDA40515785FF8B641D71A5E /* Commands */,
 			);
@@ -1415,6 +1418,7 @@
 				6106DA233782F2BF6E6F5169 /* SongDigest.swift in Sources */,
 				FA9E24C75531B04CBA46CDE5 /* SongEditor.swift in Sources */,
 				8DF45A61F2A92BE6A4AE0DA3 /* SongPlan.swift in Sources */,
+				DE9FCC33F5177086A8391A52 /* SparkleUpdater.swift in Sources */,
 				01DF52B272587BE466AFB7F6 /* SpliceActionView.swift in Sources */,
 				1F427B99C3197CBEACE859E5 /* SplitActionView.swift in Sources */,
 				4223251787141425EBF35179 /* StoragePaths.swift in Sources */,
