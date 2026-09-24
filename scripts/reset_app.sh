@@ -36,7 +36,7 @@
 set -euo pipefail
 
 ROOT="$HOME/Library/Application Support/LocalMusicGen"
-DOMAIN="com.n14395.local-music-gen"
+DOMAIN="com.n14395.LocalMusicGen"
 ASSUME_YES="${LOCALMUSICGEN_RESET_YES:-0}"
 [[ "${1:-}" == "--yes" ]] && ASSUME_YES=1
 

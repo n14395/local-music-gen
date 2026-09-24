@@ -1,7 +1,7 @@
 name: LocalMusicGen
 options:
   # The identifier is set outright on each target below rather than derived
-  # from this prefix: the app's is `com.n14395.local-music-gen`, which is the
+  # from this prefix: the app's is `com.n14395.LocalMusicGen`, which is the
   # repo's name rather than the target's, and XcodeGen would otherwise build
   # `com.n14395.LocalMusicGen` from the target name.
   bundleIdPrefix: com.n14395
@@ -39,7 +39,7 @@ targets:
         # Owns the defaults domain, the keychain service string in
         # `Keychain.swift`, and the single-instance check. Change one and the
         # other three have to move with it.
-        PRODUCT_BUNDLE_IDENTIFIER: com.n14395.local-music-gen
+        PRODUCT_BUNDLE_IDENTIFIER: com.n14395.LocalMusicGen
     dependencies:
       - package: GRDB
         product: GRDB
@@ -59,7 +59,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.n14395.local-music-gen.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.n14395.LocalMusicGen.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/LocalMusicGen.app/Contents/MacOS/LocalMusicGen
         BUNDLE_LOADER: $(TEST_HOST)
 schemes:

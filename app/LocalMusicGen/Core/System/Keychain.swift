@@ -6,7 +6,7 @@ import Security
 
 /// Minimal generic-password storage for the Hugging Face token.
 enum Keychain {
-    private static let service = "com.n14395.local-music-gen"
+    private static let service = "com.n14395.LocalMusicGen"
 
     static func set(_ value: String, account: String) {
         let data = Data(value.utf8)

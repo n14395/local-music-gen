@@ -1586,7 +1586,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.local-music-gen";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.LocalMusicGen";
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -1671,7 +1671,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.local-music-gen.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.LocalMusicGen.tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LocalMusicGen.app/Contents/MacOS/LocalMusicGen";
 			};
@@ -1688,7 +1688,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.local-music-gen.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.LocalMusicGen.tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LocalMusicGen.app/Contents/MacOS/LocalMusicGen";
 			};
@@ -1766,7 +1766,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.local-music-gen";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.n14395.LocalMusicGen";
 				SDKROOT = macosx;
 			};
 			name = Release;
