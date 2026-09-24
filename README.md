@@ -1,4 +1,6 @@
-<img src="app-icon.png" alt="LocalMusicGen app icon: a lime waveform on a dark circle" width="128">
+<p align="center">
+  <img src="app-icon.png" alt="LocalMusicGen app icon: a lime waveform on a dark circle" width="128">
+</p>
 
 # LocalMusicGen
 
