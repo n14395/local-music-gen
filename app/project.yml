@@ -16,7 +16,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     # The app's version; build.sh --version / --publish vN.N edit this line.
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "1.1"
     ARCHS: arm64
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # A stable signing identity (not ad-hoc "-"): keychain "Always Allow" grants
