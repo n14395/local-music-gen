@@ -1,3 +1,5 @@
+<img src="app-icon.png" alt="LocalMusicGen app icon: a lime waveform on a dark circle" width="128">
+
 # LocalMusicGen
 
 Run open music models on your Mac. Generate, separate, transcribe, restyle, arrange,
