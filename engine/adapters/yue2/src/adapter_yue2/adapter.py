@@ -16,6 +16,10 @@ this adapter its own progress voice and a real cancel checkpoint —
 `synthesize` (flow matching) → `decode` (VAE). Upstream polls `cancelled`
 inside every stage and raises InterruptedError, which maps 1:1 onto
 CancelledError.
+
+Driving it stage by stage also puts this adapter at the seams between them,
+which is where the MPS allocator has to be told to hand its pool back — see
+MPS_FLUSH_TOKENS for the render that made that necessary.
 """
 
 from __future__ import annotations
@@ -44,12 +48,34 @@ STAGED_FILES = ("config.json", "generation_config.json",
 # model ends a song on its own when the lyrics run out — the duration slider
 # is a ceiling on the token budget, not a target the take is stretched to.
 TOKENS_PER_SECOND = 25
+# Tokens between MPS allocator flushes in the two AR stages.
+#
+# A 303 s render died in flow matching with "MPS allocated: 72.80 GiB" — the
+# torch MPS allocator's heap total, of which barely 8 GiB was live tensors.
+# Nothing leaks: measured on this render's own shapes, each stage's footprint
+# is flat in token count (the AR pass settles ~4 GiB above the model by token
+# 300 and stays there; flow matching peaks at ~16 GiB over it). What the
+# allocator does is keep every high-water mark it has ever reached, because
+# it only tries to reclaim at its low watermark — 1.4x the Metal working set,
+# 72.6 GiB on a 64 GB Mac, i.e. above the machine's own RAM. So a warm worker
+# carried each take's peak into the next, climbing 8.9 → 18.9 GiB across five
+# takes, until the pool plus the ~15 GiB of non-torch Metal allocations beside
+# it crossed the 88.13 GiB device ceiling and a 1 MiB attention output failed.
+#
+# The flushes that matter are therefore the ones at the boundaries, where the
+# model is all that is live. This in-loop interval is the smaller effect
+# (4.12 → 3.50 GiB of AR pool) and saturates: 25 and 5 measure the same, so
+# 100 buys the whole of it for a commit-and-wait every ~10 s of decoding.
+MPS_FLUSH_TOKENS = 100
 
 
 class YuE2Adapter(ModelAdapter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.pipe = None
+        # load() settles this; generate() reads it to decide whether the
+        # allocator flushes are worth making at all.
+        self._device = "cpu"
 
     def _snapshot(self, needle: str) -> str:
         # By needle, not exact id, like InspireMusic: the adapter should not
@@ -119,6 +145,17 @@ class YuE2Adapter(ModelAdapter):
         self.pipe = YuE2Pipeline(
             self._stage(MODEL_NEEDLE, "YuE2-3B"),
             self._stage(VAE_NEEDLE, "YuE2-Vae"),
+            # offload_ar is upstream's own memory tradeoff: the AR attention
+            # and MLP weights go to the CPU for the duration of the ODE, which
+            # only touches the NAR half of the Mixture-of-Transformers. It
+            # halves what is live in the stage the 303 s render died in, 8.2 →
+            # 4.2 GiB, for one 4 GB round trip per chunk. The memory is a
+            # direct reading; the transfer's cost never rose above this
+            # machine's run-to-run variance on the stage (which is wide —
+            # 59-86 s per solver step for one unchanged configuration), so
+            # treat it as bought memory rather than as free. Not worth the
+            # transfer on CPU, where nothing is being made room for.
+            offload_ar=device == "mps",
             device=device, progress=False)
         progress_cb(None, "loading YuE2 (3.6B bf16 — takes a little while)")
         # The pipeline loads lazily on first use; pulling the load forward
@@ -132,7 +169,9 @@ class YuE2Adapter(ModelAdapter):
                  out_path: str, progress_cb: ProgressCb,
                  cancel: CancelToken) -> GenerateResult:
         assert self.pipe is not None
-        from yue2.protocol import SongRequest
+        import torch
+
+        from yue2.protocol import SongRequest, chunk_ranges
 
         if not (lyrics or "").strip():
             raise RuntimeError("YuE2 writes songs from lyrics — give it some")
@@ -149,7 +188,49 @@ class YuE2Adapter(ModelAdapter):
 
         total = max(200, int(duration_s * TOKENS_PER_SECOND))
 
+        def flush() -> None:
+            if self._device == "mps":
+                torch.mps.empty_cache()
+
+        # The most valuable flush of the render: between takes the model is
+        # the only thing live, so the whole of the previous take's pool can
+        # go back. A warm worker never called unload() between takes, so it
+        # carried every take's high-water mark into the next one — measured
+        # climbing 8.9 → 18.9 GiB across five takes and never falling.
+        flush()
+
+        # Upstream polls `cancelled` once before each chunk's acoustic prefill
+        # and twice per ODE step, and that is its only hook into flow matching.
+        # What rides along is progress, NOT a flush: upstream reports the
+        # stage's steps through its own Progress object, which this adapter
+        # turns off, so the longest stage of the render used to pass in
+        # silence — 33 minutes of it at a 300 s song, which reads as a hung
+        # job. Counting the polls recovers a real step number.
+        #
+        # An `empty_cache()` here hangs the render: it hands the whole pool
+        # back twice a step and flow matching asks for all of it again on the
+        # next layer. 149 s per solver step against a ~60-86 s baseline, and
+        # — the part that matters, because it is well outside this machine's
+        # wide variance — climbing inside a single run, 119 → 178 s across
+        # two steps. Extrapolated over 32 steps that is hours, which is what
+        # "stuck at refining to audio" was. It had bought ~1 GiB of peak.
+        # The flushes that pay for themselves are the ones at the seams,
+        # where the stage is over and the model is all that is live.
+        ode_total = 0
+        ode_polls = 0
+        ode_reported = -1
+
         def cancelled() -> bool:
+            nonlocal ode_polls, ode_reported
+            if ode_total:
+                ode_polls += 1
+                # One prefill poll per chunk, then two per solver step.
+                step = min(ode_total, ode_polls // 2)
+                if step != ode_reported:
+                    ode_reported = step
+                    progress_cb(0.9 + 0.05 * step / ode_total,
+                                f"refining to audio — step {step}/{ode_total}",
+                                step=step, steps=ode_total)
             return cancel.cancelled
 
         abc_n = sem_n = 0
@@ -159,6 +240,8 @@ class YuE2Adapter(ModelAdapter):
             abc_n += 1
             if abc_n % 50 == 0:
                 progress_cb(None, f"planning the score — token {abc_n}")
+            if abc_n % MPS_FLUSH_TOKENS == 0:
+                flush()
 
         def on_semantic(phase, token) -> None:
             nonlocal sem_n
@@ -167,20 +250,39 @@ class YuE2Adapter(ModelAdapter):
                 progress_cb(min(0.9, sem_n / total),
                             f"writing music — token {sem_n}/~{total}",
                             step=sem_n, steps=total)
+            if sem_n % MPS_FLUSH_TOKENS == 0:
+                flush()
 
         try:
             if request.cot != "off":
                 progress_cb(None, "planning the score (chain-of-thought ABC)")
             plan = self.pipe.plan(request=request, cancelled=cancelled,
                                   on_token=on_abc)
+            flush()
             progress_cb(0.0, "writing music", step=0, steps=total)
             semantic = self.pipe.generate_semantic(
                 plan, sampling={"max_tokens": total},
                 cancelled=cancelled, on_token=on_semantic)
+            # Between stages the model is the only thing still live, so a
+            # flush here hands back everything the AR pass accumulated
+            # before the acoustic prefill — the largest single allocation of
+            # the render — asks for its own.
+            flush()
             progress_cb(0.9, "refining to audio (flow matching)")
-            latents = self.pipe.synthesize(semantic, cancelled=cancelled)
+            # Upstream's own chunking and solver settings decide how many
+            # steps this stage really has; ask it rather than assuming one
+            # chunk. Setting the total is what arms the reporting in
+            # `cancelled` — it is zero, and silent, during the AR stages.
+            cfg = self.pipe.generation_config
+            ode_total = cfg.ode_steps * len(chunk_ranges(
+                len(semantic.tokens), len(semantic.plan.prefix), cfg.context))
+            try:
+                latents = self.pipe.synthesize(semantic, cancelled=cancelled)
+            finally:
+                ode_total = 0
             if cancel.cancelled:
                 raise CancelledError()
+            flush()
             progress_cb(0.95, "decoding to 48 kHz stereo")
             audio = self.pipe.decode(latents)
         except InterruptedError:

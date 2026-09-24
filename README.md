@@ -11,12 +11,16 @@ models that split a recording into stems, models that listen and write down what
 hear, and the tooling to chain them together. Once a model is downloaded nothing leaves
 the machine: no accounts, no API keys, no cloud.
 
+![Actions: sixty recipe cards on shelves, filtered to what the installed models can do, with the engine card showing the loaded model and its memory](docs/01-actions.png)
+
 > **Note**
 > LocalMusicGen is distributed outside the Mac App Store (Developer ID signed and
 > notarized). It provisions a Python runtime at first launch, which App Store rules
 > don't permit.
 
 ## What it does
+
+![Generate mid-render: the stage list, the live engine log counting tokens, and the queue rail with the other takes waiting](docs/02-generate-rendering.png)
 
 The sidebar has seven places in two groups. **Make**: Actions, Generate, Style Transfer,
 AI Workbench, Editor. **Browse**: Library, Models.
@@ -75,6 +79,8 @@ Around those:
   pause; ⌘/ lists every shortcut.
 
 ## The models
+
+![The Models screen mid-download: a 6.8 GB model at 20 percent, with the storage it will take and what it can do beside it](docs/06-models-downloading.png)
 
 Roughly by job:
 
