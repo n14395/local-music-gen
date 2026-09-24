@@ -2,6 +2,7 @@
 name = "adapter-songbloom"
 version = "0.1.0"
 description = "SongBloom full-song generation (lyrics + style prompt, orphaned upstream) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # The proven triage stack (2026-08-25). Upstream is orphaned (official

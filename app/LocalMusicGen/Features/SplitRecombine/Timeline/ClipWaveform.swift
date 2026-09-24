@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 /// The trimmed slice of a source's waveform, stretched across a clip.

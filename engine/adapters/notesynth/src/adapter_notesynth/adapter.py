@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MIDI → audio rendering (task "render") through TinySoundFont + MuseScore
 General (MIT). Weightless catalog entry: the ~40 MB SoundFont downloads to the
 engine cache on first use."""

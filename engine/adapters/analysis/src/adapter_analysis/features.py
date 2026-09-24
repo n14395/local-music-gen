@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Compact spectral features for mashup-compatibility scoring: beat-synchronous
 chroma (harmonic overlap across bar offsets) and octave-band energy profile
 (spectral complementarity). Both ride the analysis payload additively."""

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Offline MIDI rendering via TinySoundFont.
 
 NOTE: a twin of this module lives in adapter_transcription (families have

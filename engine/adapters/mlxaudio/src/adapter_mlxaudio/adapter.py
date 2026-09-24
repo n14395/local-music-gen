@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MiniMax Music 3 via mlx-audio's native MLX implementation.
 
 Runs the mlx-community quantized conversions (mxfp8 ~15 GB, mxfp4 ~9 GB) instead

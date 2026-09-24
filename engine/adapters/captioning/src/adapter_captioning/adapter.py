@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Music captioning: a model listens to a track and writes about it.
 
 One engine today — LP-MusicCaps, switched on `settings.engine` the way the

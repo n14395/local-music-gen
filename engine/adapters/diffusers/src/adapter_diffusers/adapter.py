@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Generic diffusers audio pipeline adapter (user-added models).
 
 Handles StableAudioPipeline, AudioLDM2Pipeline, AudioLDMPipeline, MusicLDMPipeline.

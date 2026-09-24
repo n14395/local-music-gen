@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MiniMax Music 3 via diffusers' experimental ModularPipeline API.
 
 Very heavy: ~57 GB of weights (Qwen-8B LM + 2.7B DiT + codecs), catalog-gated to

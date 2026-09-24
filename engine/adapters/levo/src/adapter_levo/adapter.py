@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """LeVo 2 (Tencent SongGeneration-v2): lyrics + description to a full 48 kHz
 stereo song, via the community MLX port — the only Apple Silicon route.
 

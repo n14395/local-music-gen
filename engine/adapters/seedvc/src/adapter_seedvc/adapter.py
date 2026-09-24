@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """seed-vc zero-shot voice conversion (task `convert-voice`).
 
 The consent-clean voice architecture: the target voice is a short recording

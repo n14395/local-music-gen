@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 /// Config page for the literal-recombination recipes: mash-up, swap vocals,

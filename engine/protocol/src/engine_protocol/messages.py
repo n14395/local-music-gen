@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """JSONL messages exchanged between supervisor and worker over stdio.
 
 One JSON object per line. Supervisor → worker: load / generate / task / cancel /

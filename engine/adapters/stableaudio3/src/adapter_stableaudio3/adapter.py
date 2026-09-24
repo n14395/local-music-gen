@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Stable Audio 3 Small via the official stable-audio-3 library.
 
 Loads entirely from the local HF snapshot (config + weights + the bundled

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Injected into YuE's infer.py subprocess via PYTHONPATH (auto-imported by the
 `site` module at interpreter startup).
 

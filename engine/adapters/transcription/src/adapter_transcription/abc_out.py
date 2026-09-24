@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MIDI → ABC notation.
 
 A notation *sketch*, and the copy in the app says so. Transcribed MIDI has no

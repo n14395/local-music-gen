@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ChatMusician: a LLaMA-2 that reads and writes ABC notation.
 
 Plain `LlamaForCausalLM` — no vendored architecture, no remote code — which

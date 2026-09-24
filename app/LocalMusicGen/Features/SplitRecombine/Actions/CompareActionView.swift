@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 /// "Compare models on one prompt" — the comparison this app exists to make,

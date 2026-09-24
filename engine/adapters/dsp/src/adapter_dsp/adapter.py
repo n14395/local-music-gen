@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Literal recombination: deterministic mixdown of aligned parts.
 
 Consumes the contract's `mix_spec` (docs/api-contract.md §5.4). All musical

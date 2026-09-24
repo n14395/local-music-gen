@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Download manager: HF snapshot downloads as supervised subprocesses.
 
 Progress is sampled from cache-directory size (robust across hub versions and

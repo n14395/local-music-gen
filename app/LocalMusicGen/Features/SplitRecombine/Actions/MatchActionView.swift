@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 /// "What mashes with this?" — rank every analysed part and song in the library

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Anticipatory Music Transformer (Stanford CRFM): symbolic music generation
 as a `compose` task — MIDI out, voiced later by the SoundFont renderer.
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 /// The 66 pt bar across the bottom of the window.

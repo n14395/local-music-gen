@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MOSS-Music-8B (Thinking, MLX 8-bit): the conversational music brain —
 captioning, key/tempo/structure questions, long-form audio QA (task `caption`).
 

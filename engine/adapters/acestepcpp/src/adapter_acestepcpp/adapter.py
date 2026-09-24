@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ACE-Step 1.5 via acestep.cpp — the native C++/GGML runtime (Metal on Macs).
 
 Two runtimes, chosen per catalog entry by `settings["runtime"]`:

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Audio → MIDI transcription (task "transcribe"), four engines behind one
 family: Basic Pitch (CoreML, per-stem), MT3 family via mt3-infer (full-mix
 multi-instrument; the unlicensed mt3_pytorch backend is hard-excluded),

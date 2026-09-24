@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ACE-Step 1.5: full songs with vocals. LM half on MLX, DiT half on PyTorch MPS.
 
 Uses the documented Python API (acestep.handler / acestep.llm_inference /

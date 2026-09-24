@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """CLAP timbre embedding (analysis-clap variant, laion/larger_clap_music).
 
 One L2-normalized 512-dim vector per asset: cosine similarity between stored

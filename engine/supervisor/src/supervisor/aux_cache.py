@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """One-shot migration into the aux cache root.
 
 Before that root existed, every adapter derived its own cache as a *sibling of

@@ -2,6 +2,7 @@
 name = "adapter-levo"
 version = "0.1.0"
 description = "LeVo 2 / Tencent SongGeneration-v2 lyrics-to-song via the community MLX port (token LM on MLX, official PyTorch decoder bridge) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # The MLX runtime half only: mlx / mlx-lm / transformers ride in through

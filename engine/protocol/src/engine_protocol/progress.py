@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Subprocess progress interception shared by the CLI-driving adapters.
 
 tqdm redraws its bar with carriage returns on one long line, so a

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MelodyFlow: single-stage flow-matching text-to-music, plus the thing no
 other family here has — text-guided EDITING of existing audio (regularized
 latent inversion: feed a song, describe the change).

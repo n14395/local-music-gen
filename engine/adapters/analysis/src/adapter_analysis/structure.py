@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Structure segmentation: the librosa Laplacian recipe (McFee & Ellis 2014),
 beat-synchronized, with scipy k-means (no sklearn dependency). Returns
 unlabeled repetition groups (A/B/A form) — semantic labels (verse/chorus)

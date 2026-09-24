@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Model catalog: curated JSON + install-state merge.
 
 Install state is tracked with marker files (data/installed/<model_id>.json) written

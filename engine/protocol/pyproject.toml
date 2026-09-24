@@ -2,6 +2,7 @@
 name = "engine-protocol"
 version = "0.1.0"
 description = "Stdlib-only shared protocol between the LocalMusicGen supervisor and its model workers"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = []
 

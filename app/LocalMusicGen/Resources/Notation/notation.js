@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 // The app's whole JavaScript surface: one namespace, two calls in
 // (LMG.render, LMG.svg) and two messages out ("ready", "rendered"). Kept this
 // small on purpose so NotationWebView.swift can be reasoned about without

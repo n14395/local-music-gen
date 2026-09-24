@@ -2,6 +2,7 @@
 name = "adapter-captioning"
 version = "0.1.0"
 description = "Music captioning adapter (LP-MusicCaps) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch>=2.2",

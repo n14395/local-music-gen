@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """YuE2 (m-a-p): lyrics + style to a full 48 kHz stereo song, replacing the
 two-stage 7B+1B YuE 1 stack with one 3.6B AR-NAR Mixture-of-Transformers plus
 flow matching and a small fp32 VAE.

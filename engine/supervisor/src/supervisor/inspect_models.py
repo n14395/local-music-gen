@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Arbitrary HF model inspection: classify a repo into a supported family by
 fetching ONLY its config files — never a snapshot, never remote code.
 

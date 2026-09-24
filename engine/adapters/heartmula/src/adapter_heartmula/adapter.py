@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """HeartMuLa: lyrics + style tags to a full 48 kHz stereo song. A 3B
 Llama-3.2-style global transformer with a 300M local decoder over HeartCodec's
 12.5 Hz RVQ frames — the only fully Apache-2.0 (code AND weights) song model

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Generic worker entrypoint: `python -m engine_protocol.worker_main --family X`.
 
 Runs inside an adapter venv. Reads JSONL commands on stdin, writes JSONL replies on

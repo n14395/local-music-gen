@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Stem separation: Demucs (4/6-stem) and RoFormer 2-stem via audio-separator.
 
 settings.engine selects the backend:

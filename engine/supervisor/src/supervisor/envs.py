@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Per-family adapter venv provisioning via uv.
 
 Dev layout: engine/adapters/<family>/ with pyproject.toml; `uv sync` creates .venv in

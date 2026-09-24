@@ -2,6 +2,7 @@
 name = "adapter-essentia"
 version = "0.1.0"
 description = "Essentia model-zoo tagging (Discogs-EffNet genre/mood/danceability heads) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     # Ships working macOS arm64 wheels since 2.1b6.dev1177+ (the old caveat

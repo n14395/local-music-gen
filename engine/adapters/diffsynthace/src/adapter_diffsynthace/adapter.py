@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ACE-Step 1.5 XL LoRA pack on the DiffSynth-Studio runtime.
 
 A separate family from `acestep` on purpose: that one runs the upstream

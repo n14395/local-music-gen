@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Magenta RealTime 2 on MLX — the most Mac-native generator of the 2026
 triage (4 s of audio in ~6 s including model load, 1.7 GB peak).
 

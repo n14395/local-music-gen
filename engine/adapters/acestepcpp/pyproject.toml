@@ -2,6 +2,7 @@
 name = "adapter-acestepcpp"
 version = "0.1.0"
 description = "ACE-Step 1.5 via acestep.cpp (GGUF + Metal) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "soundfile>=0.12",

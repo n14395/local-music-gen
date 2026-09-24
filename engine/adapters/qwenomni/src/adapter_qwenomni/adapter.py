@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ACE-Step's music listeners: Qwen2.5-Omni fine-tunes that hear a track.
 
 Two catalog entries share this family — the transcriber (task `lyrics`) and

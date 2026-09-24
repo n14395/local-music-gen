@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Key estimation: averaged chroma correlated against Krumhansl-Schmuckler
 profiles, plus the Camelot wheel mapping used for mashup-compatibility UI."""
 

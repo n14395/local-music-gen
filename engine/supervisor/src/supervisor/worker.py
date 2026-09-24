@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Worker process handle: JSONL over stdio with an adapter venv's worker_main.
 
 One worker per family, at most one alive at a time (unified-memory discipline).

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """BTC chord recognition (Park & Choi, ISMIR 2019) — vendored.
 
 The upstream repo (github.com/jayg996/BTC-ISMIR19, MIT) is frozen research

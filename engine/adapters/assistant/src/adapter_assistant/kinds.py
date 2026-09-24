@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """The jobs the assistant can be asked to do, and the shape each one returns.
 
 One `assist` task carries a `kind`; this module turns that kind plus its input

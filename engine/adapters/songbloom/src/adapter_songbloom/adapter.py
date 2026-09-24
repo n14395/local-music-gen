@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """SongBloom: lyrics + a 10-second style clip → a full coherent song
 (interleaved autoregressive sketching + diffusion; 150 s checkpoints, DPO
 variant preferred).

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """The notation composers: text or ABC in, ABC and MIDI out.
 
 Two engines behind one family, switched on the catalog's `settings.engine`:

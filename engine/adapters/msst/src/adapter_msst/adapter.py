@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Research-frontier separation: the ZFTurbo MSST zoo and Inria's BSRNN.
 
 Two engines behind one venv (both live on the torch 2.7 pair):

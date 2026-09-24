@@ -2,6 +2,7 @@
 name = "adapter-anticipation"
 version = "0.1.0"
 description = "Anticipatory Music Transformer symbolic generation (task compose) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "anticipation",

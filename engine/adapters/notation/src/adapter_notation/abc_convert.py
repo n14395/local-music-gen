@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ABC notation → MIDI, and the tidying a model's raw output needs first.
 
 The conversion is the point at which notation becomes something the rest of

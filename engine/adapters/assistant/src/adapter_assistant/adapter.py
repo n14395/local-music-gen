@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """The writing assistant: a small instruct LLM that helps compose prompts.
 
 This family answers one task, `assist`, whose `kind` picks the job (see

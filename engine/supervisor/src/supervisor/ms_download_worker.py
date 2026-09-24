@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Subprocess entrypoint for one ModelScope repo download.
 
 Run as: python -m supervisor.ms_download_worker --repo <ns/name> --dest <dir>

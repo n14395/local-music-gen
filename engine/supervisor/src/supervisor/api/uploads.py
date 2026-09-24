@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Transient audio uploads referenced by job params of type "audio".
 
 Raw-body POST (no multipart) keeps the client trivial; the uploads directory is

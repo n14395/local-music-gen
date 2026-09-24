@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """What a worker's stderr is allowed to put on the event stream.
 
 Every line a worker prints is written to its log file — that file is the

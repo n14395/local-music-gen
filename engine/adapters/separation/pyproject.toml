@@ -2,6 +2,7 @@
 name = "adapter-separation"
 version = "0.1.0"
 description = "Stem separation adapter (Demucs + RoFormers via audio-separator) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 # NOTE(SR6): demucs-mlx==1.4.6 was evaluated for the MLX fast path and GATED
 # OUT: its hard dependency mlx-audio-io==1.3.11 is sdist-only and fails to

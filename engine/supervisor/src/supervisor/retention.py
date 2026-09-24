@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Disk retention for the engine's transient artifacts.
 
 Outputs/<job_id>/ directories were historically never deleted: every take is

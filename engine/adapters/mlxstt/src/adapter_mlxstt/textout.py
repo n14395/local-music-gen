@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Writing a text artifact, shared by both engines in this family."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 // The window chrome: a 230 pt sidebar, a 52 pt top bar per screen, and a

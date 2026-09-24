@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Essentia model-zoo tagging: one embedding pass, many tiny heads.
 
 The Discogs-EffNet extractor (18 MB) embeds the track once; each classifier

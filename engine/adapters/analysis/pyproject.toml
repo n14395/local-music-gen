@@ -2,6 +2,7 @@
 name = "adapter-analysis"
 version = "0.1.0"
 description = "Musical analysis adapter (beat_this beats/downbeats, key, structure, loudness) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "beat-this==1.1.0",

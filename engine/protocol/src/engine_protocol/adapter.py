@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """ModelAdapter — the seam every model family implements.
 
 This package must stay stdlib-only: it is installed into every adapter venv, and the

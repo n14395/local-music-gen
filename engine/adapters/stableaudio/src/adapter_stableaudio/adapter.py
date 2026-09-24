@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Stable Audio Open (Small) via stable-audio-tools on MPS.
 
 Loads from the local snapshot (model_config.json + weights) so no network or HF token

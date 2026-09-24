@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Captions, answers and tags from Qwen2-Audio (MLX).
 
 The flagship listener: an audio-language model that will describe a track,

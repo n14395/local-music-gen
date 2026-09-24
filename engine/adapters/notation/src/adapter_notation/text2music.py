@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """text-to-music (BART): a description in, a tune in ABC out.
 
 BART-base fine-tuned on 282k text/ABC pairs — small enough to sit in the warm

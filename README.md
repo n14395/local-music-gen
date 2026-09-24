@@ -271,3 +271,12 @@ and MAGNeT models (CC-BY-NC-4.0), MiniMax Music 3, YuE2, LeVo 2, SongGen and the
 timbre models (IRCAM). The UVR separators have no formal license at all, and every amp
 capture from TONE3000 carries its author's terms, which travel with the file. Check the
 license of any model whose output you plan to release.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+Third-party attribution is in [NOTICE](NOTICE).
+
+The Apache License covers this application's source code only. It grants no
+rights in any model. Model weights are downloaded at runtime under their own
+terms, many of which forbid commercial use — see **Model licenses** above.

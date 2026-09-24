@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """RAVE timbre transfer: audio in, the model's voice out (task `timbre`).
 
 Each catalog entry is one IRCAM TorchScript file (settings.rave_model names

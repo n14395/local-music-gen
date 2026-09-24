@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """LP-MusicCaps: a music captioner, ten seconds at a time.
 
 The model was trained on 10-second windows and writes one sentence about

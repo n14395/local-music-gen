@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """SongGen (ICML 2025): single-stage autoregressive text+lyrics→song, with
 optional 3-second reference-voice conditioning from a USER-SUPPLIED recording
 (the processor separates the reference itself; no voice library ships).

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Token Splice Playground: EnCodec codebook recombination (experimental).
 
 Splices the coarse RVQ codebooks of song A with the fine codebooks of song B

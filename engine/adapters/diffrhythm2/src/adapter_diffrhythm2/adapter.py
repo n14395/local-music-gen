@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """DiffRhythm2 (ASLP-lab): full-song lyrics→song via block-cache flow
 matching — up to 3½ minutes of structured song from timestamped lyrics, with
 the style set by a text prompt OR a reference clip.

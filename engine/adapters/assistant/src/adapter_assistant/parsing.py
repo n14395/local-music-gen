@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Getting a JSON object back out of a 1.5B model.
 
 A model this size obeys "reply with JSON and nothing else" most of the time,

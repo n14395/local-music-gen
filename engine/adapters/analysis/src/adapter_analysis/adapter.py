@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Musical analysis: beats/downbeats (beat_this), BPM, key/Camelot, structure
 sections, and integrated loudness — the metadata layer that powers part
 badges and literal-recombine alignment.

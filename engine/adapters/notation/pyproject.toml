@@ -2,6 +2,7 @@
 name = "adapter-notation"
 version = "0.1.0"
 description = "Notation adapter (text/ABC in, ABC + MIDI out) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch>=2.2",

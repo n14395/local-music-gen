@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Import stub for xformers on macOS.
 
 audiocraft's transformer module does `from xformers import ops` at import time,

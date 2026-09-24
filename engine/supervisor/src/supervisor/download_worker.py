@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Subprocess entrypoint for one repo snapshot download.
 
 Run as: python -m supervisor.download_worker --repo <repo_id> [--revision r]

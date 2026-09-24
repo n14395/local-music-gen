@@ -2,6 +2,7 @@
 name = "adapter-mossmusic"
 version = "0.1.0"
 description = "MOSS-Music-8B music understanding (MLX community backend) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "mlx",

@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """InspireMusic (Alibaba, ModelScope-only): long-form text-to-music and music
 CONTINUATION — the 1.5B-Long variant holds 3+ minutes of coherent structure.
 

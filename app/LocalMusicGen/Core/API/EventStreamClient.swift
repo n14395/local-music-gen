@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 /// Consumes /v1/events (SSE) with automatic reconnection and Last-Event-ID resume.

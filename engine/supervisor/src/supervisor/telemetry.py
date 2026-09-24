@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Machine telemetry: what the engine is using, measured without privileges.
 
 Everything here is chosen because it works for an ordinary user process with no

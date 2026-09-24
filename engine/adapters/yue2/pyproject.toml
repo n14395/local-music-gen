@@ -2,6 +2,7 @@
 name = "adapter-yue2"
 version = "0.1.0"
 description = "YuE2 lyrics-to-song (AR-NAR MoT + flow matching, 48 kHz stereo) for the LocalMusicGen engine"
+license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # The upstream package carries its own exact pins (torch 2.10.0,

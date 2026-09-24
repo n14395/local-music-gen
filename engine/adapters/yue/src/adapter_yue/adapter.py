@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """YuE (experimental): lyrics-to-song via the upstream repo's infer.py subprocess.
 
 There is no Metal port of YuE; on Apple Silicon this runs on CPU/MPS-fallback and

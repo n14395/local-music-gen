@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 /// How many of the app's actions a model unlocks — the `14 ACTIONS` badge on a

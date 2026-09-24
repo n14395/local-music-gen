@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """MusicGen via transformers on MPS.
 
 fp32 on purpose: fp16 MusicGen on MPS is known to produce NaNs/artifacts in some ops,

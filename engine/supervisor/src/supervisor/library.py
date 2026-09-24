@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """The model library: where weights live, and which of them are ours.
 
 Weights sit in three roots, and the difference between them is the difference

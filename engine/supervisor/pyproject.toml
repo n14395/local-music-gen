@@ -2,6 +2,7 @@
 name = "localmusic-supervisor"
 version = "0.1.0"
 description = "LocalMusicGen inference engine supervisor (sidecar API)"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.115",

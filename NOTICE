@@ -1,0 +1,81 @@
+LocalMusicGen
+Copyright 2026 Nick Fay
+
+Licensed under the Apache License, Version 2.0 (the "License").
+You may obtain a copy of the License in the LICENSE file distributed
+with this work, or at http://www.apache.org/licenses/LICENSE-2.0
+
+
+This product includes third-party software, listed below with the
+attribution its licence requires.
+
+------------------------------------------------------------------------
+Sparkle
+------------------------------------------------------------------------
+Sparkle (https://github.com/sparkle-project/Sparkle) provides application
+updates. Distributed under the MIT License.
+
+  Copyright (c) 2006-2013 Andy Matuschak.
+  Copyright (c) 2009-2013 Elgato Systems GmbH.
+  Copyright (c) 2011-2014 Kornel Lesinski.
+  Copyright (c) 2015-2017 Mayur Pawashe.
+  Copyright (c) 2014 C.W. Betts.
+  Copyright (c) 2014 Petroules Corporation.
+  Copyright (c) 2014 Big Nerd Ranch.
+  All rights reserved.
+
+Sparkle also incorporates further components under their own terms; the
+complete licence text ships with the framework.
+
+------------------------------------------------------------------------
+GRDB.swift
+------------------------------------------------------------------------
+GRDB.swift (https://github.com/groue/GRDB.swift) provides SQLite access.
+Distributed under the MIT License.
+
+  Copyright (C) 2015-2025 Gwendal Roue
+
+------------------------------------------------------------------------
+abcjs
+------------------------------------------------------------------------
+abcjs 6.7.0 (https://github.com/paulrosen/abcjs) renders music notation.
+Vendored unmodified as app/LocalMusicGen/Resources/Notation/abcjs-basic-min.js.
+Distributed under the MIT License; see abcjs-LICENSE.txt alongside the file.
+
+------------------------------------------------------------------------
+Inference engine components
+------------------------------------------------------------------------
+The engine adapters build and bundle the following, each under the MIT License
+and each retaining its own LICENSE file in-tree:
+
+  acestep.cpp    engine/adapters/acestepcpp/build-src/LICENSE
+                 Copyright (c) 2023-2026 The acestep.cpp authors
+  ggml           engine/adapters/acestepcpp/build-src/ggml/LICENSE
+                 Copyright (c) 2023-2026 The ggml authors
+  cpp-httplib    engine/adapters/acestepcpp/build-src/vendor/cpp-httplib/LICENSE
+                 Copyright (c) 2017 yhirose
+  MLX backend    engine/adapters/musicgen/src/adapter_musicgen/mlx_backend/LICENSE
+                 Copyright (c) 2023 Apple Inc.
+
+Adapter virtual environments built at install time pull in further third-party
+Python packages under their own licences. Those packages are not redistributed
+as part of this source repository.
+
+------------------------------------------------------------------------
+Model weights - IMPORTANT
+------------------------------------------------------------------------
+LocalMusicGen does not ship model weights. Models are downloaded at runtime
+from their upstream hosts at the user's request, and each carries its own
+licence, which is shown in the Models view before download.
+
+Those licences are NOT the Apache License and many are more restrictive than
+it. 66 of the 136 catalogued models do not permit commercial use, among them
+Meta's MusicGen and MAGNeT (CC-BY-NC-4.0), MiniMax Music 3, YuE2, LeVo 2,
+SongGen, and the RAVE timbre models (IRCAM). The UVR separators carry no
+formal licence at all, and each TONE3000 amp capture carries its author's own
+terms, which travel with the file.
+
+The Apache License covers this application's source code only. It grants no
+rights whatsoever in any model, and confers no permission to use a model's
+output commercially. Check the licence of any model whose output you intend to
+release.

@@ -1,3 +1,6 @@
+// Copyright 2026 Nick Fay
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 // Codable mirrors of docs/api-contract.md. Field names follow the wire format via

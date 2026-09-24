@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Meta audiocraft runtime: MAGNeT and audiocraft-format MusicGen checkpoints.
 
 Unlocks the models transformers cannot load: MAGNeT (non-autoregressive, no

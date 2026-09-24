@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """Lyric transcription with Whisper (MLX).
 
 Whisper is a speech model asked to do a music job, and it does it well on one

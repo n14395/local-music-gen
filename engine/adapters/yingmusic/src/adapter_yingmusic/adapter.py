@@ -1,3 +1,6 @@
+# Copyright 2026 Nick Fay
+# SPDX-License-Identifier: Apache-2.0
+
 """YingMusic-Singer (task `sing`): zero-shot singing voice synthesis — typed
 lyrics performed to a melody (a MIDI file or a sung/played reference) in the
 timbre of a short recording the USER supplies. Consent-clean by construction:
