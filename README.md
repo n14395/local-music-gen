@@ -119,8 +119,13 @@ which is kept in the Keychain.
 
 ## Install
 
-Download the latest `LocalMusicGen.dmg` from [Releases](../../releases) and drag the app
-into `/Applications`.
+```sh
+brew tap n14395/tap
+brew install --cask local-music-gen
+```
+
+Or download the latest `LocalMusicGen.dmg` from [Releases](../../releases) and drag the
+app into `/Applications`.
 
 The first launch fetches a private CPython and the engine's own dependencies into
 `~/Library/Application Support/LocalMusicGen/`. That takes a minute or two and is
